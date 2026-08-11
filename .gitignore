@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Local projects, imports, recovery state, and exports
+*.pstudio
+*.pstudio-secure
+*.pptx
+*.pptm
+*.potx
+*.pdf
+*.png
+*.svg
+!output/pdf/Presentation-Studio-Installation-Guide.pdf
+
+# Development-only generated fixtures and visual QA
+fixtures/generated/
+tmp/
+coverage/
+.presentation-studio/
+mcp-runtime.json

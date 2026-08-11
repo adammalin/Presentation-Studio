@@ -1,0 +1,44 @@
+{
+  "name": "presentation-studio",
+  "productName": "Presentation Studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first presentation auditing and conservative cleanup studio",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "start": "node scripts/start-electron.mjs",
+    "build": "tsc --noEmit && vite build",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:fixture": "tsx scripts/create-synthetic-fixture.ts",
+    "desktop:smoke": "node scripts/electron-smoke.mjs",
+    "mcp": "node mcp/server.mjs",
+    "guide": "python3 scripts/build-install-guide.py",
+    "check:data-safety": "node scripts/check-data-safety.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "fast-xml-parser": "^5.5.6",
+    "jszip": "^3.10.1",
+    "pptxgenjs": "4.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "6.0.2",
+    "electron": "43.2.0",
+    "tsx": "^4.23.1",
+    "typescript": "5.9.3",
+    "vite": "8.2.0"
+  }
+}
