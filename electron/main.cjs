@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
+const { nativeRenderCapabilities, renderPowerPointNative } = require("./native-render.cjs");
 
 app.setName("Presentation Studio");
 const projectRoot = path.resolve(__dirname, "..");
@@ -27,6 +28,7 @@ let mcpAddress = null;
 const pendingMcpCommands = new Map();
 let autosaveQueue = Promise.resolve();
 let preferencesQueue = Promise.resolve();
+let nativeRenderQueue = Promise.resolve();
 
 function runtimePath() {
   return path.join(app.getPath("userData"), MCP_RUNTIME_FILE_NAME);
@@ -267,6 +269,16 @@ function registerIpc() {
   ipcMain.handle("mcp:get-status", () => ({ available: Boolean(mcpAddress), address: mcpAddress, runtimeFile: runtimePath() }));
 
   ipcMain.handle("fonts:get-presentation-fonts", async () => ({ fonts: await readLocalPresentationFonts() }));
+
+  ipcMain.handle("render:get-capabilities", () => nativeRenderCapabilities());
+
+  ipcMain.handle("render:powerpoint", async (_event, payload) => {
+    const name = path.basename(String(payload?.name ?? "presentation.pptx"));
+    if (!/\.pptx$/i.test(name)) throw new Error("PowerPoint-native rendering requires a PPTX file.");
+    const bytes = validateBinary(payload?.bytes);
+    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => renderPowerPointNative({ bytes, name, homePath: app.getPath("home") }));
+    return nativeRenderQueue;
+  });
 
   ipcMain.handle("app:get-onboarding-tour-version", async () => {
     if (skipFirstRunTour) return { version: ONBOARDING_TOUR_VERSION };

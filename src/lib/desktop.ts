@@ -13,6 +13,41 @@ export interface LocalPresentationFont {
   bytes: Uint8Array;
 }
 
+export type NativeRenderStatus = "ready" | "unavailable" | "permission-required" | "failed";
+
+export interface NativeSlideRender {
+  number: number;
+  mimeType: "image/jpeg" | "image/png";
+  width: number;
+  height: number;
+  sha256: string;
+  bytes: Uint8Array;
+}
+
+export interface NativeRenderResult {
+  status: NativeRenderStatus;
+  renderer: "powerpoint-native" | "studio-approximate";
+  pipeline?: string;
+  powerPointVersion?: string;
+  authoritative: boolean;
+  sourceSha256?: string;
+  generatedAt?: string;
+  slideCount?: number;
+  slides: NativeSlideRender[];
+  warnings: string[];
+  reason?: string;
+  powerPointInstalled?: boolean;
+  rasterizerAvailable?: boolean;
+}
+
+export interface NativeRenderCapabilities {
+  available: boolean;
+  renderer: "powerpoint-native" | "studio-approximate";
+  reason?: string;
+  powerPointInstalled: boolean;
+  rasterizerAvailable: boolean;
+}
+
 export interface DesktopBridge {
   isDesktop: true;
   platform: string;
@@ -27,6 +62,8 @@ export interface DesktopBridge {
   autosaveProject(payload: { bytes: Uint8Array; encrypted: boolean }): Promise<{ recoveryPath: string }>;
   getMcpStatus(): Promise<{ available: boolean; address: string | null; runtimeFile: string }>;
   getPresentationFonts(): Promise<{ fonts: LocalPresentationFont[] }>;
+  getNativeRenderCapabilities(): Promise<NativeRenderCapabilities>;
+  renderPowerPoint(payload: { name: string; bytes: Uint8Array }): Promise<NativeRenderResult>;
   getOnboardingTourVersion(): Promise<{ version: string | null }>;
   setOnboardingTourVersion(version: string): Promise<{ saved: boolean; version: string }>;
   openUserGuide(): Promise<{ opened: boolean; path?: string }>;

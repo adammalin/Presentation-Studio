@@ -3,11 +3,15 @@ import type {
   AlignmentRepairCandidate,
   AuditFinding,
   FontInventoryItem,
+  LayoutReviewItem,
   PictureInventoryItem,
   PptxAudit,
+  SlideEditableObject,
+  SlideEditableObjectElement,
   SlideInventoryItem,
   TableInventoryItem,
   TemplateClassification,
+  TextBoxInventoryItem,
 } from "../types";
 import { sha256Text } from "./hash";
 
@@ -17,6 +21,12 @@ const TEXT_RUN_RE = /<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g;
 const TYPEFACE_RE = /\btypeface=(?:"([^"]*)"|'([^']*)')/g;
 const XML_ENTITY_RE = /&(amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);/gi;
 const SYMBOL_FONT_RE = /^(symbol|wingdings(?:\s*[23])?|webdings|cambria math|stix|mt extra)$/i;
+const EMU_PER_POINT = 12_700;
+const EMU_PER_INCH = 914_400;
+const DEFAULT_SLIDE_WIDTH_EMU = 12_192_000;
+const DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000;
+const SAFE_MARGIN_EMU = Math.round(0.25 * EMU_PER_INCH);
+const OFF_SLIDE_TOLERANCE_EMU = 2 * EMU_PER_POINT;
 
 function decodeXml(value: string): string {
   return value.replace(XML_ENTITY_RE, (entity, code: string) => {
@@ -140,51 +150,403 @@ function extractPictureInventory(slideNumber: number, xml: string): PictureInven
   });
 }
 
-async function extractAlignmentRepairs(slideNumber: number, xml: string): Promise<AlignmentRepairCandidate[]> {
-  if (slideNumber !== 1) return [];
-  const shapes = [...xml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/g)].map((match) => {
-    const block = match[0];
+interface ParsedTextShape {
+  inventory: TextBoxInventoryItem;
+  text: string;
+}
+
+function extractDirectShapeBlocks(xml: string): string[] {
+  const tokens = [...xml.matchAll(/<p:grpSp\b|<\/p:grpSp>|<p:sp\b|<\/p:sp>/g)];
+  const blocks: string[] = [];
+  let groupDepth = 0;
+  let shapeStart: number | undefined;
+  for (const token of tokens) {
+    if (token[0] === "<p:grpSp") groupDepth += 1;
+    else if (token[0] === "</p:grpSp>") groupDepth = Math.max(0, groupDepth - 1);
+    else if (token[0] === "<p:sp" && groupDepth === 0) shapeStart = token.index;
+    else if (token[0] === "</p:sp>" && groupDepth === 0 && shapeStart !== undefined) {
+      blocks.push(xml.slice(shapeStart, (token.index ?? shapeStart) + token[0].length));
+      shapeStart = undefined;
+    }
+  }
+  return blocks;
+}
+
+interface DirectObjectBlock {
+  sourceElement: SlideEditableObjectElement;
+  block: string;
+}
+
+function extractDirectObjectBlocks(xml: string): DirectObjectBlock[] {
+  const tokens = [...xml.matchAll(/<\/?p:(grpSp|sp|pic|graphicFrame|cxnSp)\b[^>]*>/g)];
+  const blocks: DirectObjectBlock[] = [];
+  let groupDepth = 0;
+  let active: { sourceElement: SlideEditableObjectElement; start: number } | undefined;
+  for (const token of tokens) {
+    const whole = token[0];
+    const tag = token[1] as "grpSp" | "sp" | "pic" | "graphicFrame" | "cxnSp";
+    const closing = whole.startsWith("</");
+    const sourceElement = `p:${tag}` as SlideEditableObjectElement;
+    if (!closing) {
+      if (tag === "grpSp") {
+        if (groupDepth === 0) active = { sourceElement, start: token.index ?? 0 };
+        groupDepth += 1;
+      } else if (groupDepth === 0) active = { sourceElement, start: token.index ?? 0 };
+      continue;
+    }
+    if (tag === "grpSp") {
+      groupDepth = Math.max(0, groupDepth - 1);
+      if (groupDepth === 0 && active?.sourceElement === sourceElement) {
+        blocks.push({ sourceElement, block: xml.slice(active.start, (token.index ?? active.start) + whole.length) });
+        active = undefined;
+      }
+    } else if (groupDepth === 0 && active?.sourceElement === sourceElement) {
+      blocks.push({ sourceElement, block: xml.slice(active.start, (token.index ?? active.start) + whole.length) });
+      active = undefined;
+    }
+  }
+  return blocks;
+}
+
+async function extractEditableObjects(slideNumber: number, xml: string): Promise<SlideEditableObject[]> {
+  const objects: SlideEditableObject[] = [];
+  let tableOrdinal = 0;
+  let pictureOrdinal = 0;
+  for (const { sourceElement, block } of extractDirectObjectBlocks(xml)) {
+    const nonVisual = block.match(/<p:cNvPr\b([^>]*)>/)?.[1] ?? "";
+    const shapeId = attributeValue(nonVisual, "id")?.trim();
+    if (!shapeId) continue;
+    const transformTag = sourceElement === "p:graphicFrame" ? "p:xfrm" : "a:xfrm";
+    const transform = block.match(new RegExp(`<${transformTag}\\b([^>]*)>[\\s\\S]*?<a:off\\b([^>]*)\\/>[\\s\\S]*?<a:ext\\b([^>]*)\\/>[\\s\\S]*?<\\/${transformTag}>`));
+    if (!transform) continue;
+    const x = Number(attributeValue(transform[2] ?? "", "x"));
+    const y = Number(attributeValue(transform[2] ?? "", "y"));
+    const width = Number(attributeValue(transform[3] ?? "", "cx"));
+    const height = Number(attributeValue(transform[3] ?? "", "cy"));
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
+    const rotationUnits = Number(attributeValue(transform[1] ?? "", "rot"));
+    const rotation = Number.isFinite(rotationUnits) ? rotationUnits / 60_000 : 0;
+    const visibleText = extractTextRuns(block).join(" ").replace(/\s+/g, " ").trim();
+    let kind: SlideEditableObject["kind"];
+    if (sourceElement === "p:pic") { kind = "picture"; pictureOrdinal += 1; }
+    else if (sourceElement === "p:graphicFrame" && /<a:tbl\b/.test(block)) { kind = "table"; tableOrdinal += 1; }
+    else if (sourceElement === "p:graphicFrame" && /<c:chart\b/.test(block)) kind = "chart";
+    else if (sourceElement === "p:graphicFrame") kind = "graphic-frame";
+    else if (sourceElement === "p:cxnSp") kind = "connector";
+    else if (sourceElement === "p:grpSp") kind = "group";
+    else kind = visibleText ? "text" : "shape";
+    objects.push({
+      id: `slide-${slideNumber}-object-${shapeId}`,
+      slideNumber,
+      shapeId,
+      name: attributeValue(nonVisual, "name")?.trim() || `${kind.replace("-", " ")} ${shapeId}`,
+      kind,
+      sourceElement,
+      geometry: { x, y, width, height, rotation },
+      canMove: kind !== "group",
+      canResize: !["connector", "group"].includes(kind),
+      textHash: visibleText ? await sha256Text(visibleText) : undefined,
+      tableId: kind === "table" ? `slide-${slideNumber}-table-${tableOrdinal}` : undefined,
+      pictureId: kind === "picture" ? `slide-${slideNumber}-picture-${pictureOrdinal}` : undefined,
+    });
+  }
+  return objects;
+}
+
+function textRole(block: string, y: number, height: number, maximumFontSize: number | undefined, characterCount: number): TextBoxInventoryItem["role"] {
+  const placeholder = block.match(/<p:ph\b([^>]*)\/?\s*>/)?.[1] ?? "";
+  const placeholderType = attributeValue(placeholder, "type")?.toLowerCase();
+  if (placeholderType === "title" || placeholderType === "ctrtitle" || placeholderType === "subtitle") return "title";
+  if (y < 1.5 * EMU_PER_INCH && (maximumFontSize ?? 0) >= 24) return "title";
+  if ((maximumFontSize ?? 100) <= 14 && (y > 5.25 * EMU_PER_INCH || characterCount < 160)) return "caption";
+  if (height <= 0.65 * EMU_PER_INCH && characterCount < 120) return "label";
+  return characterCount > 0 ? "body" : "other";
+}
+
+function paragraphAlignment(block: string): TextBoxInventoryItem["paragraphAlignment"] {
+  const values = [...block.matchAll(/<a:pPr\b([^>]*)/g)]
+    .map((match) => attributeValue(match[1] ?? "", "algn")?.toLowerCase())
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value === "ctr" ? "center" : value === "r" ? "right" : ["just", "justlow", "dist", "thaidist"].includes(value) ? "justified" : "left");
+  if (values.length === 0 && /<p:ph\b[^>]*\btype=(?:"ctrTitle"|'ctrTitle')/i.test(block)) return "center";
+  const distinct = uniqueSorted(values);
+  return distinct.length > 1 ? "mixed" : (distinct[0] as TextBoxInventoryItem["paragraphAlignment"] | undefined) ?? "left";
+}
+
+function autoFitMode(block: string): TextBoxInventoryItem["autoFit"] {
+  if (/<a:noAutofit\b/i.test(block)) return "none";
+  if (/<a:normAutofit\b/i.test(block)) return "shrink-text";
+  if (/<a:spAutoFit\b/i.test(block)) return "resize-shape";
+  return "unspecified";
+}
+
+function verticalAlignment(block: string): TextBoxInventoryItem["verticalAlignment"] {
+  const bodyProperties = block.match(/<a:bodyPr\b([^>]*)/)?.[1] ?? "";
+  const anchor = attributeValue(bodyProperties, "anchor")?.toLowerCase();
+  return anchor === "ctr" ? "middle" : anchor === "b" ? "bottom" : "top";
+}
+
+function textMargins(block: string): { left: number; right: number; top: number; bottom: number } {
+  const bodyProperties = block.match(/<a:bodyPr\b([^>]*)/)?.[1] ?? "";
+  const value = (name: string, fallback: number) => {
+    const parsed = Number(attributeValue(bodyProperties, name));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  return {
+    left: value("lIns", 91_440),
+    right: value("rIns", 91_440),
+    top: value("tIns", 45_720),
+    bottom: value("bIns", 45_720),
+  };
+}
+
+function paragraphOpticalMetrics(block: string, margins: ReturnType<typeof textMargins>) {
+  const paragraphs = [...block.matchAll(/<a:p\b[\s\S]*?<\/a:p>/g)].map((match) => match[0]);
+  const paragraphLeftMargins: number[] = [];
+  const paragraphIndents: number[] = [];
+  const textStartOffsets: number[] = [];
+  let bulletParagraphCount = 0;
+  let directMarginCount = 0;
+
+  for (const paragraph of paragraphs) {
+    const properties = paragraph.match(/<a:pPr\b([^>]*)/)?.[1] ?? "";
+    const marginValue = attributeValue(properties, "marL");
+    const indentValue = attributeValue(properties, "indent");
+    const leftMargin = marginValue === undefined ? 0 : Number(marginValue);
+    const indent = indentValue === undefined ? 0 : Number(indentValue);
+    const hasDirectMargin = marginValue !== undefined && Number.isFinite(leftMargin);
+    const hasDirectIndent = indentValue !== undefined && Number.isFinite(indent);
+    const hasBullet = !/<a:buNone\b/i.test(paragraph) && /<a:(?:buChar|buAutoNum|buBlip)\b/i.test(paragraph);
+
+    if (hasDirectMargin) {
+      paragraphLeftMargins.push(leftMargin);
+      directMarginCount += 1;
+    }
+    if (hasDirectIndent) paragraphIndents.push(indent);
+    if (hasBullet) bulletParagraphCount += 1;
+
+    // PowerPoint positions bullet text at marL; a non-bulleted first line also
+    // applies its indent. Inherited list styles remain intentionally marked as
+    // partial confidence instead of being presented as exact geometry.
+    textStartOffsets.push(margins.left + (hasDirectMargin ? leftMargin : 0) + (hasBullet ? 0 : hasDirectIndent ? indent : 0));
+  }
+
+  const opticalLeftOffsetEmu = textStartOffsets.length > 0 ? Math.min(...textStartOffsets) : margins.left;
+  return {
+    paragraphLeftMarginsEmu: uniqueSorted(paragraphLeftMargins.map(String)).map(Number),
+    paragraphIndentsEmu: uniqueSorted(paragraphIndents.map(String)).map(Number),
+    bulletParagraphCount,
+    opticalLeftOffsetEmu,
+    opticalAlignmentConfidence: paragraphs.length > 0 && directMarginCount === paragraphs.length ? "direct" as const : "partial-inheritance" as const,
+  };
+}
+
+function estimatedLineCount(block: string, availableWidthEmu: number, fontSizePt: number): number {
+  const widthPt = Math.max(1, availableWidthEmu / EMU_PER_POINT);
+  const charactersPerLine = Math.max(4, Math.floor(widthPt / Math.max(1, fontSizePt * 0.54)));
+  const paragraphs = [...block.matchAll(/<a:p\b[\s\S]*?<\/a:p>/g)].map((match) => match[0]);
+  return Math.max(1, (paragraphs.length ? paragraphs : [block]).reduce((sum, paragraph) => {
+    const characters = extractTextRuns(paragraph).join("").length;
+    const explicitBreaks = xmlCount(paragraph, /<a:br\b/g);
+    return sum + Math.max(1, Math.ceil(Math.max(1, characters) / charactersPerLine) + explicitBreaks);
+  }, 0));
+}
+
+async function extractTextBoxes(slideNumber: number, xml: string, slideWidth: number, slideHeight: number): Promise<{ shapes: ParsedTextShape[]; reviews: LayoutReviewItem[] }> {
+  const shapes: ParsedTextShape[] = [];
+  const reviews: LayoutReviewItem[] = [];
+  const blocks = extractDirectShapeBlocks(xml);
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (!/<p:txBody\b/.test(block)) continue;
     const text = extractTextRuns(block).join(" ").replace(/\s+/g, " ").trim();
     const shapeId = block.match(/<p:cNvPr\b[^>]*\bid=(?:"([^"]+)"|'([^']+)')/)?.slice(1).find(Boolean);
     const transform = block.match(/<a:xfrm\b[^>]*>[\s\S]*?<a:off\b([^>]*)\/>[\s\S]*?<a:ext\b([^>]*)\/>[\s\S]*?<\/a:xfrm>/);
-    if (!text || !shapeId || !transform) return undefined;
+    if (!text || !shapeId || !transform) continue;
     const x = Number(attributeValue(transform[1] ?? "", "x"));
     const y = Number(attributeValue(transform[1] ?? "", "y"));
     const width = Number(attributeValue(transform[2] ?? "", "cx"));
     const height = Number(attributeValue(transform[2] ?? "", "cy"));
-    if (![x, y, width, height].every(Number.isFinite)) return undefined;
-    return { shapeId, text, x, y, width, height };
-  }).filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
-  if (shapes.length < 3) return [];
-
-  const clusters: Array<{ center: number; members: typeof shapes }> = [];
-  for (const shape of shapes) {
-    const cluster = clusters.find((item) => Math.abs(item.center - shape.x) <= 38_100);
-    if (cluster) {
-      cluster.members.push(shape);
-      cluster.center = Math.round(cluster.members.reduce((sum, member) => sum + member.x, 0) / cluster.members.length);
-    } else clusters.push({ center: shape.x, members: [shape] });
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
+    const runFontSizes = [...block.matchAll(/<a:rPr\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100));
+    const fallbackFontSizes = runFontSizes.length === 0 ? [...block.matchAll(/<a:endParaRPr\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100)) : [];
+    const fontSizes = uniqueSorted([...runFontSizes, ...fallbackFontSizes]).map(Number);
+    const fontSizePt = fontSizes.length > 0 ? Math.max(...fontSizes) : 16;
+    const margins = textMargins(block);
+    const opticalMetrics = paragraphOpticalMetrics(block, margins);
+    const lineCount = estimatedLineCount(block, Math.max(1, width - margins.left - margins.right), fontSizePt);
+    const requiredHeight = Math.round((lineCount * fontSizePt * 1.18) * EMU_PER_POINT + margins.top + margins.bottom);
+    const fitRatio = Number((requiredHeight / height).toFixed(3));
+    const offSlide = x < -OFF_SLIDE_TOLERANCE_EMU || y < -OFF_SLIDE_TOLERANCE_EMU || x + width > slideWidth + OFF_SLIDE_TOLERANCE_EMU || y + height > slideHeight + OFF_SLIDE_TOLERANCE_EMU;
+    const nearEdge = !offSlide && (x < SAFE_MARGIN_EMU || y < SAFE_MARGIN_EMU || x + width > slideWidth - SAFE_MARGIN_EMU || y + height > slideHeight - SAFE_MARGIN_EMU);
+    const autoFit = autoFitMode(block);
+    const warnings: string[] = [];
+    if (offSlide) warnings.push("The editable text box extends beyond the physical slide boundary.");
+    else if (nearEdge) warnings.push("The editable text box enters the 0.25-inch safe-margin review zone.");
+    const overflowThreshold = autoFit === "resize-shape" ? 1.35 : 1.18;
+    const overflowRisk = fontSizes.length > 0 && fitRatio > overflowThreshold;
+    if (overflowRisk) warnings.push(autoFit === "shrink-text" ? "The current text metrics may trigger automatic font shrinking." : "The current text metrics may exceed the available text-box height.");
+    const geometry = { x, y, width, height };
+    const inventory: TextBoxInventoryItem = {
+      id: `slide-${slideNumber}-text-box-${index + 1}`,
+      slideNumber,
+      ordinal: index + 1,
+      shapeId,
+      text,
+      textHash: await sha256Text(text),
+      characterCount: text.length,
+      paragraphCount: Math.max(1, xmlCount(block, /<a:p\b/g)),
+      geometry,
+      textInsets: margins,
+      ...opticalMetrics,
+      estimatedOpticalLeftEmu: x + opticalMetrics.opticalLeftOffsetEmu,
+      fontFamilies: uniqueSorted(extractFonts(block)),
+      fontSizes,
+      directFontSizeKnown: fontSizes.length > 0,
+      paragraphAlignment: paragraphAlignment(block),
+      verticalAlignment: verticalAlignment(block),
+      role: textRole(block, y, height, fontSizes.length ? Math.max(...fontSizes) : undefined, text.length),
+      autoFit,
+      estimatedLineCount: lineCount,
+      estimatedRequiredHeightEmu: requiredHeight,
+      fitRatio,
+      safeAreaStatus: offSlide ? "off-slide" : nearEdge ? "near-edge" : "inside",
+      warnings,
+    };
+    shapes.push({ inventory, text });
+    if (offSlide) reviews.push({
+      id: `slide-${slideNumber}-shape-${shapeId}-off-slide`,
+      slideNumber,
+      shapeId,
+      rule: "off-slide",
+      severity: "error",
+      confidence: "high",
+      reason: "Editable text extends outside the physical slide. Reposition or resize it without deleting, rewriting, or hiding content.",
+      geometry,
+    });
+    else if (nearEdge) reviews.push({
+      id: `slide-${slideNumber}-shape-${shapeId}-safe-area`,
+      slideNumber,
+      shapeId,
+      rule: "safe-area",
+      severity: "info",
+      confidence: "medium",
+      reason: "Text enters the 0.25-inch safe-margin review zone; confirm that this is intentional template furniture or a readable edge treatment.",
+      geometry,
+    });
+    if (overflowRisk) reviews.push({
+      id: `slide-${slideNumber}-shape-${shapeId}-overflow-risk`,
+      slideNumber,
+      shapeId,
+      rule: "overflow-risk",
+      severity: "warning",
+      confidence: autoFit === "none" ? "high" : "medium",
+      reason: autoFit === "shrink-text" ? `Estimated text demand is ${fitRatio.toFixed(2)}× the available height and may force PowerPoint to shrink the type.` : `Estimated text demand is ${fitRatio.toFixed(2)}× the available height; inspect the native PowerPoint render for clipping or unexpected wrapping.`,
+      geometry,
+      fitRatio,
+    });
   }
-  const dominant = clusters.sort((left, right) => right.members.length - left.members.length)[0];
-  if (!dominant || dominant.members.length < 2) return [];
+  return { shapes, reviews };
+}
 
-  const candidates = shapes.filter((shape) => {
-    const delta = Math.abs(shape.x - dominant.center);
-    return delta >= 152_400 && delta <= 914_400 && shape.y >= 3_500_000 && shape.height <= 508_000 && shape.text.length >= 10;
-  });
+function overlapRatio(target: TextBoxInventoryItem["geometry"], other: TextBoxInventoryItem["geometry"]): number {
+  const overlapWidth = Math.max(0, Math.min(target.x + target.width, other.x + other.width) - Math.max(target.x, other.x));
+  const overlapHeight = Math.max(0, Math.min(target.y + target.height, other.y + other.height) - Math.max(target.y, other.y));
+  return target.width * target.height > 0 ? (overlapWidth * overlapHeight) / (target.width * target.height) : 0;
+}
+
+function roleBucket(role: TextBoxInventoryItem["role"]): "title" | "content" | "other" {
+  if (role === "title") return "title";
+  if (["body", "caption", "label"].includes(role)) return "content";
+  return "other";
+}
+
+async function extractAlignmentRepairs(slideNumber: number, shapes: ParsedTextShape[], slideWidth: number): Promise<{ repairs: AlignmentRepairCandidate[]; reviews: LayoutReviewItem[] }> {
   const repairs: AlignmentRepairCandidate[] = [];
-  for (const candidate of candidates) repairs.push({
-    id: `slide-${slideNumber}-shape-${candidate.shapeId}-align-left`,
-    slideNumber,
-    shapeId: candidate.shapeId,
-    textHash: await sha256Text(candidate.text),
-    source: { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height },
-    target: { x: dominant.center, y: candidate.y, width: candidate.width, height: candidate.height },
-    ruleId: "cover.dominant-left-edge",
-    confidence: "high",
-    rationale: `Align a lower cover text block to the dominant left edge used by ${dominant.members.length} peer text blocks.`,
-  });
-  return repairs;
+  const reviews: LayoutReviewItem[] = [];
+  const leftAligned = shapes.filter((shape) => shape.inventory.paragraphAlignment === "left" && shape.inventory.safeAreaStatus !== "off-slide");
+  if (leftAligned.length < 3) return { repairs, reviews };
+
+  const clusterByLeftEdge = (candidates: ParsedTextShape[]) => {
+    const clusters: Array<{ center: number; members: ParsedTextShape[] }> = [];
+    for (const shape of candidates) {
+      const opticalLeft = shape.inventory.estimatedOpticalLeftEmu;
+      const cluster = clusters.find((item) => Math.abs(item.center - opticalLeft) <= 38_100);
+      if (cluster) {
+        cluster.members.push(shape);
+        cluster.center = Math.round(cluster.members.reduce((sum, member) => sum + member.inventory.estimatedOpticalLeftEmu, 0) / cluster.members.length);
+      } else clusters.push({ center: opticalLeft, members: [shape] });
+    }
+    return clusters.sort((left, right) => right.members.length - left.members.length);
+  };
+
+  if (slideNumber === 1) {
+    const dominant = clusterByLeftEdge(leftAligned)[0];
+    if (dominant && dominant.members.length >= 2) {
+      for (const candidate of leftAligned.filter((shape) => {
+        const box = shape.inventory.geometry;
+        const delta = Math.abs(shape.inventory.estimatedOpticalLeftEmu - dominant.center);
+        return delta >= 152_400 && delta <= 914_400 && box.y >= 3_500_000 && box.height <= 508_000 && shape.text.length >= 10;
+      })) {
+        const box = candidate.inventory.geometry;
+        repairs.push({
+          id: `slide-${slideNumber}-shape-${candidate.inventory.shapeId}-align-left`,
+          slideNumber,
+          shapeId: candidate.inventory.shapeId,
+          textHash: candidate.inventory.textHash,
+          source: box,
+          target: { ...box, x: dominant.center - candidate.inventory.opticalLeftOffsetEmu },
+          ruleId: "cover.dominant-left-edge",
+          confidence: "high",
+          rationale: `Align the visible text start of a lower cover block to the dominant optical edge used by ${dominant.members.length} peer text blocks; account for PowerPoint text insets and paragraph indents.`,
+        });
+      }
+    }
+  }
+
+  const repairedShapeIds = new Set(repairs.map((repair) => repair.shapeId));
+  const contentShapes = leftAligned.filter((shape) => roleBucket(shape.inventory.role) === "content");
+  const clusters = clusterByLeftEdge(contentShapes);
+  const dominant = clusters[0];
+  const runnerUp = clusters[1];
+  if (!dominant || dominant.members.length < 3 || (runnerUp && dominant.members.length - runnerUp.members.length < 2)) return { repairs, reviews };
+  const peerWidths = dominant.members.map((shape) => shape.inventory.geometry.width).sort((left, right) => left - right);
+  const medianWidth = peerWidths[Math.floor(peerWidths.length / 2)] ?? 1;
+  const minY = Math.min(...dominant.members.map((shape) => shape.inventory.geometry.y));
+  const maxBottom = Math.max(...dominant.members.map((shape) => shape.inventory.geometry.y + shape.inventory.geometry.height));
+  for (const candidate of contentShapes.filter((shape) => !dominant.members.includes(shape) && !repairedShapeIds.has(shape.inventory.shapeId))) {
+    const box = candidate.inventory.geometry;
+    const delta = Math.abs(candidate.inventory.estimatedOpticalLeftEmu - dominant.center);
+    if (delta < 127_000 || delta > 762_000) continue;
+    const target = { ...box, x: dominant.center - candidate.inventory.opticalLeftOffsetEmu };
+    const widthRatio = box.width / medianWidth;
+    const verticalPeer = box.y >= minY - 0.75 * EMU_PER_INCH && box.y + box.height <= maxBottom + 0.75 * EMU_PER_INCH;
+    const collision = shapes.some((shape) => shape !== candidate && overlapRatio(target, shape.inventory.geometry) > 0.12);
+    const safelyInside = target.x >= 0 && target.x + target.width <= slideWidth;
+    const highConfidence = delta <= 457_200 && widthRatio >= 0.65 && widthRatio <= 1.55 && verticalPeer && !collision && safelyInside;
+    if (highConfidence) repairs.push({
+      id: `slide-${slideNumber}-shape-${candidate.inventory.shapeId}-align-left`,
+      slideNumber,
+      shapeId: candidate.inventory.shapeId,
+      textHash: candidate.inventory.textHash,
+      source: box,
+      target,
+      ruleId: "peer.dominant-left-edge",
+      confidence: "high",
+      rationale: `Align a text-box outlier to the visible text edge shared by ${dominant.members.length} nearby content peers; PowerPoint text insets and paragraph indents are included while text, vertical position, size, and order remain unchanged.`,
+    });
+    else reviews.push({
+      id: `slide-${slideNumber}-shape-${candidate.inventory.shapeId}-alignment-ambiguous`,
+      slideNumber,
+      shapeId: candidate.inventory.shapeId,
+      rule: "alignment-ambiguous",
+      severity: "info",
+      confidence: "medium",
+      reason: collision ? "A likely left-edge outlier cannot be moved safely because the target geometry would collide with another editable text box." : "A likely left-edge outlier needs visual review because peer role, distance, width, or vertical grouping is not decisive enough for an automatic move.",
+      geometry: box,
+    });
+  }
+  return { repairs, reviews };
 }
 
 function xmlCount(xml: string, expression: RegExp): number {
@@ -297,14 +659,25 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   const fonts = [...fontMap.values()].sort((left, right) => right.count - left.count || left.family.localeCompare(right.family));
   for (const font of fonts) font.slideNumbers.sort((left, right) => left - right);
   const classified = classifyTemplate(searchableText, fonts);
+  const presentationXml = xmlByPath.get("ppt/presentation.xml") ?? "";
+  const slideSizeAttributes = presentationXml.match(/<p:sldSz\b([^>]*)/)?.[1] ?? "";
+  const declaredSlideWidth = Number(attributeValue(slideSizeAttributes, "cx"));
+  const declaredSlideHeight = Number(attributeValue(slideSizeAttributes, "cy"));
+  const slideWidth = Number.isFinite(declaredSlideWidth) && declaredSlideWidth > 0 ? declaredSlideWidth : DEFAULT_SLIDE_WIDTH_EMU;
+  const slideHeight = Number.isFinite(declaredSlideHeight) && declaredSlideHeight > 0 ? declaredSlideHeight : DEFAULT_SLIDE_HEIGHT_EMU;
 
   const slides: SlideInventoryItem[] = [];
   const tables: TableInventoryItem[] = [];
   const pictures: PictureInventoryItem[] = [];
+  const textBoxes: TextBoxInventoryItem[] = [];
+  const editableObjects: SlideEditableObject[] = [];
+  const layoutReviews: LayoutReviewItem[] = [];
   const alignmentRepairs: AlignmentRepairCandidate[] = [];
   for (const path of slidePaths) {
     const xml = xmlByPath.get(path) ?? "";
     const number = slideNumberForPart(path) ?? slides.length + 1;
+    const relationshipPart = `ppt/slides/_rels/slide${number}.xml.rels`;
+    const relationXml = xmlByPath.get(relationshipPart) ?? "";
     const runs = extractTextRuns(xml);
     const text = runs.join(" ").replace(/\s+/g, " ").trim();
     const title = runs.find((run) => run.trim().length > 0)?.trim().slice(0, 160) || `Slide ${number}`;
@@ -315,9 +688,14 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     tables.push(...await extractTableInventory(number, xml));
     const pictureCount = xmlCount(xml, /<p:pic\b/g);
     pictures.push(...extractPictureInventory(number, xml));
-    alignmentRepairs.push(...await extractAlignmentRepairs(number, xml));
+    const extractedTextBoxes = await extractTextBoxes(number, xml, slideWidth, slideHeight);
+    textBoxes.push(...extractedTextBoxes.shapes.map((shape) => shape.inventory));
+    editableObjects.push(...await extractEditableObjects(number, xml));
+    layoutReviews.push(...extractedTextBoxes.reviews);
+    const alignment = await extractAlignmentRepairs(number, extractedTextBoxes.shapes, slideWidth);
+    alignmentRepairs.push(...alignment.repairs);
+    layoutReviews.push(...alignment.reviews);
     const connectorCount = xmlCount(xml, /<p:cxnSp\b/g);
-    const relationXml = xmlByPath.get(`ppt/slides/_rels/slide${number}.xml.rels`) ?? "";
     const chartCount = xmlCount(relationXml, /relationships\/chart(?:"|\/)/gi);
     const commentPart = xmlByPath.get(`ppt/comments/comment${number}.xml`) ?? "";
     const commentCount = xmlCount(commentPart, /<p:cm\b/g);
@@ -326,6 +704,10 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     slides.push({
       id: `slide-${number}`,
       number,
+      sourcePart: path,
+      sourcePartSha256: await sha256Text(xml),
+      relationshipPart: relationXml ? relationshipPart : undefined,
+      relationshipPartSha256: relationXml ? await sha256Text(relationXml) : undefined,
       title,
       text,
       textHash: await sha256Text(text),
@@ -382,9 +764,19 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     severity: "warning",
     confidence: repair.confidence,
     slideNumber: repair.slideNumber,
-    message: "A cover text block is offset from the dominant content alignment.",
+    message: repair.ruleId === "cover.dominant-left-edge" ? "A cover text block is offset from the dominant content alignment." : "A text box is offset from the dominant edge used by nearby content peers.",
     evidence: `Text box left edge ${repair.source.x} EMU; dominant peer edge ${repair.target.x} EMU.`,
     autoFixable: true,
+  }));
+  for (const review of layoutReviews) findings.push(finding({
+    ruleId: `layout.${review.rule}`,
+    category: "layout",
+    severity: review.severity,
+    confidence: review.confidence,
+    slideNumber: review.slideNumber,
+    message: review.rule === "overflow-risk" ? "Text-box fit needs native-render review." : review.rule === "off-slide" ? "Editable text extends beyond the slide boundary." : review.rule === "safe-area" ? "Editable text enters the safe-margin review zone." : "A possible alignment outlier is not safe to move automatically.",
+    evidence: review.reason,
+    autoFixable: false,
   }));
   const tableStyleIds = uniqueSorted(tables.map((table) => table.styleId ?? "No table style ID"));
   if (tableStyleIds.length > 1) {
@@ -481,12 +873,16 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     containsExternalRelationships,
     packageFileCount: paths.length,
     expandedByteLength,
+    slideSize: { width: slideWidth, height: slideHeight },
     classification: classified.classification,
     classificationEvidence: classified.evidence,
     fonts,
     slides,
     tables,
     pictures,
+    textBoxes,
+    editableObjects,
+    layoutReviews,
     alignmentRepairs,
     findings,
     warnings: modernCommentCount > 0 ? ["Modern PowerPoint comments were retained as unsupported package parts and do not block the audit."] : [],

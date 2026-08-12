@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-12.1",
+  "version": "2026-08-12.4",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer. Improve every in-scope slide, not only fonts, while preserving approved technical content exactly.",
@@ -120,13 +120,17 @@
   "everySlideChecklist": [
     "Use a consistent grid, margins, safe areas, alignment lines, spacing rhythm, and visual hierarchy.",
     "Inspect every text box for bounds, wrapping, overflow, line breaks, insets, alignment, placement, font family, font size, weight, color, contrast, and line spacing.",
+    "Treat geometry as evidence: compare peer edges, safe margins, fit estimates, collisions, and the rendered slide before moving a text box. Automatically repair only a high-confidence outlier with a unique peer edge and a collision-free target; surface every ambiguous case for review.",
+    "Never solve fit by silently shrinking type, clipping text, hiding content off-slide, or rewriting approved wording. Mark overflow and off-slide text as explicit production exceptions until a compatible layout, box geometry, or authorized slide split resolves them.",
     "Choose the best compatible approved template layout for the content instead of forcing every slide into one generic arrangement.",
+    "Before staging a layout change, read the active Template Pack semantic slots and deterministic compatibility ranking. Treat the shortlist as evidence, inspect the authoritative Current and Proposal renders, and reject a higher-scoring layout whenever the pixels show a worse composition.",
     "Prioritize readable titles, concise visual groupings, balanced whitespace, and clear reading order.",
     "Normalize tables and figures as coherent systems: headers, row treatment, captions, borders, image framing, size, alignment, and spacing must be consistent.",
     "Keep dense technical slides readable without deleting content. If exact content cannot fit safely, stage a split-slide recommendation and request one focused approval.",
     "Use restrained, semantically meaningful icons or native vector diagrams only when they improve comprehension. Decoration alone is not a reason to add media."
   ],
   "collaborationRules": [
+    "Stage related object moves and resizes on one slide as one atomic layout transaction. Calculate the final arrangement together and reject new overlap, worsened text fit, unsafe-edge regression, or accidental picture distortion unless a deliberate exception and rationale are recorded.",
     "Treat a user design thread as a scoped instruction tied to an exact slide revision and stable object, text range, table cell/range, or normalized region; never guess what an ambiguous pin refers to.",
     "Before proposing a thread resolution, re-read the current slide revision, exact anchor, structured geometry, and revision-bound render. If the target cannot be mapped unambiguously, return needs-reanchor.",
     "Stage a bounded editable fix, highlight every affected object, render the proposal, and reply with the material design change. An AI response alone does not resolve the thread.",

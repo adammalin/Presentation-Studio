@@ -39,6 +39,11 @@ export async function createSyntheticLegacyDeck(filePath: string): Promise<strin
     bold: false,
   });
   second.addText("Numbers are synthetic and have no scientific meaning.", { x: 0.68, y: 4.2, w: 7.2, h: 0.4, fontFace: "Aptos", fontSize: 12, color: "5E6B65", margin: 0 });
+  second.addText("Aligned peer label two", { x: 0.68, y: 4.72, w: 7.2, h: 0.4, fontFace: "Aptos", fontSize: 12, color: "5E6B65", margin: 0 });
+  second.addText("Aligned peer label three", { x: 0.68, y: 5.24, w: 7.2, h: 0.4, fontFace: "Aptos", fontSize: 12, color: "5E6B65", margin: 0 });
+  second.addText("Offset peer label four", { x: 0.96, y: 5.76, w: 7.2, h: 0.4, fontFace: "Aptos", fontSize: 12, color: "5E6B65", margin: 0 });
+  second.addText([{ text: "This deliberately dense synthetic text box has enough words to exceed its very small height and exercise the deterministic fit-risk review without changing any approved wording.", options: { bullet: { indent: 18 } } }], { x: 9.55, y: 4.15, w: 2.7, h: 0.24, fontFace: "Aptos", fontSize: 18, color: "373A36", margin: 0 });
+  second.addText("Off-slide geometry check", { x: 12.75, y: 6.72, w: 1.0, h: 0.35, fontFace: "Aptos", fontSize: 12, color: "373A36", margin: 0 });
 
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await pptx.writeFile({ fileName: filePath });

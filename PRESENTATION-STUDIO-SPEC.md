@@ -3,47 +3,67 @@
 ## Product and Technical Specification
 
 - **Status:** Working foundation; phased implementation in progress
-- **Specification version:** 0.6
-- **Date:** 2026-08-11
+- **Specification version:** 0.9
+- **Date:** 2026-08-12
 - **Repository:** `adammalin/Presentation-Studio`
 - **Distribution boundary:** Source-based installation only; no application installers
 
-Presentation Studio is a local-first Electron desktop application for auditing, conservatively cleaning, reflowing, composing, reviewing, and exporting presentation decks from a structured, self-contained project package. Its first production job is to help a human review and consistently clean a large batch of existing PowerPoint slides without rewriting content, erasing intentional prior edits, heavily redesigning the material, or applying the wrong organization’s template. The package contains a canonical JSON presentation model plus the documents, data, images, audio, video, and other project Resources required to reopen and render it without relying on the files' original locations. The application uses versioned presentation rules and Template Packs, a shared renderer-neutral slide model, and a local Model Context Protocol (MCP) server so any MCP-capable AI client can inspect an authorized project and stage changes for visible human review.
+Presentation Studio is a local-first Electron desktop application for auditing, conservatively cleaning, reflowing, composing, reviewing, and exporting presentation decks from a structured, self-contained project package. Its first production job is to help a human review and consistently clean a large batch of existing PowerPoint slides without rewriting content, erasing intentional prior edits, heavily redesigning the material, or applying the wrong organization’s template. The package contains a canonical JSON presentation model for supported editable properties, an immutable PowerPoint preservation envelope for native content that is not fully interpreted, and the documents, data, images, audio, video, and other project Resources required to reopen the work without relying on the files' original locations. The application uses versioned presentation rules and Template Packs, a PowerPoint-aware scene graph, native-render observations, and a local Model Context Protocol (MCP) server so any MCP-capable AI client can inspect an authorized project, design against reliable visual evidence, and stage changes for visible human review.
 
 The first template target is the official ORNL 16:9 PowerPoint template. The application must preserve its master/layout intent, Aptos typography, theme colors, and presentation guidance while treating every cleaned, reflowed, or generated output as a draft until the appropriate content owner and brand reviewer approve it.
 
 This document defines the intended product, data model, user experience, local security boundary, MCP contract, export requirements, source-based setup, installation PDF, validation gates, and phased implementation plan. The repository now contains a tested cleanup-first working foundation. Capabilities not listed in the implementation snapshot remain requirements rather than completed features.
 
-### 0.1 Implementation snapshot - 2026-08-11
+### 0.1 Implementation snapshot - 2026-08-12
 
 Implemented and locally qualified:
 
 - ORNL-aligned Electron, React, TypeScript, and Vite application shell with Batch, Deck Audit, Slides, Designs, Rules, Review, and Resources workspaces;
 - app-wide drag-and-drop plus multi-file Resources intake with local type/signature checks, SHA-256 deduplication, explicit processing states, and project-size limits;
 - versioned first-run onboarding with deterministic target spotlights, keyboard navigation, replay from the top bar, and local completion preferences outside project files;
-- local POTX/PPTX Template Pack installation with independent SHA-256 verification, protected application-data storage, restart persistence, and a searchable Designs gallery derived from native master/layout OOXML, template media, theme colors, and placeholder geometry;
+- local POTX/PPTX Template Pack installation with independent SHA-256 verification, protected application-data storage, restart persistence, duplicate-safe semantic slot/capacity/constraint compilation, deterministic content-compatibility scoring, and a searchable Designs gallery whose base layouts are materialized and rendered through Microsoft PowerPoint with Studio-only semantic guides;
 - packaged extracted-text derivatives for TXT, Markdown, JSON, CSV/TSV, DOCX, and XLSX Resources, with explicit stored-only or needs-review handling for other accepted types;
 - multi-file PowerPoint intake through immutable embedded Resources and bounded raw-OOXML preflight;
 - slide, master, layout, theme, notes, modern-comment, media, chart, direct-versus-template font, native-table style/structure fingerprint, and picture treatment/description inventory;
 - conservative template classification that requires a human target decision when an exact authorized template hash is unavailable;
-- deck-wide Designer Cleanup proposals with per-slide dispositions, source/proposal OOXML renders, source-preserving Arial/Century Gothic-to-Aptos transformation, high-confidence cover-text alignment repair, deterministic normalization of compatible native tables, and visible dense/complex/semantic-color exceptions;
+- deck-wide Designer Cleanup proposals with per-slide dispositions, source/proposal OOXML renders, source-preserving Arial/Century Gothic-to-Aptos transformation, directly editable text-box geometry/fit inventory, collision-checked high-confidence cover and peer alignment repair, explicit overflow/off-slide/safe-margin/ambiguous-alignment review items, deterministic normalization of compatible native tables, and visible dense/complex/semantic-color exceptions;
+- stable slide-local IDs, exact object-mapped text, and EMU/inch geometry for supported text, shape, picture, table, chart, connector, group, and graphic-frame objects, plus a first non-destructive Edit mode for selection, snapped dragging, measured move/resize, nudge, safe-area alignment, and shared human/MCP geometry proposals with Current/Proposal review;
+- atomic MCP layout transactions covering 1–20 objects on one slide, with stale-write guards and pre-proposal rejection of new overlap, worsened text fit, unsafe-edge regression, off-slide geometry, or accidental picture distortion unless a deliberate exception is recorded;
 - slide-count, visible-text-hash, exact table-cell-content, and merged-topology export guards, ZIP integrity qualification, new-copy-only export, and mandatory manual visual-review status;
 - approved native-table exemplar registration by embedded Resource hash, slide number, and table ordinal;
 - content-minimized JSON audit reports that omit slide text, notes, picture names/descriptions, and Resource bytes;
 - self-contained `.pstudio` package Save/Open with independent original/derivative hash validation and no required original paths;
 - optional full-package `.pstudio-secure` AES-256-GCM encryption with PBKDF2-SHA-256, wrong-password/tamper rejection, and encrypted recovery behavior;
-- loopback-only, per-session desktop bridge and standard STDIO MCP server with status, authorized audit/Resource metadata, Current/Proposal slide renders, and proposal-only font or deck-wide designer-cleanup tools;
+- loopback-only, per-session desktop bridge and standard STDIO MCP server with status, authorized audit/Resource metadata, full semantic Template Pack catalog, deterministic per-slide layout recommendations, stable object inventory, exact bounded design context, Current/Proposal slide renders, and proposal-only font, deck-wide designer-cleanup, single-object geometry, or atomic multi-object layout tools;
+- a first macOS PowerPoint-native render bridge that materializes exact temporary Source/Current/Proposal/Export PPTX revisions, exports through Microsoft PowerPoint, rasterizes bounded slide images locally, validates slide-image count, removes the cleartext job, and supplies explicit authority/provenance to Slides, Review, and MCP while retaining a visibly labeled OOXML fallback;
+- revision-bound AI slide-design work orders and a representative five-slide qualification set combining native Current raster identity/provenance, exact protected content, hybrid scene objects/operations, deterministic findings, submitted design comments, ORNL design rules, and ranked semantic Template Pack candidates;
+- a first semantic recomposition path that binds source objects to approved layout zones while retaining the source native master/layout, blocks substantial unmeasured text-frame replacement, materializes an exact-content proposal, compares Current/Proposal through Microsoft PowerPoint with raster hashes and changed-region metrics, and lets the AI reject only its own failed pending draft with evidence and rationale recorded;
 - source setup/start scripts for macOS and Windows, repository data-safety scanning, a rendered installation-guide PDF, automated tests, production build, and Electron smoke capture.
+
+End-to-end qualification evidence on 2026-08-12 used the live Electron app and its STDIO MCP server against an authorized 26-slide local deck: the model read exact object context, staged a bounded cover alignment, visually compared Current/Proposal, accepted it in the UI, exported a new editable PPTX, and rendered source/output decks independently through Microsoft PowerPoint to 26 JPEGs each. Slide count, every visible-text hash, every editable text-box hash, table-cell hashes, and merged-table topology matched; exactly the intended first-slide native render changed, while all 25 unaffected slide JPEGs remained byte-identical. This proves the current bounded geometry path, not full autonomous deck redesign or the complete in-app native export-acceptance gate.
 
 Important current limits:
 
-- the current authorized ORNL reference has been installed and its one master, 30 layouts, nine preview media assets, and expected SHA-256 have been qualified locally on macOS; this does not yet provide semantic slot compilation, side-by-side pack management, Windows qualification, or automatic `current-ornl` classification against the active pack;
+- the current authorized ORNL reference has been installed and its one master, 30 layouts, nine preview media assets, semantic slot/constraint catalog, deterministic compatibility ranking, 30-slide PowerPoint-native layout render, and expected SHA-256 have been qualified locally on macOS; this does not yet provide side-by-side pack management, project-pinned pack snapshots, representative synthetic content filling/overflow qualification, Windows qualification, or automatic `current-ornl` classification against the active pack;
 - PDF text extraction, rich Resource previews, media derivatives, paste intake, and extracted-text MCP reads are not implemented yet; those Resources remain embedded with an honest support state;
-- imported-slide Current/Proposal previews are revision-bound local OOXML reconstructions rather than PowerPoint-native renders, and Template Design previews remain OOXML-derived structural views with app-only placeholder guides; a cleaned export therefore remains `Needs manual review`;
+- imported-slide Source/Current/Proposal/Export views and Template Design previews prefer PowerPoint-native pixels on supported macOS systems and visibly identify the OOXML reconstruction when native rendering is unavailable; layout preview renders are cached only for the active session, selected-object crops/contact sheets, persistent cache policy, Windows automation, and an automatic saved-export rerender comparison remain, and text fit is still a conservative deterministic estimate rather than final Office font measurement; a cleaned export therefore remains `Needs manual review`;
+- semantic recomposition now stages one atomic reversible transaction containing the approved native layout remap plus validated semantic object bindings. The layout path reuses an exact SHA-256-matching approved layout already present in the deck, or clones its allowlisted master/layout/theme/media graph when no exact part exists; compatible placeholder identities are remapped before only the selected slide is repointed. Text work orders expose direct text insets, paragraph margins/indents, bullet counts, and estimated optical text starts. Full inherited-style resolution, cloned-master visual qualification across every layout, and bounded autonomous revise/retry still remain;
 - table exemplar style extraction/application, cell-level overflow solving, figure normalization, prior-revision comparison, protected/excluded object scopes, and cleanup reports are not implemented;
 - encrypted packages and autosave currently use bounded all-in-memory processing rather than the future streaming container;
-- resumable 200-slide queueing, the direct-manipulation canvas, stable object/table-cell anchors, the first-class table editor, PDF/SVG/PNG deck export, layout-remapping reflow/manual composition, and source-grounded assertion-evidence creation remain later phases;
+- resumable 200-slide queueing, multi-select/guides/cropping/undo and the rest of the direct-manipulation canvas, stable text/table-cell comment anchors, the first-class table editor, PDF/SVG/PNG deck export, layout-remapping reflow/manual composition, and source-grounded assertion-evidence creation remain later phases;
 - macOS source setup, the real supplied deck structures, real-package encryption, PowerPoint-open qualification, and MCP gating were exercised locally; a fresh Windows checkout has not yet been qualified.
+
+### 0.2 Specification 0.9 architecture decision
+
+Specification 0.9 makes AI design quality and PowerPoint fidelity one architecture rather than two later validation concerns. Presentation Studio uses a hybrid fidelity model:
+
+1. the canonical scene is authoritative for supported editable properties and semantic design intent;
+2. immutable source OOXML and retained relationships are authoritative for preserved native content that the scene does not fully represent;
+3. a Microsoft PowerPoint render is the preferred visual authority for source, current, proposal, and export review when PowerPoint is available;
+4. a qualified alternate renderer is a labeled fallback, never an undisclosed substitute for PowerPoint fidelity;
+5. the user and AI work from the same revision-bound pixels, structured objects, template constraints, content protections, and deterministic findings.
+
+This is not a promise that every PowerPoint feature becomes fully editable in a web canvas. It is a promise that supported objects are honestly editable, unsupported objects are preserved or explicitly converted, renderer provenance is visible, and no design is called ready until the actual exported artifact has been inspected.
 
 ---
 
@@ -85,9 +105,32 @@ Once the cleanup workflow is trustworthy, the same project model, Template Packs
 
 ## 2. Product principles
 
-### 2.1 Structured source of truth
+### 2.1 Hybrid fidelity authority
 
-The canonical JSON model inside the saved Presentation Studio package is the editable source of truth. The package also owns immutable-by-hash Resource bytes and the portable Template Pack snapshot needed by that model. Electron previews, PowerPoint files, PDFs, SVGs, and PNGs are derived artifacts produced from the same validated project and shared slide scene.
+Presentation Studio does not treat a simplified web reconstruction as the complete truth for an imported PowerPoint file. Authority is divided deliberately:
+
+- the canonical JSON scene is authoritative for every supported editable property, semantic role, Template Pack binding, design rule, comment anchor, and revision transaction;
+- immutable source OOXML, relationships, and retained package parts are authoritative for native content that Presentation Studio preserves but does not fully interpret;
+- immutable-by-hash Resource bytes and the project-pinned Template Pack snapshot are authoritative for packaged media and template dependencies;
+- Microsoft PowerPoint-native renders are the preferred visual authority for imported, current, proposed, and exported slides when PowerPoint is available;
+- deterministic validators remain authoritative for exact-content, geometry, package integrity, support-state, and policy claims.
+
+SVG, PNG, PDF, approximate Electron previews, and alternate-office renders are derived observations. They must record their renderer and version and must not silently override native pixels or preserved package data.
+
+### 2.1.1 Object fidelity states
+
+Every imported object and every proposed conversion has one visible support state:
+
+| State | Contract |
+| --- | --- |
+| `editable-native` | Fully represented in the scene and exported as a supported editable PowerPoint object. |
+| `preserved-native` | Retained losslessly in the PowerPoint preservation envelope. The app may expose safe whole-object operations, but unsupported internal properties remain locked. |
+| `conversion-required` | Editing requires a disclosed conversion that may change editability or behavior. The app shows the expected loss and does not convert without explicit approval. |
+| `unsupported-blocking` | Neither safe editing nor qualified passthrough is available; the slide remains visible from its native baseline and is deferred for specialist handling. |
+
+No renderer placeholder, raster fallback, or reconstructed approximation may be presented as an editable native object.
+
+The first implemented scene schema is `presentation-studio/scene` version 1. It binds every directly inventoried object to a stable slide/shape locator, source z-order, native geometry, semantic role, content hash where available, represented-property states, and a current-operation matrix. Its companion `presentation-studio/preservation-envelope` version 1 binds the embedded source package and each discovered slide/relationship part by SHA-256, records advanced package blockers, and declares surgical OOXML overlay as the cleanup export strategy. These schemas do not make an unsupported PowerPoint feature editable: source bytes remain authoritative for preserved content and Microsoft PowerPoint-native pixels remain authoritative for appearance.
 
 ### 2.2 Template fidelity before visual imitation
 
@@ -121,7 +164,7 @@ The Electron canvas may use CSS for the application shell and controls, but slid
 
 ### 2.7 Evidence from actual artifacts
 
-Validation must inspect the generated JSON, PPTX, PDF, SVG, and PNG artifacts. A clean Electron preview alone is not sufficient proof of export fidelity.
+Validation must inspect the generated JSON, PPTX, PDF, SVG, and PNG artifacts. A clean Electron preview alone is not sufficient proof of export fidelity. The normal AI design loop materializes a temporary candidate PPTX, renders it through PowerPoint when available, compares that native observation with the source/current/proposal evidence, and returns any divergence to the same revision before the slide may be marked ready.
 
 ### 2.8 Reversible, resumable work
 
@@ -934,8 +977,8 @@ Each imported object receives one explicit state:
 | --- | --- |
 | `editable-native` | Represented in the canonical scene and exported as an editable PowerPoint object. |
 | `preserved-native` | Not fully editable in Presentation Studio, but original OOXML is retained for controlled passthrough. |
-| `render-fallback` | A visible representation can be used only after a person accepts lost editability. |
-| `manual-review` | No safe automatic interpretation or preservation path has been proven. |
+| `conversion-required` | A proposed edit requires a disclosed conversion and explicit approval because editability or native behavior may be lost. |
+| `unsupported-blocking` | No safe automatic interpretation or preservation path has been proven; the native baseline remains visible and specialist review is required. |
 
 Comment data is review metadata, not audience-visible slide content. Comment parts must not block slide import, must be preserved when technically possible, and are not disclosed through MCP unless the user grants that representation for the current session.
 
@@ -1119,26 +1162,27 @@ The AI Collaborator is an iterative design partner, not a replacement canvas. It
 
 - the user's goal and selected content policy;
 - source, current, and pending-proposal revision IDs;
-- the source slide render and current deterministic render;
+- native source/current/proposal renders when available, with renderer provenance and clearly labeled deterministic fallbacks;
 - stable object IDs, semantic roles, bounding boxes, text metrics, z-order, and template slots;
 - authoritative layout findings and protected-content hashes;
 - confirmed template classification, Cleanup Rule Profile, style exemplars, prior exclusions, and finding confidence;
 - target-layout candidates and a bounded, authorized Resource shortlist;
 - allowed operations, including whether slide splitting or new visuals may be proposed.
 
-The normal collaboration loop is **Inspect → Diagnose → Propose → Render → Review → Apply or Reject → Validate**. After each proposal, the app automatically renders the candidate and refreshes its findings. A configurable iteration cap and unchanged-finding stop rule prevent an autonomous loop from running indefinitely.
+The normal collaboration loop is **Inspect → Diagnose → Propose → Materialize candidate PPTX → Native render → Compare → Revise → Review → Apply or Reject → Validate export**. After each proposal, the app automatically renders the candidate through PowerPoint when available, refreshes deterministic findings, and returns the visual comparison to the AI. A configurable iteration cap and unchanged-finding stop rule prevent an autonomous loop from running indefinitely.
 
 When work begins from a design thread, the loop is **Anchor → Inspect current revision → Stage bounded fix → Render → Reply → Apply/Reject/Revise → Resolve/Reopen**. The app passes the thread's semantic anchor, original reference crop, and current mapped geometry together so the model does not have to infer what “this area” means. Before staging, the AI re-reads the current revision and must not edit an object with an active human soft lock.
 
 Canvas observation combines pixels and structure:
 
-- a deterministic full-slide image tied to an exact scene revision;
+- a PowerPoint-native full-slide image tied to an exact package/scene revision when available;
+- a deterministic editor render tied to the same revision, labeled as an editable-scene observation rather than native truth;
 - an optional 2× image, selected-object crop, and bounded tiles for dense slides;
 - a deck contact sheet for narrative rhythm and consistency;
 - geometry, overflow, overlap, off-canvas, minimum-type, contrast, image-resolution, crop, reading-order, and template-slot findings;
 - source-versus-proposal and editor-versus-export visual comparisons.
 
-Models that accept image content can inspect the render. Models that cannot still receive the structured scene and findings. Model vision is advisory: deterministic layout checks and final exported-artifact inspection remain authoritative.
+Models that accept image content inspect the highest-authority render available and receive its renderer provenance. Models that cannot still receive the structured scene and findings. Model vision is advisory: deterministic layout checks and final exported-artifact inspection remain authoritative. A model must not call a design ready when it has inspected only an approximate renderer and the required native-render gate remains pending.
 
 In `cleanup-only`, the AI may diagnose and stage only allowed rule changes. It cannot propose a new assertion, image, icon, layout, slide, or wording change. A user must visibly change the operation scope before generative tools become available.
 
@@ -1207,11 +1251,24 @@ For cleanup proposals, Review also shows exact source-text, table-cell, notes, m
 
 ## 13. Rendering and export
 
-### 13.1 Shared slide scene
+### 13.1 Hybrid scene, preservation envelope, and render observations
 
-Template bindings and project elements resolve into one renderer-neutral `SlideScene`. The Electron preview, SVG, PNG, PDF, and PowerPoint exporters consume that scene. Export-specific adapters may add metadata or use native capabilities but must not silently reinterpret semantic content.
+Template bindings and supported project elements resolve into one PowerPoint-aware `SlideScene`. The editor, validation engine, native PowerPoint adapter, and SVG/PNG/PDF exporters consume the supported scene properties. Imported objects that are not fully represented remain in a separate preservation envelope keyed to stable source IDs and OOXML relationships. Export adapters must merge scene edits with preserved native content without silently reinterpreting, dropping, flattening, or duplicating it.
 
-Every render produces a revision-bound `RenderObservation` containing output dimensions, raster/SVG hash, scene revision, font/substitution report, object bounds, text metrics, and deterministic findings. This record lets the AI and human discuss the same canvas state and prevents a proposal from being evaluated against a stale screenshot.
+The slide workspace uses a hybrid canvas:
+
+- a native PowerPoint render is the preferred visual foundation;
+- supported scene objects provide selectable and editable overlays;
+- preserved-native objects remain visually faithful and visibly limited in edit scope;
+- guides, findings, comments, and AI activity appear as editor-only overlays that never reach export.
+
+Every render produces a revision-bound `RenderObservation` containing renderer family/version, authority level, source package hash, scene revision, output dimensions, raster/SVG hash, font/substitution report, object bounds, text metrics, and deterministic findings. Valid renderer families include at least `powerpoint-native`, `qualified-alternate`, and `studio-approximate`. This record lets the AI and human discuss the same canvas state and prevents a proposal from being evaluated against a stale or mislabeled screenshot.
+
+### 13.1.1 Native render bridge
+
+When Microsoft PowerPoint is available, Presentation Studio uses a local bridge or companion add-in to render exact Source, Current, Proposal, and Export revisions without exposing project content outside the workstation. Rendering occurs from an immutable source or temporary candidate copy; it never overwrites the imported original. The bridge returns bounded slide images plus renderer/version, slide dimensions, package hash, font substitution where available, and failure diagnostics.
+
+If native rendering is unavailable, the UI and MCP expose the best qualified fallback with an explicit authority warning. A fallback may support continued editing, but final PowerPoint-fidelity status remains `Needs native review` until a PowerPoint render is inspected.
 
 ### 13.2 PowerPoint export
 
@@ -1232,7 +1289,7 @@ PowerPoint export must:
 
 The implementation may use PptxGenJS for native object generation, but template fidelity and imported-deck preservation require a separately tested OOXML/template adapter. Library choice must not weaken the master/layout contract.
 
-When Microsoft PowerPoint is installed, release qualification and the final local audit should render the exported PPTX through PowerPoint and compare it with the approved Presentation Studio render. An alternate Office-compatible renderer is useful for portability testing but cannot by itself prove PowerPoint fidelity. Renderer disagreements are reported; they are not automatically attributed to source corruption.
+When Microsoft PowerPoint is installed, each design iteration and the final local audit should render the candidate/exported PPTX through PowerPoint and compare it with the approved source/current/proposal observations. An alternate Office-compatible renderer is useful for portability testing but cannot by itself prove PowerPoint fidelity. Renderer disagreements are reported; they are not automatically attributed to source corruption.
 
 ### 13.3 PDF export
 
@@ -1394,9 +1451,12 @@ Initial proposed tools:
 | `get_project_outline` | Read slide IDs, order, titles, narrative roles, layouts, policies, and warning counts. |
 | `get_slide` | Read one authorized slide with stable element IDs and source references. |
 | `get_slide_geometry` | Read stable object IDs, semantic roles, bounds, text metrics, z-order, template slots, and deterministic findings for one revision. |
-| `get_slide_render` | Return a revision-bound source, current, or proposal render as image content/resource link when supported, with a structured fallback. |
+| `get_slide_render` | Return a revision-bound Source, Current, Proposal, or Export render plus renderer provenance/authority as image content/resource link when supported, with a structured fallback. |
 | `get_deck_contact_sheet` | Return a bounded, revision-bound montage and slide index for deck-level rhythm and consistency review. |
 | `compare_slide_renders` | Return source/current/proposal or editor/export comparison metrics, difference image when supported, and categorized findings. |
+| `reject_design_proposal` | Reject only the AI's currently pending draft after an authoritative Current/Proposal comparison, recording a concrete visual-regression rationale and raster evidence without applying, saving, exporting, or changing source bytes. |
+| `get_layout_candidates` | Return ranked compatible Template Pack layouts with semantic-slot mappings, capacity, rejected alternatives, and fit risks for one slide/work order. |
+| `run_visual_preflight` | Run revision-bound geometry, content, template, native-render, and cross-render checks and return exact blocking findings without changing state. |
 | `list_design_threads` | List bounded open/resolved design threads by deck, slide, object type, assignee, and status without returning unrelated slide content. |
 | `get_design_thread` | Read one thread, its exact semantic anchor, original revision/crop metadata, current anchor mapping, replies, and related proposal/transaction lineage. |
 | `get_table_design_context` | Read one authorized native table's stable row/column/cell IDs, merged topology, exact cell text hashes/authorized text, geometry, semantic roles, styles, density, and deterministic fit findings. |
@@ -1421,6 +1481,10 @@ Initial proposed tools:
 | `stage_deck_outline` | Stage a source-grounded narrative outline for review. |
 | `stage_slide_create` | Stage a new slide using an installed layout and semantic bindings. |
 | `stage_slide_update` | Stage changes to one existing slide using exact stable IDs. |
+| `stage_slide_design` | Stage one coordinated slide-level design proposal across supported objects, semantic roles, and a selected approved layout while preserving the active content policy. |
+| `stage_alignment_pass` | Stage bounded align/distribute/baseline/safe-area corrections across explicit stable object IDs on one slide. |
+| `stage_text_fit_update` | Stage bounded text-frame geometry, inset, wrapping, line-spacing, and fit-safe type changes without changing protected wording. |
+| `stage_figure_treatment` | Stage bounded image/caption/source crop, alignment, spacing, and approved frame treatment without changing media identity or protected labels. |
 | `stage_design_thread_resolution` | Stage a bounded fix and reply for one open thread against its current mapped anchor and exact scene revision; it cannot mark the thread resolved or apply the change. |
 | `stage_table_update` | Stage native table role, geometry, padding, alignment, and approved style changes against explicit table/row/column/cell IDs while preserving protected cell content and structure. |
 | `stage_cleanup_rule_batch` | Stage one versioned cleanup rule and one bounded property change across explicit object IDs, separating rerender/content exceptions. |
@@ -1443,7 +1507,7 @@ Tool availability is operation-scope aware. In `audit-only`, all mutating propos
 
 MCP V1 does not:
 
-- Apply or reject proposals.
+- Apply proposals, accept proposals, or reject a person's/previously accepted proposal. The AI may reject only its own currently pending design draft after an authoritative native comparison so routine failed iterations do not become user approval work.
 - Choose a save path.
 - Export files.
 - Import, replace, delete, or return original Resource bytes. A staged generated-visual candidate is a quarantined proposal, not an imported Resource, and cannot reference an arbitrary path or remote URL.
@@ -1760,7 +1824,7 @@ Presentation Studio/
 └── package.json
 ```
 
-The production ORNL template is an authorized versioned repository asset. Imported user content and standalone protected brand artwork remain outside the repository unless separately cleared.
+The production ORNL template is an authorized, versioned local application asset and is not committed to the public repository. Imported user content, extracted production Template Pack artwork, and standalone protected brand artwork remain outside the repository unless separately cleared.
 
 ---
 
@@ -1788,6 +1852,7 @@ Deliverables:
 - encrypted-envelope schema, versioning, and cryptographic test vectors;
 - Template Pack, Cleanup Rule Profile, finding, protection/exclusion, and style-exemplar schemas;
 - local ORNL and project-local sponsor/custom template inspection/compiler;
+- PowerPoint-native render bridge, renderer provenance, bounded render cache, and explicit qualified-fallback behavior;
 - structural template classification with confidence/evidence;
 - complete inventory of every layout in the active authorized ORNL revision (30 in the initial inspected reference);
 - local versioned ORNL Template Pack installation, side-by-side update, active-version display, and rollback behavior;
@@ -1795,7 +1860,7 @@ Deliverables:
 - synthetic committed Template Packs/rules for tests;
 - deterministic validation.
 
-Gate: compile and identify the locally installed authorized ORNL template plus a synthetic sponsor template without modifying either source; exercise every discovered ORNL layout with representative synthetic content; create single-deck and review-batch self-contained packages, move/delete their external originals, and reopen them with the same deck, Resource, rule, exemplar, derivative, and Template Pack hashes. No official ORNL template or extracted asset may appear in Git history.
+Gate: compile and identify the locally installed authorized ORNL template plus a synthetic sponsor template without modifying either source; exercise every discovered ORNL layout with representative synthetic content and PowerPoint-native layout renders; create single-deck and review-batch self-contained packages, move/delete their external originals, and reopen them with the same deck, Resource, rule, exemplar, derivative, and Template Pack hashes. No official ORNL template or extracted asset may appear in Git history.
 
 ### Phase 2 — Cleanup-first PowerPoint import and audit vertical slice
 
@@ -1804,14 +1869,15 @@ Deliverables:
 - branded Electron shell with **Clean existing PowerPoint** as the primary action;
 - multi-file/folder Batch intake and immutable source records;
 - layered OOXML preflight, native interpretation, preservation envelope, and visual baseline;
+- explicit `editable-native`, `preserved-native`, `conversion-required`, and `unsupported-blocking` object states;
 - modern-comment failure isolation and preservation;
 - template classification/confirmation UI;
 - effective-font, master/layout, local-override, table, figure, chart, notes, and unsupported-object inventories;
 - read-only deck/batch audit with production/editorial/domain categories;
-- shared slide scene and revision-bound Source render/geometry observation;
+- hybrid slide scene/preservation model plus revision-bound native Source render and deterministic geometry observation;
 - package Save/Open/Save As and desktop smoke tests.
 
-Gate: audit the synthetic mixed-font ORNL, sponsor, table, and modern-comment fixtures without changing their source files. The comment-triggered high-level parser failure must be isolated while package preflight and preservation succeed; the sponsor deck must not receive ORNL findings.
+Gate: audit the synthetic mixed-font ORNL, sponsor, table, and modern-comment fixtures without changing their source files. The comment-triggered high-level parser failure must be isolated while package preflight and preservation succeed; the sponsor deck must not receive ORNL findings. Every slide shows its native baseline when PowerPoint is available, and every object exposes an honest fidelity state.
 
 ### Phase 3 — Conservative cleanup, review, and editable PowerPoint export
 
@@ -1823,11 +1889,12 @@ Deliverables:
 - approved-as-is/protected/excluded scopes and minimal-change validation;
 - exact content/data/media/notes/comments hashing and transformation ledger;
 - By Rule and By Slide Before/After review with automatic exception separation;
+- automated Source → Current → Proposal native-render loop with deterministic and visual comparison evidence available to the AI;
 - template-preserving editable PPTX export and source-versus-output audit;
 - native PowerPoint versus alternate-renderer comparison;
 - human-readable PDF and machine-readable JSON cleanup reports.
 
-Gate: clean a synthetic multi-deck batch while preserving all protected content and prior-approved scopes, applying no ORNL rules to the sponsor deck, retaining native editable tables/figures, creating no fit regression, and producing separate PowerPoint copies/reports. Every output opens and renders in PowerPoint where available.
+Gate: clean a synthetic multi-deck batch while preserving all protected content and prior-approved scopes, applying no ORNL rules to the sponsor deck, retaining native editable tables/figures, creating no fit regression, and producing separate PowerPoint copies/reports. Every proposal and output opens and renders in PowerPoint where available, and the AI receives the native comparison before the proposal can be marked ready for review.
 
 ### Phase 4 — Resumable 200-slide batch and MCP collaboration
 
@@ -1836,6 +1903,7 @@ Deliverables:
 - responsive batch queue, per-deck checkpoints, pause/cancel/resume/retry, autosave, recovery, undo/redo, and failure isolation;
 - standard and encrypted Save/Open/Save As with encrypted recovery;
 - Canvas Observer with full-slide, crop, geometry, contact-sheet, and render-comparison views;
+- AI slide work orders that combine native pixels, structured scene data, Template Pack candidates, protected-content hashes, deterministic findings, and allowed operations;
 - local STDIO MCP server, loopback connection/token runtime, and per-Resource/per-representation permissions;
 - cleanup audit/read tools and operation-scoped cleanup proposal tools;
 - Before/After review, Apply/Reject/Exclude/Defer, stale-write behavior, and MCP install/remove configuration;
@@ -1848,6 +1916,7 @@ Gate: at least two MCP-capable desktop clients inspect the same authorized batch
 Deliverables:
 
 - explicit Reflow/Hybrid scope changes and layout matching;
+- separate cleanup/round-trip and composition export strategies behind the shared scene and command model;
 - unsupported-object review decisions and controlled native passthrough;
 - Canva-style manual slide/slot editing independent of AI, backed by stable scene IDs and validated command transactions;
 - shared human/AI undoable history, revision guards, active-human soft locks, and AI affected-object activity indicators;
@@ -1928,6 +1997,10 @@ A Presentation Studio release candidate is not ready until all of the following 
 35. A design thread can target an exact object, text range, table cell/range, or slide region; its pin follows an unambiguous reflow, retains original revision/crop evidence, and becomes `needs-reanchor` rather than attaching to the wrong object.
 36. An authorized AI client can stage and reply with a bounded design-thread resolution against the current revision, but cannot mark the thread resolved, apply the proposal, or overwrite a concurrent human edit.
 37. Table QA measures every cell and verifies text fit, type size, padding, alignment, merge topology, borders, contrast, semantic color, balanced geometry, and exact content/structure hashes in both project and exported PowerPoint renders.
+38. Source, Current, Proposal, and Export renders expose renderer provenance and exact revision/package hashes; an approximate render cannot satisfy a native-review requirement.
+39. Every imported object has an explicit fidelity state, and no unsupported object is silently flattened, omitted, duplicated, or presented as fully editable.
+40. When PowerPoint is available, an AI design proposal is materialized and natively rendered before it can be marked ready for review; the exported artifact is rendered and compared again before completion.
+41. A private, hash-pinned prior cleaned deck or approved equivalent can act as a local visual-regression fixture without adding its deck bytes, slide renders, or production Template Pack assets to Git.
 
 ---
 
@@ -1935,7 +2008,7 @@ A Presentation Studio release candidate is not ready until all of the following 
 
 ### 22.1 Official template integrity and versioning
 
-The official `.potx` is authorized for this repository. It must remain byte-identical to the approved source for its recorded version. Template updates require a new expected hash, complete layout inventory, compatibility review, and an explicit project migration proposal; they must not silently change existing projects.
+The official `.potx` is authorized for local Presentation Studio use but is not committed to the public repository. The locally installed source must remain byte-identical to the approved source for its recorded version. Template updates require a new expected hash, complete layout inventory, compatibility review, and an explicit project migration proposal; they must not silently change existing projects.
 
 ### 22.2 PowerPoint import/export library boundary
 
@@ -1985,6 +2058,8 @@ Office files can contain valid parts that a selected library does not recognize,
 
 A model may miss subtle alignment, crop, legibility, or consistency problems even when it receives a slide image, and two presentation renderers may disagree. Canvas observation must combine pixels with exact geometry and deterministic checks. Final quality claims are based on the inspected exported artifact, with PowerPoint-native rendering used where available and every known divergence disclosed.
 
+The native render bridge is an optional local integration rather than a reason to weaken offline behavior. PowerPoint version differences, platform automation restrictions, foreground-window requirements, missing fonts, protected-view prompts, and add-in/API limitations must be detected and reported. Presentation Studio retains a qualified fallback path, but a fallback does not inherit native authority merely because PowerPoint is unavailable.
+
 ### 22.14 Generated-visual safety and factual implication
 
 Generated imagery can disclose sensitive source material, introduce unsupported facts, imitate protected content, or create attractive but irrelevant decoration. Visual Needs require a communication purpose, minimal authorized context, provenance, rights acknowledgement, and a human gate. The application does not claim that automated checking proves factual, legal, or brand approval.
@@ -2015,6 +2090,6 @@ Sponsor templates may contain protected artwork, licensed fonts, or rules that d
 
 Presentation Studio is defined as:
 
-> A local-first, template-aware Electron presentation production system whose first job is to audit and conservatively clean batches of existing ORNL or sponsor PowerPoint decks without rewriting content, erasing intentional prior work, or applying the wrong template. It stores single decks or review batches as self-contained packages with canonical JSON and embedded Resources, exports separate editable PowerPoint copies plus reports/PDF/SVG/PNG, lets compatible local MCP clients inspect the revision-bound canvas and stage bounded human-reviewable changes, and later uses the same platform to compose source-grounded assertion-evidence presentations.
+> A local-first, template-aware Electron presentation production system whose first job is to audit, visually improve, and conservatively clean batches of existing ORNL or sponsor PowerPoint decks without rewriting content, erasing intentional prior work, or applying the wrong template. It stores single decks or review batches as self-contained packages with a canonical editable scene, a native OOXML preservation envelope, pinned Template Packs, and embedded Resources; gives compatible MCP clients native-rendered pixels plus exact structured design context; iterates through bounded human-reviewable proposals; exports separate editable PowerPoint copies plus reports/PDF/SVG/PNG; and later uses the same platform to compose source-grounded assertion-evidence presentations.
 
-The first visual expression is balanced and ORNL-aligned, while sponsor decks retain their own template expression. The first distribution is source-only. The first AI boundary is local MCP with explicit per-Resource permissions, operation-scoped tools, and review-first writes. The first proof of quality is a preserved source, an explainable audit, and an inspected editable PowerPoint copy—not merely a clean app canvas.
+The first visual expression is balanced and ORNL-aligned, while sponsor decks retain their own template expression. The first distribution is source-only. The first AI boundary is local MCP with explicit per-Resource permissions, operation-scoped tools, and review-first writes. The first proof of quality is a preserved source, an explainable audit, a native-rendered design iteration, and an inspected editable PowerPoint copy—not merely a clean app canvas.

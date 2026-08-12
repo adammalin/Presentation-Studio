@@ -116,6 +116,10 @@ export interface FontInventoryItem {
 export interface SlideInventoryItem {
   id: string;
   number: number;
+  sourcePart?: string;
+  sourcePartSha256?: string;
+  relationshipPart?: string;
+  relationshipPartSha256?: string;
   title: string;
   text: string;
   textHash: string;
@@ -163,6 +167,49 @@ export interface PictureInventoryItem {
   hasEffect: boolean;
 }
 
+export interface TextBoxInventoryItem {
+  id: string;
+  slideNumber: number;
+  ordinal: number;
+  shapeId: string;
+  text: string;
+  textHash: string;
+  characterCount: number;
+  paragraphCount: number;
+  geometry: { x: number; y: number; width: number; height: number };
+  textInsets: { left: number; right: number; top: number; bottom: number };
+  paragraphLeftMarginsEmu: number[];
+  paragraphIndentsEmu: number[];
+  bulletParagraphCount: number;
+  opticalLeftOffsetEmu: number;
+  estimatedOpticalLeftEmu: number;
+  opticalAlignmentConfidence: "direct" | "partial-inheritance";
+  fontFamilies: string[];
+  fontSizes: number[];
+  directFontSizeKnown: boolean;
+  paragraphAlignment: "left" | "center" | "right" | "justified" | "mixed";
+  verticalAlignment: "top" | "middle" | "bottom";
+  role: "title" | "body" | "caption" | "label" | "other";
+  autoFit: "none" | "shrink-text" | "resize-shape" | "unspecified";
+  estimatedLineCount: number;
+  estimatedRequiredHeightEmu: number;
+  fitRatio: number;
+  safeAreaStatus: "inside" | "near-edge" | "off-slide";
+  warnings: string[];
+}
+
+export interface LayoutReviewItem {
+  id: string;
+  slideNumber: number;
+  shapeId: string;
+  rule: "overflow-risk" | "off-slide" | "safe-area" | "alignment-ambiguous";
+  severity: Severity;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+  geometry: { x: number; y: number; width: number; height: number };
+  fitRatio?: number;
+}
+
 export interface AlignmentRepairCandidate {
   id: string;
   slideNumber: number;
@@ -170,9 +217,198 @@ export interface AlignmentRepairCandidate {
   textHash: string;
   source: { x: number; y: number; width: number; height: number };
   target: { x: number; y: number; width: number; height: number };
-  ruleId: "cover.dominant-left-edge";
+  ruleId: "cover.dominant-left-edge" | "peer.dominant-left-edge";
   confidence: "high";
   rationale: string;
+}
+
+export type SlideEditableObjectKind = "text" | "shape" | "picture" | "table" | "chart" | "connector" | "group" | "graphic-frame";
+export type SlideEditableObjectElement = "p:sp" | "p:pic" | "p:graphicFrame" | "p:cxnSp" | "p:grpSp";
+
+export interface SlideEditableObject {
+  id: string;
+  slideNumber: number;
+  shapeId: string;
+  name: string;
+  kind: SlideEditableObjectKind;
+  sourceElement: SlideEditableObjectElement;
+  geometry: { x: number; y: number; width: number; height: number; rotation: number };
+  canMove: boolean;
+  canResize: boolean;
+  textHash?: string;
+  tableId?: string;
+  pictureId?: string;
+}
+
+export const PRESENTATION_SCENE_SCHEMA = "presentation-studio/scene" as const;
+export const PRESENTATION_SCENE_VERSION = 1 as const;
+export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
+export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
+
+export type SceneFidelityState = "editable-native" | "preserved-native" | "conversion-required" | "unsupported-blocking";
+export type SceneSemanticRole = "title" | "body" | "caption" | "label" | "image" | "table" | "chart" | "connector" | "group" | "decoration" | "other";
+export type SceneRepresentationState = "native" | "partial" | "preserved" | "none";
+
+export interface SceneFidelityCounts {
+  "editable-native": number;
+  "preserved-native": number;
+  "conversion-required": number;
+  "unsupported-blocking": number;
+}
+
+export interface PresentationSceneObject {
+  id: string;
+  slideId: string;
+  slideNumber: number;
+  shapeId: string;
+  name: string;
+  kind: SlideEditableObjectKind;
+  sourceElement: SlideEditableObjectElement;
+  semanticRole: SceneSemanticRole;
+  fidelityState: SceneFidelityState;
+  fidelityReason: string;
+  geometry: { x: number; y: number; width: number; height: number; rotation: number };
+  zIndex: number;
+  sourceLocator: {
+    slidePart: string;
+    shapeId: string;
+    tableId?: string;
+    pictureId?: string;
+  };
+  representation: {
+    geometry: SceneRepresentationState;
+    text: SceneRepresentationState;
+    style: SceneRepresentationState;
+    internalStructure: SceneRepresentationState;
+  };
+  operations: {
+    move: boolean;
+    resize: boolean;
+    restyle: boolean;
+    editText: boolean;
+    editTableStyle: boolean;
+    replaceMedia: boolean;
+    editChartData: boolean;
+    editInternalStructure: boolean;
+  };
+  contentHash?: string;
+  protected: boolean;
+}
+
+export interface PresentationSceneSlide {
+  id: string;
+  number: number;
+  sourcePart: string;
+  sourcePartSha256?: string;
+  relationshipPart?: string;
+  relationshipPartSha256?: string;
+  sourceTextHash: string;
+  targetLayoutId?: string;
+  objectIds: string[];
+  fidelityCounts: SceneFidelityCounts;
+  preservationRequired: boolean;
+  protected: boolean;
+}
+
+export interface PowerPointPreservationEnvelope {
+  schema: typeof PRESERVATION_ENVELOPE_SCHEMA;
+  version: typeof PRESERVATION_ENVELOPE_VERSION;
+  sourceResourceId: string;
+  sourceSha256: string;
+  sourceBytesAuthoritative: true;
+  nativeRenderAuthoritativeForAppearance: true;
+  exportStrategy: "surgical-ooxml-overlay";
+  packageFileCount: number;
+  expandedByteLength: number;
+  protectedFeatures: {
+    macros: boolean;
+    oleObjects: boolean;
+    externalRelationships: boolean;
+  };
+  blockingFeatures: Array<"macros" | "ole-objects" | "external-relationships">;
+  slides: Array<{
+    slideId: string;
+    slideNumber: number;
+    sourcePart: string;
+    sourcePartSha256?: string;
+    relationshipPart?: string;
+    relationshipPartSha256?: string;
+    sourceTextHash: string;
+    objectIds: string[];
+  }>;
+}
+
+export interface PresentationScene {
+  schema: typeof PRESENTATION_SCENE_SCHEMA;
+  version: typeof PRESENTATION_SCENE_VERSION;
+  revision: string;
+  sourceSha256: string;
+  slideSize: { width: number; height: number };
+  templateBinding: {
+    sourceClassification: TemplateClassification;
+    targetTemplateId?: string;
+    targetDecisionSource?: TemplateDecisionSource;
+  };
+  slides: PresentationSceneSlide[];
+  objects: PresentationSceneObject[];
+  fidelityCounts: SceneFidelityCounts;
+  preservationEnvelope: PowerPointPreservationEnvelope;
+}
+
+export interface GeometryEditCommand {
+  id: string;
+  slideNumber: number;
+  objectId: string;
+  shapeId: string;
+  sourceElement: SlideEditableObjectElement;
+  objectKind: SlideEditableObjectKind;
+  operation: "move" | "resize" | "move-and-resize";
+  source: { x: number; y: number; width: number; height: number };
+  target: { x: number; y: number; width: number; height: number };
+  rationale: string;
+  author: "human" | "ai";
+  constraints: {
+    allowIntentionalOverlap: boolean;
+    allowFitRisk: boolean;
+    allowSafeArea: boolean;
+    allowAspectRatioChange: boolean;
+  };
+  validation: {
+    fitRatio?: number;
+    safeAreaStatus: "inside" | "near-edge";
+    overlapObjectIds: string[];
+    warnings: string[];
+  };
+}
+
+export interface TextStyleCommand {
+  id: string;
+  slideNumber: number;
+  objectId: string;
+  shapeId: string;
+  typeface: "Aptos";
+  fontSizePt?: number;
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+  alignment?: "left" | "center" | "right";
+  verticalAlignment?: "top" | "middle" | "bottom";
+  insetsInches?: { top: number; right: number; bottom: number; left: number };
+  rationale: string;
+  author: "human" | "ai";
+}
+
+export interface DecorativeShapeCommand {
+  id: string;
+  slideNumber: number;
+  name: string;
+  geometry: { x: number; y: number; width: number; height: number };
+  fillColor?: string;
+  lineColor?: string;
+  lineWidthPt: number;
+  behindContent: boolean;
+  rationale: string;
+  author: "human" | "ai";
 }
 
 export interface AuditFinding {
@@ -206,12 +442,16 @@ export interface PptxAudit {
   containsExternalRelationships: boolean;
   packageFileCount: number;
   expandedByteLength: number;
+  slideSize: { width: number; height: number };
   classification: TemplateClassification;
   classificationEvidence: string[];
   fonts: FontInventoryItem[];
   slides: SlideInventoryItem[];
   tables: TableInventoryItem[];
   pictures: PictureInventoryItem[];
+  textBoxes: TextBoxInventoryItem[];
+  editableObjects: SlideEditableObject[];
+  layoutReviews: LayoutReviewItem[];
   alignmentRepairs: AlignmentRepairCandidate[];
   findings: AuditFinding[];
   warnings: string[];
@@ -219,7 +459,7 @@ export interface PptxAudit {
 
 export interface CleanupChange {
   id: string;
-  kind: "font-family" | "table-style" | "alignment";
+  kind: "font-family" | "table-style" | "alignment" | "geometry" | "layout-remap" | "text-style" | "decoration";
   from: string;
   to: string;
   affectedSlideNumbers: number[];
@@ -227,8 +467,23 @@ export interface CleanupChange {
   tableIds?: string[];
   profileId?: string;
   alignmentRepairs?: AlignmentRepairCandidate[];
+  geometryCommands?: GeometryEditCommand[];
+  layoutCommands?: NativeLayoutRemapCommand[];
+  textStyleCommands?: TextStyleCommand[];
+  decorationCommands?: DecorativeShapeCommand[];
   rationale: string;
   selected: boolean;
+}
+
+export interface NativeLayoutRemapCommand {
+  id: string;
+  slideNumber: number;
+  templateSha256: string;
+  templateLayoutPart: string;
+  templateLayoutSha256: string;
+  templateLayoutName: string;
+  rationale: string;
+  author: "ai" | "human";
 }
 
 export interface SlideDesignDisposition {
@@ -236,6 +491,13 @@ export interface SlideDesignDisposition {
   status: "change-proposed" | "approved-as-is" | "needs-review";
   reasons: string[];
   changeIds: string[];
+}
+
+export interface SlideReviewDecision {
+  slideNumber: number;
+  decision: "approved" | "changes-requested";
+  reviewedAt: string;
+  comment?: string;
 }
 
 export interface TableNormalizationException {
@@ -252,11 +514,38 @@ export interface CleanupProposal {
   createdAt: string;
   summary: string;
   status: "pending" | "applied" | "rejected";
-  mode: "font-cleanup" | "designer-cleanup";
+  mode: "font-cleanup" | "designer-cleanup" | "slide-geometry" | "slide-reflow";
   standardVersion?: string;
+  designDecision?: {
+    kind: "semantic-recomposition";
+    workOrderRevision: string;
+    targetLayoutId: string;
+    targetLayoutName: string;
+    targetLayoutSourcePart: string;
+    compatibilityScore: number;
+    compatibilityStatus: "recommended" | "compatible" | "poor" | "incompatible";
+    rationale: string;
+    bindingCount: number;
+    application: "semantic-zones-on-source-layout" | "cloned-native-layout";
+  };
+  designReview?: {
+    decision: "rejected";
+    actor: "ai" | "human";
+    rationale: string;
+    reviewedAt: string;
+    evidence?: {
+      slideNumber: number;
+      renderer: "powerpoint-native";
+      currentRasterSha256: string;
+      proposalRasterSha256: string;
+      changedPixelRatio: number;
+    };
+  };
   changes: CleanupChange[];
   slideDispositions: SlideDesignDisposition[];
+  slideReviews?: SlideReviewDecision[];
   tableExceptions: TableNormalizationException[];
+  layoutExceptions: LayoutReviewItem[];
 }
 
 export interface DeckJob {
@@ -272,6 +561,7 @@ export interface DeckJob {
   designProfile?: ResolvedDesignProfile;
   status: DeckStatus;
   audit?: PptxAudit;
+  scene?: PresentationScene;
   proposal?: CleanupProposal;
   protectedSlideNumbers: number[];
   failureMessage?: string;

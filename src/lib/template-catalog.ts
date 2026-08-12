@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
 import { sha256 } from "./hash";
+import { deriveLayoutSemantics, type TemplateLayoutSemantics } from "./layout-semantics";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -46,6 +47,7 @@ export interface TemplateLayoutPreview {
   elements: TemplatePreviewElement[];
   placeholderTypes: string[];
   sourcePart: string;
+  semantic?: TemplateLayoutSemantics;
 }
 
 export interface TemplateCatalog {
@@ -534,7 +536,7 @@ export async function buildTemplateCatalog(bytes: Uint8Array, sourceName: string
     const elements = [...(showMasterShapes ? master.elements : []), ...layoutElements];
     for (const element of elements) if (element.mediaId) mediaParts.add(element.mediaId);
     const name = String(commonSlideData["@name"] ?? `Layout ${index + 1}`).trim() || `Layout ${index + 1}`;
-    layouts.push({
+    const preview = {
       id: `layout-${index + 1}`,
       name,
       category: categoryFor(name),
@@ -542,7 +544,8 @@ export async function buildTemplateCatalog(bytes: Uint8Array, sourceName: string
       elements,
       placeholderTypes: [...new Set(elements.map((element) => element.placeholderType).filter((value): value is string => Boolean(value)))],
       sourcePart: layoutPart,
-    });
+    };
+    layouts.push({ ...preview, semantic: deriveLayoutSemantics(preview, slideWidth, slideHeight) });
   }
 
   const media: Record<string, string> = {};
@@ -675,7 +678,8 @@ export async function buildSlideRenderCatalog(bytes: Uint8Array, sourceName: str
     const warnings: string[] = [];
     if (slideElements.length === 0) warnings.push("No supported editable slide elements were available to the local preview renderer.");
     if (elements.some((element) => element.kind === "text" && !element.fontFamily)) warnings.push("Some text uses inherited formatting that may differ in native PowerPoint.");
-    slides.push({ id: `slide-render-${index + 1}`, number: index + 1, title, hidden: String(slideXml["@show"] ?? "1") === "0", renderWarnings: warnings, name: title, category: "content", background: Object.keys(record(common.bg)).length ? backgroundFor(common, layout.theme) : layout.background, elements, placeholderTypes: [], sourcePart: slidePart });
+    const preview = { id: `slide-render-${index + 1}`, name: title, category: "content" as const, background: Object.keys(record(common.bg)).length ? backgroundFor(common, layout.theme) : layout.background, elements, placeholderTypes: [], sourcePart: slidePart };
+    slides.push({ ...preview, number: index + 1, title, hidden: String(slideXml["@show"] ?? "1") === "0", renderWarnings: warnings, semantic: deriveLayoutSemantics(preview, slideWidth, slideHeight) });
   }
 
   const media: Record<string, string> = {};

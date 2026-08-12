@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("presentationStudioDesktop", {
   autosaveProject: (payload) => ipcRenderer.invoke("project:autosave", payload),
   getMcpStatus: () => ipcRenderer.invoke("mcp:get-status"),
   getPresentationFonts: () => ipcRenderer.invoke("fonts:get-presentation-fonts"),
+  getNativeRenderCapabilities: () => ipcRenderer.invoke("render:get-capabilities"),
+  renderPowerPoint: (payload) => ipcRenderer.invoke("render:powerpoint", payload),
   getOnboardingTourVersion: () => ipcRenderer.invoke("app:get-onboarding-tour-version"),
   setOnboardingTourVersion: (version) => ipcRenderer.invoke("app:set-onboarding-tour-version", version),
   openUserGuide: () => ipcRenderer.invoke("app:open-user-guide"),
