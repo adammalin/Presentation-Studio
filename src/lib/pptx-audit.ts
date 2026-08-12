@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import type {
+  AlignmentRepairCandidate,
   AuditFinding,
   FontInventoryItem,
   PictureInventoryItem,
@@ -82,6 +83,18 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
       return ["marL", "marR", "marT", "marB", "anchor"].map((name) => `${name}:${attributeValue(attrs, name) ?? "default"}`).join("|");
     }));
     const styleFingerprint = await sha256Text(JSON.stringify({ styleId: styleId ? decodeXml(styleId).trim() : null, styleFlags, cellFonts: cellFonts.map(normalizeFont), colorTokens, marginSignatures }));
+    const cellBlocks = [...block.matchAll(/<a:tc\b[\s\S]*?<\/a:tc>/g)].map((match) => match[0]);
+    const cellTexts = cellBlocks.map((cell) => extractTextRuns(cell).join(""));
+    const contentHash = await sha256Text(JSON.stringify(cellBlocks.map((cell) => extractTextRuns(cell))));
+    const structureHash = await sha256Text(JSON.stringify({
+      rows: [...block.matchAll(/<a:tr\b[^>]*>([\s\S]*?)<\/a:tr>/g)].map((row) => [...row[1].matchAll(/<a:tc\b([^>]*)>[\s\S]*?<\/a:tc>/g)].map((cell) => ({
+        gridSpan: attributeValue(cell[1] ?? "", "gridSpan") ?? null,
+        rowSpan: attributeValue(cell[1] ?? "", "rowSpan") ?? null,
+        hMerge: attributeValue(cell[1] ?? "", "hMerge") ?? null,
+        vMerge: attributeValue(cell[1] ?? "", "vMerge") ?? null,
+      }))),
+      columns: xmlCount(block.match(/<a:tblGrid>[\s\S]*?<\/a:tblGrid>/)?.[0] ?? "", /<a:gridCol\b/g),
+    }));
     tables.push({
       id: `slide-${slideNumber}-table-${index + 1}`,
       slideNumber,
@@ -89,12 +102,16 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
       rowCount: xmlCount(block, /<a:tr\b/g),
       columnCount: xmlCount(block.match(/<a:tblGrid>[\s\S]*?<\/a:tblGrid>/)?.[0] ?? "", /<a:gridCol\b/g),
       mergedCellCount: xmlCount(block, /\b(?:gridSpan|rowSpan|hMerge|vMerge)=/g),
+      totalCellCharacterCount: cellTexts.reduce((sum, text) => sum + text.length, 0),
+      maximumCellCharacterCount: Math.max(0, ...cellTexts.map((text) => text.length)),
       styleId: styleId ? decodeXml(styleId).trim() : undefined,
       styleFlags,
       cellFonts,
       colorTokens,
       marginSignatures,
       styleFingerprint,
+      contentHash,
+      structureHash,
     });
   }
   return tables;
@@ -121,6 +138,53 @@ function extractPictureInventory(slideNumber: number, xml: string): PictureInven
       hasEffect: /<a:(?:effectLst|effectDag)\b/.test(block),
     };
   });
+}
+
+async function extractAlignmentRepairs(slideNumber: number, xml: string): Promise<AlignmentRepairCandidate[]> {
+  if (slideNumber !== 1) return [];
+  const shapes = [...xml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/g)].map((match) => {
+    const block = match[0];
+    const text = extractTextRuns(block).join(" ").replace(/\s+/g, " ").trim();
+    const shapeId = block.match(/<p:cNvPr\b[^>]*\bid=(?:"([^"]+)"|'([^']+)')/)?.slice(1).find(Boolean);
+    const transform = block.match(/<a:xfrm\b[^>]*>[\s\S]*?<a:off\b([^>]*)\/>[\s\S]*?<a:ext\b([^>]*)\/>[\s\S]*?<\/a:xfrm>/);
+    if (!text || !shapeId || !transform) return undefined;
+    const x = Number(attributeValue(transform[1] ?? "", "x"));
+    const y = Number(attributeValue(transform[1] ?? "", "y"));
+    const width = Number(attributeValue(transform[2] ?? "", "cx"));
+    const height = Number(attributeValue(transform[2] ?? "", "cy"));
+    if (![x, y, width, height].every(Number.isFinite)) return undefined;
+    return { shapeId, text, x, y, width, height };
+  }).filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
+  if (shapes.length < 3) return [];
+
+  const clusters: Array<{ center: number; members: typeof shapes }> = [];
+  for (const shape of shapes) {
+    const cluster = clusters.find((item) => Math.abs(item.center - shape.x) <= 38_100);
+    if (cluster) {
+      cluster.members.push(shape);
+      cluster.center = Math.round(cluster.members.reduce((sum, member) => sum + member.x, 0) / cluster.members.length);
+    } else clusters.push({ center: shape.x, members: [shape] });
+  }
+  const dominant = clusters.sort((left, right) => right.members.length - left.members.length)[0];
+  if (!dominant || dominant.members.length < 2) return [];
+
+  const candidates = shapes.filter((shape) => {
+    const delta = Math.abs(shape.x - dominant.center);
+    return delta >= 152_400 && delta <= 914_400 && shape.y >= 3_500_000 && shape.height <= 508_000 && shape.text.length >= 10;
+  });
+  const repairs: AlignmentRepairCandidate[] = [];
+  for (const candidate of candidates) repairs.push({
+    id: `slide-${slideNumber}-shape-${candidate.shapeId}-align-left`,
+    slideNumber,
+    shapeId: candidate.shapeId,
+    textHash: await sha256Text(candidate.text),
+    source: { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height },
+    target: { x: dominant.center, y: candidate.y, width: candidate.width, height: candidate.height },
+    ruleId: "cover.dominant-left-edge",
+    confidence: "high",
+    rationale: `Align a lower cover text block to the dominant left edge used by ${dominant.members.length} peer text blocks.`,
+  });
+  return repairs;
 }
 
 function xmlCount(xml: string, expression: RegExp): number {
@@ -237,6 +301,7 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   const slides: SlideInventoryItem[] = [];
   const tables: TableInventoryItem[] = [];
   const pictures: PictureInventoryItem[] = [];
+  const alignmentRepairs: AlignmentRepairCandidate[] = [];
   for (const path of slidePaths) {
     const xml = xmlByPath.get(path) ?? "";
     const number = slideNumberForPart(path) ?? slides.length + 1;
@@ -250,6 +315,7 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     tables.push(...await extractTableInventory(number, xml));
     const pictureCount = xmlCount(xml, /<p:pic\b/g);
     pictures.push(...extractPictureInventory(number, xml));
+    alignmentRepairs.push(...await extractAlignmentRepairs(number, xml));
     const connectorCount = xmlCount(xml, /<p:cxnSp\b/g);
     const relationXml = xmlByPath.get(`ppt/slides/_rels/slide${number}.xml.rels`) ?? "";
     const chartCount = xmlCount(relationXml, /relationships\/chart(?:"|\/)/gi);
@@ -310,6 +376,16 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
       autoFixable: true,
     }));
   }
+  for (const repair of alignmentRepairs) findings.push(finding({
+    ruleId: repair.ruleId,
+    category: "layout",
+    severity: "warning",
+    confidence: repair.confidence,
+    slideNumber: repair.slideNumber,
+    message: "A cover text block is offset from the dominant content alignment.",
+    evidence: `Text box left edge ${repair.source.x} EMU; dominant peer edge ${repair.target.x} EMU.`,
+    autoFixable: true,
+  }));
   const tableStyleIds = uniqueSorted(tables.map((table) => table.styleId ?? "No table style ID"));
   if (tableStyleIds.length > 1) {
     findings.push(finding({
@@ -411,6 +487,7 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     slides,
     tables,
     pictures,
+    alignmentRepairs,
     findings,
     warnings: modernCommentCount > 0 ? ["Modern PowerPoint comments were retained as unsupported package parts and do not block the audit."] : [],
   };

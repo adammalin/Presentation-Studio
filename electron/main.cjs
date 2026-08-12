@@ -3,7 +3,7 @@ const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
-const { randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
+const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 
 app.setName("Presentation Studio");
 const projectRoot = path.resolve(__dirname, "..");
@@ -16,7 +16,8 @@ if (smokeTest || capturePath) app.setPath("userData", path.join(app.getPath("tem
 
 const MCP_RUNTIME_FILE_NAME = "mcp-runtime.json";
 const APP_PREFERENCES_FILE_NAME = "preferences.json";
-const ONBOARDING_TOUR_VERSION = "1";
+const ACTIVE_TEMPLATE_FILE_NAME = "active-template.json";
+const ONBOARDING_TOUR_VERSION = "3";
 const MCP_MAX_BODY_BYTES = 5_000_000;
 const MAX_BINARY_BYTES = 1_250_000_000;
 const mcpToken = randomBytes(32).toString("hex");
@@ -37,6 +38,55 @@ function recoveryPath(encrypted) {
 
 function preferencesPath() {
   return path.join(app.getPath("userData"), APP_PREFERENCES_FILE_NAME);
+}
+
+function templatePackRoot() {
+  return path.join(app.getPath("userData"), "template-packs");
+}
+
+function activeTemplateManifestPath() {
+  return path.join(templatePackRoot(), ACTIVE_TEMPLATE_FILE_NAME);
+}
+
+function templateSourcePath(sha256, extension) {
+  return path.join(templatePackRoot(), sha256, `source.${extension}`);
+}
+
+function privatePresentationFontRoots() {
+  if (process.platform === "darwin") return ["/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts"];
+  if (process.platform === "win32") {
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    return [path.join(programFiles, "Microsoft Office", "root", "vfs", "Fonts", "private")];
+  }
+  return [];
+}
+
+async function readLocalPresentationFonts() {
+  const descriptors = [
+    { family: "Aptos", fileName: "Aptos.ttf", weight: 400, style: "normal" },
+    { family: "Aptos", fileName: "Aptos-Bold.ttf", weight: 700, style: "normal" },
+    { family: "Aptos", fileName: "Aptos-Italic.ttf", weight: 400, style: "italic" },
+    { family: "Aptos", fileName: "Aptos-Bold-Italic.ttf", weight: 700, style: "italic" },
+    { family: "Aptos Light", fileName: "Aptos-Light.ttf", weight: 400, style: "normal" },
+    { family: "Aptos Light", fileName: "Aptos-Light-Italic.ttf", weight: 400, style: "italic" },
+    { family: "Aptos Narrow", fileName: "Aptos-Narrow.ttf", weight: 400, style: "normal" },
+    { family: "Aptos Narrow", fileName: "Aptos-Narrow-Bold.ttf", weight: 700, style: "normal" },
+  ];
+  const fonts = [];
+  for (const descriptor of descriptors) {
+    for (const root of privatePresentationFontRoots()) {
+      try {
+        const filePath = path.join(root, descriptor.fileName);
+        const bytes = await fs.readFile(filePath);
+        if (bytes.byteLength === 0 || bytes.byteLength > 5 * 1024 * 1024) continue;
+        fonts.push({ family: descriptor.family, weight: descriptor.weight, style: descriptor.style, mediaType: "font/ttf", bytes: new Uint8Array(bytes) });
+        break;
+      } catch (error) {
+        if (error?.code !== "ENOENT") break;
+      }
+    }
+  }
+  return fonts;
 }
 
 async function readPreferences() {
@@ -216,6 +266,8 @@ function registerIpc() {
 
   ipcMain.handle("mcp:get-status", () => ({ available: Boolean(mcpAddress), address: mcpAddress, runtimeFile: runtimePath() }));
 
+  ipcMain.handle("fonts:get-presentation-fonts", async () => ({ fonts: await readLocalPresentationFonts() }));
+
   ipcMain.handle("app:get-onboarding-tour-version", async () => {
     if (skipFirstRunTour) return { version: ONBOARDING_TOUR_VERSION };
     const preferences = await readPreferences();
@@ -251,6 +303,47 @@ function registerIpc() {
     });
     if (result.canceled) return { canceled: true, files: [] };
     return { canceled: false, files: await readPickedFiles(result.filePaths) };
+  });
+
+  ipcMain.handle("template:pick-source", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Install an authorized PowerPoint template",
+      properties: ["openFile"],
+      filters: [{ name: "PowerPoint templates", extensions: ["potx", "pptx"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    const [file] = await readPickedFiles([result.filePaths[0]]);
+    return { canceled: false, file };
+  });
+
+  ipcMain.handle("template:install", async (_event, payload) => {
+    const name = path.basename(String(payload?.name ?? ""));
+    const extension = path.extname(name).slice(1).toLowerCase();
+    if (!name || !["potx", "pptx"].includes(extension)) throw new Error("Choose a POTX or PPTX template.");
+    const bytes = validateBinary(payload?.bytes);
+    if (bytes.byteLength > 250 * 1024 * 1024) throw new Error("The template exceeds the 250 MB installation limit.");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (digest !== String(payload?.sha256 ?? "")) throw new Error("The installed template hash does not match the previewed template.");
+    const installedAt = new Date().toISOString();
+    const sourcePath = templateSourcePath(digest, extension);
+    await atomicWrite(sourcePath, bytes);
+    await atomicWrite(activeTemplateManifestPath(), Buffer.from(`${JSON.stringify({ version: 1, name, sha256: digest, extension, installedAt }, null, 2)}\n`));
+    return { installed: true, name, sha256: digest, installedAt };
+  });
+
+  ipcMain.handle("template:get-active", async () => {
+    try {
+      const manifestBytes = await fs.readFile(activeTemplateManifestPath());
+      if (manifestBytes.byteLength > 64 * 1024) throw new Error("The active template manifest is oversized.");
+      const manifest = JSON.parse(manifestBytes.toString("utf8"));
+      if (!manifest || manifest.version !== 1 || !/^[0-9a-f]{64}$/.test(manifest.sha256) || !["potx", "pptx"].includes(manifest.extension)) throw new Error("The active template manifest is invalid.");
+      const bytes = await fs.readFile(templateSourcePath(manifest.sha256, manifest.extension));
+      if (createHash("sha256").update(bytes).digest("hex") !== manifest.sha256) throw new Error("The installed template no longer matches its manifest.");
+      return { installed: true, name: manifest.name, sha256: manifest.sha256, installedAt: manifest.installedAt, bytes: new Uint8Array(bytes) };
+    } catch (error) {
+      if (error?.code === "ENOENT") return { installed: false };
+      throw error;
+    }
   });
 
   ipcMain.handle("file:open-project", async () => {

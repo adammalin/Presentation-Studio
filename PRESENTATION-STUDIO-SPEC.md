@@ -3,7 +3,7 @@
 ## Product and Technical Specification
 
 - **Status:** Working foundation; phased implementation in progress
-- **Specification version:** 0.5
+- **Specification version:** 0.6
 - **Date:** 2026-08-11
 - **Repository:** `adammalin/Presentation-Studio`
 - **Distribution boundary:** Source-based installation only; no application installers
@@ -18,30 +18,31 @@ This document defines the intended product, data model, user experience, local s
 
 Implemented and locally qualified:
 
-- ORNL-aligned Electron, React, TypeScript, and Vite application shell with Batch, Deck Audit, Slides, Rules, Review, and Resources workspaces;
+- ORNL-aligned Electron, React, TypeScript, and Vite application shell with Batch, Deck Audit, Slides, Designs, Rules, Review, and Resources workspaces;
 - app-wide drag-and-drop plus multi-file Resources intake with local type/signature checks, SHA-256 deduplication, explicit processing states, and project-size limits;
 - versioned first-run onboarding with deterministic target spotlights, keyboard navigation, replay from the top bar, and local completion preferences outside project files;
+- local POTX/PPTX Template Pack installation with independent SHA-256 verification, protected application-data storage, restart persistence, and a searchable Designs gallery derived from native master/layout OOXML, template media, theme colors, and placeholder geometry;
 - packaged extracted-text derivatives for TXT, Markdown, JSON, CSV/TSV, DOCX, and XLSX Resources, with explicit stored-only or needs-review handling for other accepted types;
 - multi-file PowerPoint intake through immutable embedded Resources and bounded raw-OOXML preflight;
 - slide, master, layout, theme, notes, modern-comment, media, chart, direct-versus-template font, native-table style/structure fingerprint, and picture treatment/description inventory;
 - conservative template classification that requires a human target decision when an exact authorized template hash is unavailable;
-- human-reviewed direct slide font proposals and a source-preserving Arial/Century Gothic-to-Aptos PowerPoint transformation;
-- slide-count and visible-text-hash export guards, ZIP integrity qualification, new-copy-only export, and mandatory manual visual-review status;
+- deck-wide Designer Cleanup proposals with per-slide dispositions, source/proposal OOXML renders, source-preserving Arial/Century Gothic-to-Aptos transformation, high-confidence cover-text alignment repair, deterministic normalization of compatible native tables, and visible dense/complex/semantic-color exceptions;
+- slide-count, visible-text-hash, exact table-cell-content, and merged-topology export guards, ZIP integrity qualification, new-copy-only export, and mandatory manual visual-review status;
 - approved native-table exemplar registration by embedded Resource hash, slide number, and table ordinal;
 - content-minimized JSON audit reports that omit slide text, notes, picture names/descriptions, and Resource bytes;
 - self-contained `.pstudio` package Save/Open with independent original/derivative hash validation and no required original paths;
 - optional full-package `.pstudio-secure` AES-256-GCM encryption with PBKDF2-SHA-256, wrong-password/tamper rejection, and encrypted recovery behavior;
-- loopback-only, per-session desktop bridge and standard STDIO MCP server with status, authorized audit/Resource metadata, and proposal-only font-cleanup tools;
+- loopback-only, per-session desktop bridge and standard STDIO MCP server with status, authorized audit/Resource metadata, Current/Proposal slide renders, and proposal-only font or deck-wide designer-cleanup tools;
 - source setup/start scripts for macOS and Windows, repository data-safety scanning, a rendered installation-guide PDF, automated tests, production build, and Electron smoke capture.
 
 Important current limits:
 
-- the official ORNL Template Pack and exact expected template hash are not installed yet, so `current-ornl` cannot be proven automatically;
+- the current authorized ORNL reference has been installed and its one master, 30 layouts, nine preview media assets, and expected SHA-256 have been qualified locally on macOS; this does not yet provide semantic slot compilation, side-by-side pack management, Windows qualification, or automatic `current-ornl` classification against the active pack;
 - PDF text extraction, rich Resource previews, media derivatives, paste intake, and extracted-text MCP reads are not implemented yet; those Resources remain embedded with an honest support state;
-- slide previews are structural inventories, not revision-bound PowerPoint-native renders; a cleaned export therefore remains `Needs manual review`;
-- table exemplar style extraction/application, figure normalization, prior-revision comparison, protected/excluded object scopes, and cleanup reports are not implemented;
+- imported-slide Current/Proposal previews are revision-bound local OOXML reconstructions rather than PowerPoint-native renders, and Template Design previews remain OOXML-derived structural views with app-only placeholder guides; a cleaned export therefore remains `Needs manual review`;
+- table exemplar style extraction/application, cell-level overflow solving, figure normalization, prior-revision comparison, protected/excluded object scopes, and cleanup reports are not implemented;
 - encrypted packages and autosave currently use bounded all-in-memory processing rather than the future streaming container;
-- resumable 200-slide queueing, visual canvas observation, PDF/SVG/PNG deck export, reflow/manual composition, and source-grounded assertion-evidence creation remain later phases;
+- resumable 200-slide queueing, the direct-manipulation canvas, stable object/table-cell anchors, the first-class table editor, PDF/SVG/PNG deck export, layout-remapping reflow/manual composition, and source-grounded assertion-evidence creation remain later phases;
 - macOS source setup, the real supplied deck structures, real-package encryption, PowerPoint-open qualification, and MCP gating were exercised locally; a fresh Windows checkout has not yet been qualified.
 
 ---
@@ -92,9 +93,19 @@ The canonical JSON model inside the saved Presentation Studio package is the edi
 
 Presentation Studio must compile and preserve template structure rather than recreate a template from screenshots or approximate it from colors and fonts alone. The master, layouts, placeholders, theme, assets, and design rules are distinct parts of the template contract.
 
+### 2.2.1 Current authorized ORNL template and complete layout catalog
+
+Presentation Studio must keep the newest **locally installed and authorized** ORNL PowerPoint template available as a versioned Template Pack. “Latest” means the newest revision supplied or approved for the workstation or project; it does not mean an unverified Internet download, and the application must never replace or migrate a template silently.
+
+The active ORNL Template Pack must expose every real master and approved layout/design in the installed template as a selectable option. Layout previews must be rendered from that installed template, not recreated as screenshots, CSS approximations, or visually similar substitutes. Reflow and composition must clone or use the real source master/layout, fill its semantic placeholders, and preserve inherited theme styles, Aptos typography, template artwork, footers, and editable PowerPoint structure.
+
+A user or MCP client may request any installed ORNL layout for authorized content, but “any content into any design” does not permit content loss or forced fit. Presentation Studio must validate structural compatibility, disclose unmapped content and overflow, and stage a more suitable layout or slide split when the selected design cannot safely contain the exact content. Under `locked` or `reflow-only` policy, it must not rewrite, delete, rasterize, or silently shrink content to force a match.
+
 ### 2.3 Human-reviewed AI assistance
 
 MCP write tools stage proposals. They do not directly overwrite the working project or saved project file. A person reviews Before and After, warnings, content-policy effects, and source traceability before choosing Apply or Reject.
+
+Human canvas edits are different: an authorized direct manipulation is applied immediately to the working scene as one validated, undoable transaction. Human and AI edits must use the same command and scene-revision model so a drag, an alignment command, a table resize, and an AI-staged reflow cannot produce two incompatible representations of a slide. A user may also submit a location-anchored design thread as a scoped instruction to the AI; doing so authorizes analysis and a proposal for that scope, not silent application, save, export, publication, or content rewriting.
 
 ### 2.4 Content authorization is separate from model compatibility
 
@@ -189,9 +200,10 @@ Every imported deck is classified as current ORNL, older/modified ORNL, sponsor,
 
 ### 3.3 Repository data boundary
 
-The repository is public at the time of this specification. The project owner has authorized the official ORNL `.potx` presentation template, including the approved artwork already embedded in that template, to be committed as a versioned application asset. That authorization does not extend automatically to unrelated standalone brand artwork or working content. The following items must not be committed unless an authorized owner explicitly clears them:
+The repository is public at the time of this specification. The official ORNL `.potx`/`.pptx` template, extracted template artwork, and compiled production ORNL Template Pack must **not** be committed. An authorized user or administrator installs the template from an approved local file or managed local folder. The application stores the compiled pack in local application data and may snapshot it into a self-contained project when rights allow. Git contains only the pack schema, compiler and validation logic, non-sensitive metadata needed by that logic, and synthetic/public test fixtures. The following items must not be committed unless an authorized owner explicitly clears them:
 
 - standalone protected ORNL logo artwork not already embedded in the authorized template;
+- official ORNL presentation templates, extracted assets, or production Template Pack bytes;
 - restricted or licensed fonts;
 - non-public brand-source files;
 - imported papers, manuscripts, source documents, or presentations;
@@ -315,9 +327,41 @@ Every proposed change must identify the policy that authorized it.
 
 ### 5.6 Manual design
 
-Manual work must not require MCP or an AI model. Users can create slides, choose layouts, fill semantic slots, add supported native elements, move and resize objects, adjust crops, edit notes, validate, save, and export.
+Manual work must not require MCP or an AI model. The Slides workspace is a direct-manipulation editor rather than a preview-only gallery. Users can create slides, choose layouts, fill semantic slots, add supported native elements, edit text in place, move and resize objects, adjust crops, edit tables and notes, validate, save, and export.
 
-### 5.7 Manage project Resources
+The initial interaction set includes selection and multi-selection, drag, resize, rotate where the export representation supports it, keyboard nudge, duplicate, group/ungroup, lock, layer ordering, align, distribute, snap-to-grid, smart guides, rulers, safe areas, crop/fill/fit, style inspection, and accessible undo/redo. The inspector exposes only properties that have a defined canonical-scene and PowerPoint representation. Browser-only CSS effects cannot masquerade as editable slide features.
+
+Every human action is a small validated command against an exact scene revision. Commands record affected stable IDs, Before/After values, policy checks, author, and timestamp. A command that changes locked content, damages a protected object, violates a Template Pack constraint, or creates an unresolved fit failure is rejected or surfaced as a deliberate policy decision. Consecutive pointer moves may coalesce into one undo step, but the final geometry and its validation remain inspectable.
+
+Human and AI editing is cooperative rather than simultaneous multiwriter editing. While a person is actively manipulating an object, the app places a short-lived soft lock on it. An AI proposal always targets a known base revision; any intervening human or accepted AI edit makes the proposal stale and requires rebase or regeneration. The UI may show which slide or objects the AI is inspecting, but the AI cannot move the live selection underneath the user.
+
+### 5.7 Anchored design feedback
+
+A user can switch from **Edit** to **Comment** and click an object, select a text range, select a table cell/row/column, or drag a rectangular region. The resulting design thread is saved in the project and appears as a numbered pin on Source, Current, and Proposal views. Threads support plain-language instructions, optional drawing markup or reference attachment, open/resolved/reopened status, assignee, and reply history.
+
+An anchor never relies on pixels alone. It stores the slide ID and revision plus the strongest available semantic target:
+
+- stable element ID for an object;
+- stable table ID plus row, column, and cell IDs for table feedback;
+- text-object ID plus character range and selected-text hash for copy-level feedback;
+- normalized slide-relative region and leader endpoint for a purely visual area;
+- the original normalized bounding box, render hash, and a small project-local reference crop as a recovery fallback.
+
+When layout changes move the target, the pin follows its stable target. When an object is replaced, a deterministic lineage map transfers the anchor only when the relationship is unambiguous. Otherwise the thread becomes `needs-reanchor` while retaining its original revision and crop; the app never silently attaches it to a nearby object.
+
+Submitting a thread creates a scoped AI work request. The AI reads the current slide revision, the exact anchor, the thread, relevant structured geometry, and the revision-bound render. It then stages a bounded resolution proposal and replies with what changed. The UI shows Source/Current/Proposal, highlights the affected objects, and offers Apply, Reject, Revise, Resolve, or Reopen. A thread cannot become `resolved` merely because the AI responded; resolution requires an applied change or an explicit human disposition. Routine fixes requested by a thread should be handled without follow-up questions unless the content, template, technical meaning, or unsupported-object boundary is genuinely ambiguous.
+
+### 5.8 First-class table design
+
+Tables are structured slide elements, not generic groups or flattened pictures. Import retains native cell text/runs, row and column order, merged-cell topology, row heights, column widths, cell margins, alignment, fills, borders, semantic color roles, notes/provenance, and the original PowerPoint object identity when available.
+
+The table editor supports object-, row-, column-, cell-, and range-level selection; in-place text editing; row/column resizing and balanced distribution; cell padding; horizontal and vertical alignment; header, stub, body, subtotal, total, and note roles; border/fill/type tokens; merge/unmerge when content policy allows; approved style presets; and **Match approved exemplar**, **Fit to width**, and **Balance columns** actions. Changes remain native and editable in the exported PowerPoint whenever the imported object is supported.
+
+Table layout uses a constraint solver rather than one global font reduction. It measures every cell with the intended font and final width, respects merged-cell constraints, protects minimum readable type and padding, computes row heights from wrapped content, keeps header/body hierarchy visible, and checks the table against slide safe areas and adjacent objects. When a table cannot remain legible on one slide, the application proposes a compatible larger table layout or a continuation-slide split with repeated header semantics. It does not delete cells, hide rows, rasterize the table, or silently shrink below the profile minimum.
+
+Table visual QA is stricter than ordinary shape QA. Source, proposal, and independent export renders are checked for clipped or missing cell text, unexpected wrap changes, unequal or inadequate padding, inconsistent fonts and alignments, broken merged cells, border discontinuities, poor contrast, semantically destructive color changes, unbalanced widths/heights, overly dense presentation, and separation from captions/sources. Exact cell-content and structure hashes must pass before Apply and again after PPTX export. An approved exemplar supplies bounded style roles, not arbitrary geometry; incompatible tables are adapted through the role system or become visible exceptions.
+
+### 5.9 Manage project Resources
 
 1. Add files by file picker, drag-and-drop, paste, or extraction from an imported PowerPoint deck.
 2. Validate file type, actual media signature, size, hash, and safe archive structure locally before acceptance.
@@ -358,6 +402,10 @@ Each deck and element also supports one of these content policies:
 Deck-level defaults may be overridden only by a more restrictive policy unless a person explicitly changes the scope.
 
 `cleanup-only` is the default operation scope for imported decks. Its permitted properties are an allowlist, not an invitation to make a slide more attractive. New visuals, content rewriting, slide splitting, broad layout replacement, and cross-template conversion are off.
+
+When a person explicitly asks Presentation Studio to **improve the design, alignment, layout, or visual quality of every slide while preserving the wording**, that instruction selects the `reflow` scope with a `reflow-only` content policy after one target-template confirmation. This is the **Designer Cleanup** workflow. It does not require per-slide approval for ordinary geometry, alignment, typography, spacing, table/figure treatment, or selection of a compatible layout from the confirmed Template Pack. The application stages the complete visual proposal for review before Apply/export and asks only when exact content cannot fit safely, the target template is ambiguous, a technical or semantic choice is unclear, or an unsupported object requires a human decision.
+
+Designer Cleanup is deck-wide. An AI client must not stop after normalizing fonts or changing only the easiest slides. Every in-scope slide receives an explicit visual inspection and either a design improvement or a recorded `approved-as-is` judgment. Every text box is checked for bounds, overflow, wrapping, line breaks, insets, alignment, placement, font family, font size, weight, color, contrast, and line spacing. Tables, figures, captions, native diagrams, and any semantically useful icons are evaluated as part of the same composition. Completion requires an independently rendered exported artifact, a deck contact-sheet review, and repair of every known clipping, overflow, accidental overlap, off-slide object, unreadable text, or unbalanced placement issue.
 
 ### 6.2 Exact-content verification
 
@@ -525,11 +573,11 @@ The original template remains read-only. A project records the exact Template Pa
 
 ### 8.2 ORNL baseline Template Pack
 
-The current approved local reference inspected for this specification is `13_ORNL_Presentation_16x9_Template.potx` with SHA-256:
+The initial authorized local reference inspected for this specification was `13_ORNL_Presentation_16x9_Template.potx` with SHA-256:
 
 `8ab5ef02fb1ebf102790e762eab81e4feed01f4496775c3b854da81445252d62`
 
-It contains one slide master, 30 named layouts, and six guidance/example slides. The initial Template Pack must cover all 30 layouts, including:
+That inspected revision contains one slide master, 30 named layouts, and six guidance/example slides. The compiled Template Pack must inventory every layout in the active authorized revision; for this initial reference, that means all 30 layouts, including:
 
 - five title layouts;
 - one-column and key-image layouts;
@@ -541,7 +589,9 @@ It contains one slide master, 30 named layouts, and six guidance/example slides.
 
 The Pack must preserve the official master and use Aptos with supplied styles. It must capture presentation guidance including full-sentence assertion headlines, concise supporting content, purposeful visuals, approved palette use, readable typography, and source/rights expectations.
 
-The authorized template file should be committed at `assets/templates/13_ORNL_Presentation_16x9_Template.potx` and preserved byte-for-byte as the production Template Pack source. Its SHA-256 must be verified in tests. Template updates replace it only through an explicit versioned change with a new layout inventory, migration review, and updated expected hash.
+The authorized template remains outside the public repository. It is installed from an approved local source and preserved byte-for-byte in protected local application storage. A local manifest records the template name, revision/version, effective date when known, source/owner note, import date, SHA-256, layout inventory, and compatibility status. The UI shows the active revision and warns when a project is pinned to a different revision.
+
+Installing a newer authorized revision creates a new side-by-side Template Pack version; it does not overwrite the previous pack or silently migrate projects. Qualification must rebuild the complete master/layout catalog, render representative synthetic content through every layout, compare master/placeholder/theme fidelity, and verify editable PowerPoint open/render behavior. The known hash above is evidence for the inspected initial reference, not a permanent claim that it is the newest authorized ORNL revision.
 
 ### 8.3 Sponsor/custom Template Packs and classification
 
@@ -558,6 +608,8 @@ Template classification uses a structural fingerprint rather than filename or vi
 3. A project-pinned older Template Pack for faithful reopening and export.
 
 Presentation Studio must not silently migrate a deck to a newer template version. Migration creates a reviewable proposal.
+
+The selected source and target pack versions must remain visible in audit, reflow, review, and export. Sponsor/custom templates remain isolated from the ORNL layout catalog and are never converted to ORNL merely because an ORNL pack is installed.
 
 ### 8.5 Layout selection
 
@@ -649,6 +701,8 @@ PPTX, PDF, SVG, and PNG exports are not copied back into the package automatical
   "settings": {},
   "resources": [],
   "decks": [],
+  "designThreads": [],
+  "transactions": [],
   "transformations": [],
   "validation": {}
 }
@@ -696,10 +750,17 @@ Each slide includes:
 - original imported-slide/object references when applicable;
 - content hashes;
 - proposal/review lineage;
+- open and resolved design-thread IDs;
 - validation findings;
 - rendered preview cache key.
 
 Every media-bearing slide element refers to a stable Resource ID plus an optional derivative ID and crop/trim settings. It never stores a path to the original file. A proposal containing an unresolved Resource ID fails validation.
+
+#### 9.5.1 Design-thread and edit-transaction records
+
+A design thread includes stable ID, project/deck/slide IDs, source revision, current target revision, anchor type and payload, fallback normalized geometry, original render hash/reference crop, instruction and replies, author/assignee, open/resolved/reopened/needs-reanchor status, related proposal/transaction IDs, and timestamps. Text anchors include a bounded selected-text hash rather than duplicating unnecessary source text. Table anchors use stable table, row, column, and cell IDs rather than a human-facing address alone.
+
+An edit transaction includes stable ID, base/result revisions, human or MCP-proposal origin, ordered commands, affected stable IDs, Before/After values, validation output, content-policy result, coalescing/undo metadata, and timestamps. Human direct edits and applied AI proposals both produce this record. Rejected proposals do not enter the working transaction history but retain their review lineage.
 
 ### 9.6 Supported element types
 
@@ -717,6 +778,8 @@ Initial schema element types:
 - slide background reference;
 - preserved source object;
 - unsupported-object placeholder with review status.
+
+Native tables additionally carry stable row, column, and cell IDs; merged-cell spans; semantic roles; style-token references; exact-content and structure hashes; and fit/legibility findings. Table text remains addressable at the cell and rich-text-run levels for editing, annotation, validation, and PowerPoint export.
 
 The Resource library may retain file types that are not yet placeable or exportable. Support states are explicit: `source-readable`, `previewable`, `placeable`, `pptx-editable`, `pptx-preserved`, `render-only`, or `unsupported`. Storing a Resource must not imply that every export format supports it.
 
@@ -1019,7 +1082,9 @@ The Resource detail view includes a **Share with AI this session** control. A us
 
 - Slide thumbnail rail with sections, hidden-state indicator, warnings, and proposal state.
 - 16:9 canvas with pan, zoom, fit, rulers, guides, safe margins, and template-slot visualization.
-- Selection, multi-selection, move, resize, crop, align, distribute, group, lock, and layer ordering.
+- Edit and Comment modes with visible keyboard shortcuts, undo/redo, transaction history, and an always-available path back to Source.
+- Selection, multi-selection, move, resize, supported rotation, crop, align, distribute, group, lock, snapping, smart guides, keyboard nudge, and layer ordering.
+- Direct in-place editing for supported text and native tables, with a property inspector that shows the eventual PowerPoint representation.
 - Template-layout chooser with preview, capacity, and compatibility explanation.
 - Resource/evidence inspector linking a slide back to excerpts, figures, tables, media, data, or imported objects.
 - Source, Current, Proposal, and overlay comparison modes with synchronized zoom.
@@ -1027,6 +1092,26 @@ The Resource detail view includes a **Share with AI this session** control. A us
 - Effective-style inspector showing whether each font, fill, border, spacing, or layout value comes from theme, master, layout, placeholder, object, paragraph, or run level.
 - `Approved as-is`, `Protect object`, `Use as style exemplar`, and `Exclude from current rule` controls.
 - Clear distinction between inherited template objects, editable content, preserved source objects, and app-only editor overlays.
+- AI activity indicators at deck, slide, and affected-object scope; a user selection remains stable while AI work is in progress.
+
+#### 12.5.1 Anchored feedback and design threads
+
+Comment mode provides point pins, object selection, text-range selection, table-cell/range selection, and region markup. Pins remain visible at useful zoom levels without entering exported slides. Selecting a pin opens its thread in the inspector and highlights the exact semantic target plus the original-revision fallback region.
+
+The thread composer states what will happen: **Submit to AI** creates a scoped proposal request; **Save note** records feedback without invoking MCP. Open threads are filterable by slide, object type, assignee, status, and severity. Resolved pins collapse but remain recoverable, and comments are included in the project history and review report without being injected into source PowerPoint comments unless the user explicitly chooses that export.
+
+#### 12.5.2 Table design mode
+
+Selecting a table replaces the generic shape inspector with a table-focused surface:
+
+- mini grid navigator and direct cell/range selection;
+- row, column, merge, padding, alignment, and semantic-role controls;
+- approved Template Pack table styles and approved project exemplars with a live proposal preview;
+- content density, widest-cell, wrapping, minimum-type, contrast, and structural warnings;
+- Fit to width, Balance columns, Distribute rows, Repeat header on continuation, and Restore source structure actions;
+- Source/Current/Proposal cell-level diff plus the exact cell/merge preservation state.
+
+The canvas offers optical guides for table edges, header baselines, caption/source separation, and neighboring-object alignment. Table QA findings link directly to the affected cell or edge, and an AI can receive a bounded table crop plus structured cells/geometry when that representation is authorized.
 
 ### 12.6 AI Collaborator and Canvas Observer
 
@@ -1042,6 +1127,8 @@ The AI Collaborator is an iterative design partner, not a replacement canvas. It
 - allowed operations, including whether slide splitting or new visuals may be proposed.
 
 The normal collaboration loop is **Inspect → Diagnose → Propose → Render → Review → Apply or Reject → Validate**. After each proposal, the app automatically renders the candidate and refreshes its findings. A configurable iteration cap and unchanged-finding stop rule prevent an autonomous loop from running indefinitely.
+
+When work begins from a design thread, the loop is **Anchor → Inspect current revision → Stage bounded fix → Render → Reply → Apply/Reject/Revise → Resolve/Reopen**. The app passes the thread's semantic anchor, original reference crop, and current mapped geometry together so the model does not have to infer what “this area” means. Before staging, the AI re-reads the current revision and must not edit an object with an active human soft lock.
 
 Canvas observation combines pixels and structure:
 
@@ -1294,9 +1381,11 @@ Initial proposed tools:
 | Tool | Purpose |
 | --- | --- |
 | `get_app_status` | Report open project, save/portability state, MCP scope, authorized Resource counts, and pending proposal. |
+| `get_design_contract` | Return the mandatory model-independent Designer Cleanup, content-preservation, autonomy, ORNL-brand, and independent-render QA instructions. |
 | `list_projects` | List local presentation projects without returning complete deck content. |
 | `get_batch_summary` | Read member deck IDs, statuses, confirmed template targets, rule profiles, slide counts, and categorized finding counts for the open review batch. |
 | `get_deck_audit` | Read one deck's template classification, object support, production findings, confidence, and unresolved decisions without changing it. |
+| `get_slide_design_context` | Read exact protected slide text plus bounded typography, object counts, warnings, and findings for up to 10 consecutive slides after session authorization. |
 | `get_cleanup_findings` | List bounded findings filtered by deck, slide, rule, severity, confidence, object type, or disposition. |
 | `get_font_inventory` | Read effective/declared font families, inheritance origin, roles, exemptions, affected object IDs, and fit risk. |
 | `get_style_exemplars` | Read approved exemplar metadata, compatible object families, permitted style properties, and source provenance. |
@@ -1308,6 +1397,9 @@ Initial proposed tools:
 | `get_slide_render` | Return a revision-bound source, current, or proposal render as image content/resource link when supported, with a structured fallback. |
 | `get_deck_contact_sheet` | Return a bounded, revision-bound montage and slide index for deck-level rhythm and consistency review. |
 | `compare_slide_renders` | Return source/current/proposal or editor/export comparison metrics, difference image when supported, and categorized findings. |
+| `list_design_threads` | List bounded open/resolved design threads by deck, slide, object type, assignee, and status without returning unrelated slide content. |
+| `get_design_thread` | Read one thread, its exact semantic anchor, original revision/crop metadata, current anchor mapping, replies, and related proposal/transaction lineage. |
+| `get_table_design_context` | Read one authorized native table's stable row/column/cell IDs, merged topology, exact cell text hashes/authorized text, geometry, semantic roles, styles, density, and deterministic fit findings. |
 | `get_template_catalog` | List installed Template Packs and layout capabilities. |
 | `get_layout` | Read one layout's semantic slots, capacity, and constraints. |
 | `list_visual_catalog` | Search approved local icons, native diagram primitives, and already packaged visual Resources by semantic purpose. |
@@ -1329,6 +1421,8 @@ Initial proposed tools:
 | `stage_deck_outline` | Stage a source-grounded narrative outline for review. |
 | `stage_slide_create` | Stage a new slide using an installed layout and semantic bindings. |
 | `stage_slide_update` | Stage changes to one existing slide using exact stable IDs. |
+| `stage_design_thread_resolution` | Stage a bounded fix and reply for one open thread against its current mapped anchor and exact scene revision; it cannot mark the thread resolved or apply the change. |
+| `stage_table_update` | Stage native table role, geometry, padding, alignment, and approved style changes against explicit table/row/column/cell IDs while preserving protected cell content and structure. |
 | `stage_cleanup_rule_batch` | Stage one versioned cleanup rule and one bounded property change across explicit object IDs, separating rerender/content exceptions. |
 | `stage_style_exemplar_apply` | Stage approved exemplar properties onto explicit compatible table/figure objects while preserving protected content and semantics. |
 | `stage_review_finding` | Stage a non-mutating editorial/domain question with exact object/slide evidence and category; it cannot represent a technical approval. |
@@ -1343,7 +1437,7 @@ Initial proposed tools:
 
 Every proposal tool requires `expectedUpdatedAt` or an equivalent project revision. The server rejects stale proposals.
 
-Tool availability is operation-scope aware. In `audit-only`, all mutating proposal tools are unavailable. In `cleanup-only`, only `stage_cleanup_rule_batch`, `stage_style_exemplar_apply`, `stage_review_finding`, and other explicitly non-generative cleanup tools are advertised; generic slide replacement, reflow, layout, outline, visual, and Resource-candidate tools are unavailable. Server-side policy validation remains authoritative even if a client calls a cached or previously advertised schema.
+Tool availability is operation-scope aware. In `audit-only`, all mutating proposal tools are unavailable. In `cleanup-only`, only `stage_cleanup_rule_batch`, bounded `stage_table_update`, `stage_style_exemplar_apply`, `stage_review_finding`, and other explicitly non-generative cleanup tools are advertised; generic slide replacement, reflow, layout, outline, visual, and Resource-candidate tools are unavailable. `stage_design_thread_resolution` inherits the underlying thread target's scope and exposes only operations allowed by that content policy. Server-side policy validation remains authoritative even if a client calls a cached or previously advertised schema.
 
 ### 15.6 MCP write boundary
 
@@ -1514,6 +1608,8 @@ The committed PDF is a product deliverable, not a screenshot-only placeholder.
 - Each group proposal has one pinned rule version and one bounded property change.
 - Applied font mappings leave no unauthorized family, substitution, overflow, clipping, or wrapping regression.
 - Table/figure exemplar proposals preserve protected content, object type, merged structure, media identity, and semantic styling.
+- Native-table validation checks every cell/range for clipping, missing text, unexpected wrapping, minimum type, padding, alignment, merge integrity, border continuity, contrast, semantic color preservation, and balanced row/column geometry.
+- Table continuation proposals preserve exact row order and cell content, repeat the intended header semantics, identify continuation slides, and never hide or silently drop rows.
 - Prior-revision proposals use only high-confidence matched objects, transfer only authorized formatting properties, and preserve all current content/customer-added objects.
 - Already-cleaned/approved-as-is slides and objects remain byte/content/style equivalent at their protected scope.
 - Each member deck retains isolated status, target, proposal history, output name, and failure state.
@@ -1529,6 +1625,7 @@ The committed PDF is a product deliverable, not a screenshot-only placeholder.
 - No body/caption text below template minimums.
 - Valid image crops and sufficient resolution.
 - Consistent alignment and spacing.
+- Table headers, bodies, captions, sources, borders, cell padding, row heights, and column widths form a legible coherent system at delivery scale.
 - Theme-color compliance.
 - Contrast and color-independent meaning.
 - Square-cornered brand-created containers.
@@ -1563,8 +1660,12 @@ Each export format is verified independently:
 - Proposal writes are temporary until Apply.
 - Apply/Reject behavior visible and undoable.
 - Stale revision rejected.
+- Design-thread anchors resolve to the exact stable object, text range, table cell/range, or normalized region; ambiguous remapping returns `needs-reanchor` rather than guessing.
+- An AI reply alone cannot resolve a design thread; only an applied resolution or explicit human disposition can do so.
+- Human direct edits and applied AI proposals enter the same validated transaction and undo/redo history.
 - Operation-scope tool filtering enforced even against cached direct calls; audit has no mutation tools and cleanup cannot call reflow/generative tools.
 - Cleanup rule proposals affect only explicit deck/object IDs and one allowed property under the pinned rule version.
+- Design-thread and table proposals target exact stable IDs and current revisions, preserve protected cell/content hashes, and expose the rerendered result before Apply.
 - No delete, export, publish, or storage mutation tool exposed in V1.
 
 ### 18.7 Desktop validation
@@ -1673,9 +1774,9 @@ Deliverables:
 - repository data boundary for imported and generated content;
 - ignore rules and tracked/history safety scan design;
 - selected synthetic/public test content;
-- committed template source with verified expected SHA-256.
+- local authorized-template installation design with version, provenance, and SHA-256 verification.
 
-Gate: approve this specification, verify the committed template against the expected SHA-256, and confirm that repository safeguards exclude imported and generated working content.
+Gate: approve this specification, verify an authorized locally installed template against its local manifest, and confirm that repository safeguards exclude official template bytes plus imported and generated working content.
 
 ### Phase 1 — Project, Template Pack, and cleanup-rule foundation
 
@@ -1688,11 +1789,13 @@ Deliverables:
 - Template Pack, Cleanup Rule Profile, finding, protection/exclusion, and style-exemplar schemas;
 - local ORNL and project-local sponsor/custom template inspection/compiler;
 - structural template classification with confidence/evidence;
-- complete inventory of the 30 ORNL layouts;
+- complete inventory of every layout in the active authorized ORNL revision (30 in the initial inspected reference);
+- local versioned ORNL Template Pack installation, side-by-side update, active-version display, and rollback behavior;
+- semantic placeholder mapping and compatibility rules for recreating content in any selected approved ORNL layout;
 - synthetic committed Template Packs/rules for tests;
 - deterministic validation.
 
-Gate: compile and identify the authorized ORNL template plus a synthetic sponsor template without modifying either source; create single-deck and review-batch self-contained packages, move/delete their external originals, and reopen them with the same deck, Resource, rule, exemplar, derivative, and Template Pack hashes.
+Gate: compile and identify the locally installed authorized ORNL template plus a synthetic sponsor template without modifying either source; exercise every discovered ORNL layout with representative synthetic content; create single-deck and review-batch self-contained packages, move/delete their external originals, and reopen them with the same deck, Resource, rule, exemplar, derivative, and Template Pack hashes. No official ORNL template or extracted asset may appear in Git history.
 
 ### Phase 2 — Cleanup-first PowerPoint import and audit vertical slice
 
@@ -1740,18 +1843,21 @@ Deliverables:
 
 Gate: at least two MCP-capable desktop clients inspect the same authorized batch/deck findings and slide revision, then stage the same bounded cleanup-rule proposal without receiving unapproved Resources or accessing reflow/generative tools. A 200-plus-slide batch completes or resumes after interruption with accurate per-deck status and no unauthorized content/template changes.
 
-### Phase 5 — Reflow, manual editing, and remaining exports
+### Phase 5 — Collaborative canvas, table editor, reflow, and remaining exports
 
 Deliverables:
 
 - explicit Reflow/Hybrid scope changes and layout matching;
 - unsupported-object review decisions and controlled native passthrough;
-- manual slide/slot editing independent of AI;
+- Canva-style manual slide/slot editing independent of AI, backed by stable scene IDs and validated command transactions;
+- shared human/AI undoable history, revision guards, active-human soft locks, and AI affected-object activity indicators;
+- anchored object/text/table-cell/region design threads with reference crops, reply/resolution lineage, reanchor handling, and scoped MCP tools;
+- first-class native table editing, semantic roles/styles, cell-level content/structure hashes, constraint-based sizing, continuation-slide proposals, and independent export-render QA;
 - PDF, SVG, and PNG export from the shared scene;
 - full Resources workspace with preview, insert, where-used, package-size, and dependency-aware removal;
 - actual-artifact overflow, placeholder, master/layout, editability, and cross-render validation.
 
-Gate: an explicitly authorized reflow changes layout without changing locked content, while a Cleanup job cannot access those operations. PPTX, PDF, SVG, and PNG each pass their own inspected-artifact checks.
+Gate: a human can directly edit a supported slide and table without AI; an AI can inspect an exact location-anchored thread, stage a bounded visible repair, and retain the anchor after reflow or return `needs-reanchor` without guessing. Human edits and applied AI fixes share one reversible history. An explicitly authorized reflow changes layout without changing locked content, while a Cleanup job cannot access those operations. A merged-cell table and a dense continuation table preserve exact cell/structure hashes and remain native/editable after PPTX export. PPTX, PDF, SVG, and PNG each pass their own inspected-artifact checks.
 
 ### Phase 6 — New presentations from source materials
 
@@ -1818,6 +1924,10 @@ A Presentation Studio release candidate is not ready until all of the following 
 31. A qualified 200-plus-slide review batch supports pause/resume and per-deck failure isolation, exports separate non-overwriting PPTX copies/reports, and reports partial versus complete status accurately.
 32. Cleanup reports match the actual applied/excluded/deferred transformations, rule/template versions, unresolved findings, source/output hashes, and renderer evidence without reproducing unrequested source content.
 33. When a prior cleaned revision is supplied, three-way comparison can recover selected approved formatting without rolling current text, data, notes, media, ordering, or new objects back to the earlier deck.
+34. A user can directly select and edit supported slide objects and native tables without MCP; each action is validated, undoable, and represented identically in the canonical scene and editable PowerPoint export.
+35. A design thread can target an exact object, text range, table cell/range, or slide region; its pin follows an unambiguous reflow, retains original revision/crop evidence, and becomes `needs-reanchor` rather than attaching to the wrong object.
+36. An authorized AI client can stage and reply with a bounded design-thread resolution against the current revision, but cannot mark the thread resolved, apply the proposal, or overwrite a concurrent human edit.
+37. Table QA measures every cell and verifies text fit, type size, padding, alignment, merge topology, borders, contrast, semantic color, balanced geometry, and exact content/structure hashes in both project and exported PowerPoint renders.
 
 ---
 

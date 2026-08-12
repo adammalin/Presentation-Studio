@@ -32,6 +32,40 @@ export type ResourceRole =
 export type ResourceKind = "presentation" | "document" | "data" | "image" | "audio" | "video" | "other";
 export type ResourceProcessingStatus = "indexed" | "stored-only" | "needs-review";
 export type ResourceSupportState = "source-readable" | "previewable" | "placeable" | "pptx-preserved" | "unsupported";
+export type TemplateDecisionSource = "automatic-default" | "automatic-source-preservation" | "user-selected";
+export type DesignThreadStatus = "note" | "submitted" | "proposal-ready" | "resolved" | "needs-reanchor";
+
+export interface ResolvedDesignProfile {
+  id: string;
+  standardVersion: string;
+  templateId: string;
+  slideSize: "16:9";
+  fontFamily: "Aptos";
+  contentPolicy: "preserve-exact";
+  adoptedAt: string;
+  source: TemplateDecisionSource;
+  customized: boolean;
+}
+
+export interface DesignThread {
+  id: string;
+  deckId: string;
+  slideId: string;
+  slideNumber: number;
+  baseRevision: string;
+  anchor: {
+    kind: "region";
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  comment: string;
+  status: DesignThreadStatus;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
 
 export interface ResourceDerivative {
   id: string;
@@ -103,12 +137,16 @@ export interface TableInventoryItem {
   rowCount: number;
   columnCount: number;
   mergedCellCount: number;
+  totalCellCharacterCount: number;
+  maximumCellCharacterCount: number;
   styleId?: string;
   styleFlags: string[];
   cellFonts: string[];
   colorTokens: string[];
   marginSignatures: string[];
   styleFingerprint: string;
+  contentHash: string;
+  structureHash: string;
 }
 
 export interface PictureInventoryItem {
@@ -123,6 +161,18 @@ export interface PictureInventoryItem {
   cropped: boolean;
   hasOutline: boolean;
   hasEffect: boolean;
+}
+
+export interface AlignmentRepairCandidate {
+  id: string;
+  slideNumber: number;
+  shapeId: string;
+  textHash: string;
+  source: { x: number; y: number; width: number; height: number };
+  target: { x: number; y: number; width: number; height: number };
+  ruleId: "cover.dominant-left-edge";
+  confidence: "high";
+  rationale: string;
 }
 
 export interface AuditFinding {
@@ -162,19 +212,37 @@ export interface PptxAudit {
   slides: SlideInventoryItem[];
   tables: TableInventoryItem[];
   pictures: PictureInventoryItem[];
+  alignmentRepairs: AlignmentRepairCandidate[];
   findings: AuditFinding[];
   warnings: string[];
 }
 
 export interface CleanupChange {
   id: string;
-  kind: "font-family";
+  kind: "font-family" | "table-style" | "alignment";
   from: string;
   to: string;
   affectedSlideNumbers: number[];
   affectedRunCount: number;
+  tableIds?: string[];
+  profileId?: string;
+  alignmentRepairs?: AlignmentRepairCandidate[];
   rationale: string;
   selected: boolean;
+}
+
+export interface SlideDesignDisposition {
+  slideNumber: number;
+  status: "change-proposed" | "approved-as-is" | "needs-review";
+  reasons: string[];
+  changeIds: string[];
+}
+
+export interface TableNormalizationException {
+  tableId: string;
+  slideNumber: number;
+  reason: string;
+  rule: "semantic-color" | "complex-structure" | "dense-table";
 }
 
 export interface CleanupProposal {
@@ -184,7 +252,11 @@ export interface CleanupProposal {
   createdAt: string;
   summary: string;
   status: "pending" | "applied" | "rejected";
+  mode: "font-cleanup" | "designer-cleanup";
+  standardVersion?: string;
   changes: CleanupChange[];
+  slideDispositions: SlideDesignDisposition[];
+  tableExceptions: TableNormalizationException[];
 }
 
 export interface DeckJob {
@@ -196,6 +268,8 @@ export interface DeckJob {
   templateClassification: TemplateClassification;
   targetTemplateId?: string;
   targetTemplateConfirmedAt?: string;
+  targetTemplateDecisionSource?: TemplateDecisionSource;
+  designProfile?: ResolvedDesignProfile;
   status: DeckStatus;
   audit?: PptxAudit;
   proposal?: CleanupProposal;
@@ -218,6 +292,10 @@ export interface PresentationStudioProject {
     contentPolicy: "preserve-exact" | "source-grounded-generative";
     defaultOperationScope: OperationScope;
     autosave: boolean;
+    designStandardVersion: string;
+    defaultProfileId: string;
+    defaultSlideSize: "16:9";
+    defaultFontFamily: "Aptos";
   };
   resources: ProjectResource[];
   styleExemplars: Array<{
@@ -231,6 +309,7 @@ export interface PresentationStudioProject {
     scope: "deck" | "batch";
     createdAt: string;
   }>;
+  designThreads: DesignThread[];
   decks: DeckJob[];
   activity: Array<{ id: string; at: string; action: string; detail: string }>;
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PROJECT_SCHEMA, PROJECT_SCHEMA_VERSION, type PresentationStudioProject } from "../types";
+import { defaultProjectDesignSettings } from "./design-standard";
 
 const isoTimestamp = z.string().datetime({ offset: true });
 const fontSchema = z.object({
@@ -35,12 +36,16 @@ const tableInventorySchema = z.object({
   rowCount: z.number().int().nonnegative(),
   columnCount: z.number().int().nonnegative(),
   mergedCellCount: z.number().int().nonnegative(),
+  totalCellCharacterCount: z.number().int().nonnegative().default(0),
+  maximumCellCharacterCount: z.number().int().nonnegative().default(0),
   styleId: z.string().optional(),
   styleFlags: z.array(z.string()),
   cellFonts: z.array(z.string()),
   colorTokens: z.array(z.string()),
   marginSignatures: z.array(z.string()),
   styleFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/).default("0".repeat(64)),
+  structureHash: z.string().regex(/^[0-9a-f]{64}$/).default("0".repeat(64)),
 });
 const pictureInventorySchema = z.object({
   id: z.string(),
@@ -54,6 +59,17 @@ const pictureInventorySchema = z.object({
   cropped: z.boolean(),
   hasOutline: z.boolean(),
   hasEffect: z.boolean(),
+});
+const alignmentRepairSchema = z.object({
+  id: z.string(),
+  slideNumber: z.number().int().positive(),
+  shapeId: z.string(),
+  textHash: z.string().regex(/^[0-9a-f]{64}$/),
+  source: z.object({ x: z.number().int(), y: z.number().int(), width: z.number().int().nonnegative(), height: z.number().int().nonnegative() }),
+  target: z.object({ x: z.number().int(), y: z.number().int(), width: z.number().int().nonnegative(), height: z.number().int().nonnegative() }),
+  ruleId: z.literal("cover.dominant-left-edge"),
+  confidence: z.literal("high"),
+  rationale: z.string(),
 });
 const findingSchema = z.object({
   id: z.string(),
@@ -91,16 +107,20 @@ const auditSchema = z.object({
   slides: z.array(slideSchema),
   tables: z.array(tableInventorySchema),
   pictures: z.array(pictureInventorySchema),
+  alignmentRepairs: z.array(alignmentRepairSchema).default([]),
   findings: z.array(findingSchema),
   warnings: z.array(z.string()),
 });
 const changeSchema = z.object({
   id: z.string(),
-  kind: z.literal("font-family"),
+  kind: z.enum(["font-family", "table-style", "alignment"]),
   from: z.string(),
   to: z.string(),
   affectedSlideNumbers: z.array(z.number().int().positive()),
   affectedRunCount: z.number().int().nonnegative(),
+  tableIds: z.array(z.string()).optional(),
+  profileId: z.string().optional(),
+  alignmentRepairs: z.array(alignmentRepairSchema).optional(),
   rationale: z.string(),
   selected: z.boolean(),
 });
@@ -111,7 +131,21 @@ const proposalSchema = z.object({
   createdAt: isoTimestamp,
   summary: z.string(),
   status: z.enum(["pending", "applied", "rejected"]),
+  mode: z.enum(["font-cleanup", "designer-cleanup"]).default("font-cleanup"),
+  standardVersion: z.string().optional(),
   changes: z.array(changeSchema),
+  slideDispositions: z.array(z.object({
+    slideNumber: z.number().int().positive(),
+    status: z.enum(["change-proposed", "approved-as-is", "needs-review"]),
+    reasons: z.array(z.string()),
+    changeIds: z.array(z.string()),
+  })).default([]),
+  tableExceptions: z.array(z.object({
+    tableId: z.string(),
+    slideNumber: z.number().int().positive(),
+    reason: z.string(),
+    rule: z.enum(["semantic-color", "complex-structure", "dense-table"]),
+  })).default([]),
 });
 const deckSchema = z.object({
   id: z.string(),
@@ -122,6 +156,18 @@ const deckSchema = z.object({
   templateClassification: z.enum(["current-ornl", "older-or-modified-ornl", "sponsor", "custom", "mixed", "unknown"]),
   targetTemplateId: z.string().optional(),
   targetTemplateConfirmedAt: isoTimestamp.optional(),
+  targetTemplateDecisionSource: z.enum(["automatic-default", "automatic-source-preservation", "user-selected"]).optional(),
+  designProfile: z.object({
+    id: z.string().min(1),
+    standardVersion: z.string().min(1),
+    templateId: z.string().min(1),
+    slideSize: z.literal("16:9"),
+    fontFamily: z.literal("Aptos"),
+    contentPolicy: z.literal("preserve-exact"),
+    adoptedAt: isoTimestamp,
+    source: z.enum(["automatic-default", "automatic-source-preservation", "user-selected"]),
+    customized: z.boolean(),
+  }).optional(),
   status: z.enum(["not-scanned", "audited", "needs-template-decision", "ready-for-cleanup", "proposal-ready", "needs-manual-review", "approved", "exported", "failed"]),
   audit: auditSchema.optional(),
   proposal: proposalSchema.optional(),
@@ -144,6 +190,10 @@ export const projectSchema = z.object({
     contentPolicy: z.enum(["preserve-exact", "source-grounded-generative"]),
     defaultOperationScope: z.enum(["audit-only", "cleanup-only", "reflow", "hybrid", "compose"]),
     autosave: z.boolean(),
+    designStandardVersion: z.string().min(1).default(defaultProjectDesignSettings().designStandardVersion),
+    defaultProfileId: z.string().min(1).default(defaultProjectDesignSettings().defaultProfileId),
+    defaultSlideSize: z.literal("16:9").default("16:9"),
+    defaultFontFamily: z.literal("Aptos").default("Aptos"),
   }),
   resources: z.array(z.object({
     id: z.string().min(1),
@@ -188,6 +238,25 @@ export const projectSchema = z.object({
     scope: z.enum(["deck", "batch"]),
     createdAt: isoTimestamp,
   })),
+  designThreads: z.array(z.object({
+    id: z.string().min(1),
+    deckId: z.string().min(1),
+    slideId: z.string().min(1),
+    slideNumber: z.number().int().positive(),
+    baseRevision: isoTimestamp,
+    anchor: z.object({
+      kind: z.literal("region"),
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      width: z.number().positive().max(1),
+      height: z.number().positive().max(1),
+    }),
+    comment: z.string().min(1).max(4_000),
+    status: z.enum(["note", "submitted", "proposal-ready", "resolved", "needs-reanchor"]),
+    createdAt: isoTimestamp,
+    updatedAt: isoTimestamp,
+    submittedAt: isoTimestamp.optional(),
+  })).default([]),
   decks: z.array(deckSchema),
   activity: z.array(z.object({ id: z.string(), at: isoTimestamp, action: z.string(), detail: z.string() })),
 });
@@ -208,9 +277,11 @@ export function createProject(name = "Untitled review batch"): PresentationStudi
       contentPolicy: "preserve-exact",
       defaultOperationScope: "cleanup-only",
       autosave: true,
+      ...defaultProjectDesignSettings(),
     },
     resources: [],
     styleExemplars: [],
+    designThreads: [],
     decks: [],
     activity: [{ id: crypto.randomUUID(), at: now, action: "project-created", detail: "Created a conservative cleanup review batch." }],
   };

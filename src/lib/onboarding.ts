@@ -1,4 +1,4 @@
-export const ONBOARDING_TOUR_VERSION = "1";
+export const ONBOARDING_TOUR_VERSION = "3";
 export const ONBOARDING_TOUR_STORAGE_KEY = "presentation-studio:onboarding-tour";
 
 export interface OnboardingTourStep {
@@ -33,9 +33,16 @@ export const ONBOARDING_TOUR_STEPS: readonly OnboardingTourStep[] = Object.freez
   Object.freeze({
     id: "inspect",
     target: "nav-slides",
-    eyebrow: "Understand first",
-    title: "Inspect slides before changing them",
-    body: "Slides and Deck audit show structural inventories, fonts, tables, figures, template evidence, and production risks. The original PowerPoint remains untouched.",
+    eyebrow: "See and collaborate",
+    title: "Open the current slide design",
+    body: "Slides renders the current embedded PowerPoint locally. Select a thumbnail for a close-up, then point to an exact region to save a private note or submit a scoped design comment to AI.",
+  }),
+  Object.freeze({
+    id: "designs",
+    target: "nav-designs",
+    eyebrow: "Template library",
+    title: "See the available slide designs",
+    body: "Designs reads the locally installed PowerPoint template and shows its real masters, layouts, media, and placeholder structure. Browsing a design never changes an imported slide.",
   }),
   Object.freeze({
     id: "review",

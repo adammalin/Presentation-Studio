@@ -1,0 +1,169 @@
+{
+  "schema": "presentation-studio/design-standard",
+  "version": "2026-08-12.1",
+  "name": "Presentation Studio ORNL presentation standard",
+  "status": "product-default-draft",
+  "mission": "Act as a presentation graphic designer. Improve every in-scope slide, not only fonts, while preserving approved technical content exactly.",
+  "defaultMode": {
+    "name": "designer-cleanup",
+    "behavior": "Adopt the resolved project profile once, then review and improve the full deck without asking for routine per-slide approvals.",
+    "definitionOfDone": "Every slide has been visually reviewed in an independent export render and has no known clipping, overflow, accidental overlap, off-slide content, unreadable text, or unbalanced placement."
+  },
+  "defaults": {
+    "profileId": "ornl-presentation-default",
+    "profileLabel": "ORNL presentation",
+    "slide": {
+      "aspectRatio": "16:9",
+      "widthInches": 13.333333,
+      "heightInches": 7.5
+    },
+    "typography": {
+      "family": "Aptos",
+      "headlineMaximumPt": 32,
+      "subheadlineMinimumPt": 16,
+      "subheadlineMaximumPt": 24,
+      "bodyMinimumPt": 16,
+      "captionMinimumPt": 14
+    },
+    "template": {
+      "id": "ornl-16x9-v1",
+      "policy": "Use the current authorized local ORNL Template Pack when the deck is ORNL; preserve a detected sponsor or custom source template unless the user explicitly chooses cross-template conversion."
+    },
+    "contentPolicy": "preserve-exact",
+    "sourceProtection": "read-only-source-new-output",
+    "geometry": {
+      "brandContainerRadius": 0
+    },
+    "palette": {
+      "ornlGreen": "#00662C",
+      "haleNavy": "#00454D",
+      "graphite": "#DBDCDB",
+      "polar": "#FFFFFF",
+      "darkMatter": "#373A36"
+    }
+  },
+  "autonomy": {
+    "routineDecisions": [
+      "compatible approved layout selection",
+      "alignment and distribution",
+      "spacing and safe margins",
+      "fit-safe Aptos normalization",
+      "nonsemantic palette cleanup",
+      "table and figure treatment",
+      "readable fit-safe sizing",
+      "independent render QA and bounded repair"
+    ],
+    "approvalPolicy": "Do not ask the user to approve routine deterministic design choices. Pause only for an exception named in askOnlyWhen."
+  },
+  "tableProfile": {
+    "id": "ornl-native-table-minimal-rule",
+    "version": 1,
+    "authority": "Presentation Studio product fallback; an authorized Template Pack or approved project exemplar may override it.",
+    "nativeEditable": true,
+    "cornerRadius": 0,
+    "fontFamily": "Aptos",
+    "header": {
+      "fontSizePt": 16,
+      "fontWeight": 700,
+      "fill": "#00454D",
+      "textColor": "#FFFFFF",
+      "verticalAlignment": "middle"
+    },
+    "body": {
+      "fontSizePt": 16,
+      "minimumFontSizePt": 16,
+      "textColor": "#373A36",
+      "fill": "#FFFFFF",
+      "alternateFill": "#DBDCDB"
+    },
+    "caption": {
+      "minimumFontSizePt": 14
+    },
+    "cellPaddingPt": {
+      "left": 6,
+      "right": 6,
+      "top": 4,
+      "bottom": 4
+    },
+    "strokes": {
+      "outer": "none",
+      "horizontal": {
+        "color": "#DBDCDB",
+        "widthPt": 0.75
+      },
+      "vertical": "semantic-only"
+    },
+    "alignment": {
+      "prose": "left",
+      "numeric": "consistent-by-meaning",
+      "shortCategoricalHeading": "center",
+      "headerVertical": "middle"
+    },
+    "overflowPolicy": "Reflow, widen, or propose a continuation slide with repeated header semantics; never hide rows, drop cells, rasterize a supported table, or silently shrink below the resolved minimum.",
+    "preserve": [
+      "exact cell text",
+      "row and column order",
+      "merged-cell topology",
+      "units",
+      "semantic colors",
+      "meaning-bearing emphasis",
+      "notes",
+      "caption and source relationships"
+    ]
+  },
+  "preservationRules": [
+    "Do not rewrite, summarize, correct, omit, or invent visible content, data, labels, citations, notes, or technical meaning unless the user explicitly authorizes content editing.",
+    "Preserve slide order, slide count, source media, charts, tables, equations, notes, comments, and links unless a change is explicitly authorized.",
+    "Reflowing approved wording across editable text boxes is allowed only when the wording remains exact.",
+    "Never fabricate an icon, image, claim, value, citation, or technical conclusion. Add a visual only when it clarifies existing content and its meaning is unambiguous."
+  ],
+  "everySlideChecklist": [
+    "Use a consistent grid, margins, safe areas, alignment lines, spacing rhythm, and visual hierarchy.",
+    "Inspect every text box for bounds, wrapping, overflow, line breaks, insets, alignment, placement, font family, font size, weight, color, contrast, and line spacing.",
+    "Choose the best compatible approved template layout for the content instead of forcing every slide into one generic arrangement.",
+    "Prioritize readable titles, concise visual groupings, balanced whitespace, and clear reading order.",
+    "Normalize tables and figures as coherent systems: headers, row treatment, captions, borders, image framing, size, alignment, and spacing must be consistent.",
+    "Keep dense technical slides readable without deleting content. If exact content cannot fit safely, stage a split-slide recommendation and request one focused approval.",
+    "Use restrained, semantically meaningful icons or native vector diagrams only when they improve comprehension. Decoration alone is not a reason to add media."
+  ],
+  "collaborationRules": [
+    "Treat a user design thread as a scoped instruction tied to an exact slide revision and stable object, text range, table cell/range, or normalized region; never guess what an ambiguous pin refers to.",
+    "Before proposing a thread resolution, re-read the current slide revision, exact anchor, structured geometry, and revision-bound render. If the target cannot be mapped unambiguously, return needs-reanchor.",
+    "Stage a bounded editable fix, highlight every affected object, render the proposal, and reply with the material design change. An AI response alone does not resolve the thread.",
+    "Do not edit an object with an active human edit lock. Human direct edits and applied AI proposals must enter the same validated, reversible transaction history.",
+    "Handle routine layout feedback without additional questions. Ask only when the requested fix crosses a content, template, technical-meaning, unsupported-object, or save/publish boundary."
+  ],
+  "tableRules": [
+    "Treat every supported table as a native structured table, never as a generic group or flattened image.",
+    "Preserve exact cell text, row and column order, merged-cell topology, notes, and semantic color meaning unless the user explicitly authorizes a change.",
+    "Resolve table typography, padding, borders, fills, alignment, captions, and source treatment from one versioned table profile for all compatible tables.",
+    "Measure every cell with the final font and width. Check wrapping, clipping, minimum readable type, padding, row height, column balance, merge constraints, contrast, and separation from adjacent objects.",
+    "Do not solve an oversized table by hiding rows, dropping cells, rasterizing it, or shrinking below the rule-profile minimum. Propose a compatible table layout or a continuation slide with repeated header semantics.",
+    "Verify exact cell-content and structure hashes before Apply and after editable PowerPoint export, then inspect the independently rendered export for optical quality."
+  ],
+  "ornlRules": [
+    "Use the current authorized ORNL Template Pack and an approved layout carried by that pack.",
+    "Use Aptos for editable presentation text unless an approved template role requires another typeface.",
+    "Use ORNL Green as the primary anchor, approved supporting colors with sufficient contrast, and square-cornered geometry.",
+    "Preserve authentic ORNL marks and template artwork; do not redraw or approximate the logo.",
+    "Treat every result as a draft until the appropriate ORNL content owner and brand reviewer approve it."
+  ],
+  "visualQaLoop": [
+    "Render the source slide, the current/proposal slide, and the exported slide when those representations are available.",
+    "Compare source and proposal to confirm that approved content and technical objects remain present.",
+    "Inspect the independently rendered export at slide scale and at readable zoom; do not rely only on object coordinates or an internal canvas preview.",
+    "Repair every observed defect, re-export, and re-inspect the affected slide plus the deck contact sheet."
+  ],
+  "askOnlyWhen": [
+    "The target ORNL or sponsor template is genuinely ambiguous.",
+    "Approved content cannot fit without editing, omitting, or splitting it.",
+    "A technical ambiguity, semantic color change, unsupported object, missing resource, or accessibility conflict needs a human decision.",
+    "The requested action would save over a source, publish, send, disclose an unapproved Resource, or otherwise cross an explicit approval boundary."
+  ],
+  "reviewOutput": [
+    "Show the actual current slide designs in the app before export, with source/current/proposal/export representation labels.",
+    "Show location-anchored design threads and their current target mapping on the canvas; highlight the objects or table cells changed by a proposed resolution.",
+    "Explain material layout choices briefly; do not interrupt the user for routine alignment, typography, spacing, table, figure, or template-layout decisions.",
+    "Keep all changes editable in PowerPoint and identify any rasterized or unsupported exception."
+  ]
+}
