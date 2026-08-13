@@ -19,6 +19,7 @@ import type {
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import { auditPptx } from "./pptx-audit";
 import { cloneTemplateLayoutForSlide, type NativeLayoutCloneReceipt } from "./native-layout-remap";
+import { normalizeCellFillToken, semanticColorRoleForToken, semanticTableTintForToken } from "./semantic-visuals";
 
 const TABLE_PROFILE = PRESENTATION_DESIGN_STANDARD.tableProfile;
 
@@ -102,12 +103,16 @@ function fontCleanupChanges(deck: DeckJob): CleanupChange[] {
 }
 
 function tableException(table: TableInventoryItem): TableNormalizationException | undefined {
-  const semanticTokens = table.colorTokens.filter((token) => /^accent[1-6]$/.test(token));
-  if (semanticTokens.length > 0) return {
+  const semanticTokens = table.semanticColorTokens.length > 0
+    ? table.semanticColorTokens
+    : [...new Set((table.cells ?? []).map((cell) => cell.semanticColorRole).filter((token): token is string => Boolean(token)))];
+  const legacySemanticTokens = table.colorTokens.filter((token) => /^accent[1-6]$/.test(token));
+  const detectedSemanticTokens = semanticTokens.length > 0 ? semanticTokens : legacySemanticTokens;
+  if (detectedSemanticTokens.length > 0) return {
     tableId: table.id,
     slideNumber: table.slideNumber,
     rule: "semantic-color",
-    reason: `Preserved meaning-bearing theme color (${semanticTokens.join(", ")}); this table needs a designer check before normalization.`,
+    reason: `Preserved meaning-bearing theme color (${detectedSemanticTokens.join(", ")}); this table needs a designer check before normalization.`,
   };
   const cellCount = table.rowCount * table.columnCount;
   if (table.mergedCellCount > 10 || (cellCount > 0 && table.mergedCellCount / cellCount > 0.35)) return {
@@ -203,6 +208,7 @@ export function createDesignerCleanupProposal(deck: DeckJob, updatedAt: string):
     affectedRunCount: compatibleTables.reduce((sum, table) => sum + table.rowCount * table.columnCount, 0),
     tableIds: compatibleTables.map((table) => table.id),
     profileId: TABLE_PROFILE.id,
+    semanticColorPolicy: "preserve-source",
     rationale: "Normalize compatible native tables to consistent Aptos typography, padding, fills, and minimal horizontal rules while preserving exact cell text and merged-cell structure.",
     selected: true,
   });
@@ -225,7 +231,7 @@ export function createDesignerCleanupProposal(deck: DeckJob, updatedAt: string):
   };
 }
 
-export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input: { tableIds: string[]; variant: TableStyleVariant }): CleanupProposal {
+export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input: { tableIds: string[]; variant: TableStyleVariant; semanticColorPolicy: "preserve-source" }): CleanupProposal {
   assertDeckReady(deck);
   if (!deck.audit) throw new Error("Audit the deck before staging native table design.");
   if (deck.operationScope !== "reflow") throw new Error("Native table design requires Designer Cleanup reflow scope.");
@@ -240,7 +246,14 @@ export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input
   const base: CleanupProposal = deck.proposal && ["pending", "applied"].includes(deck.proposal.status) && deck.proposal.baseUpdatedAt === updatedAt ? deck.proposal : {
     id: crypto.randomUUID(), deckId: deck.id, baseUpdatedAt: updatedAt, createdAt: new Date().toISOString(), summary: "Stage a shared native table component", status: "pending", mode: "slide-reflow", standardVersion: PRESENTATION_DESIGN_STANDARD.version, changes: [], slideDispositions: [], tableExceptions: [], layoutExceptions: deck.audit.layoutReviews ?? [],
   };
-  const changes = base.changes.map((change) => change.kind === "table-style" ? { ...change, tableIds: (change.tableIds ?? []).filter((id) => !requestedIds.has(id)) } : change).filter((change) => change.kind !== "table-style" || (change.tableIds?.length ?? 0) > 0);
+  const changes = base.changes.map((change) => change.kind === "table-style" ? {
+    ...change,
+    tableIds: (change.tableIds ?? []).filter((id) => !requestedIds.has(id)),
+    // Restaging any table design upgrades retained table components to the
+    // current invariant. This lets an older accepted proposal remain usable
+    // without silently preserving an unsafe pre-contract table mutation.
+    semanticColorPolicy: PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy.tableColorPolicy,
+  } : change).filter((change) => change.kind !== "table-style" || (change.tableIds?.length ?? 0) > 0);
   const affectedSlideNumbers = [...new Set(tables.map((table) => table.slideNumber))].sort((left, right) => left - right);
   changes.push({
     id: `table-${TABLE_PROFILE.id}-${input.variant}-${crypto.randomUUID()}`,
@@ -251,6 +264,7 @@ export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input
     affectedRunCount: tables.reduce((sum, table) => sum + table.rowCount * table.columnCount, 0),
     tableIds: input.tableIds,
     profileId: `${TABLE_PROFILE.id}-${input.variant}`,
+    semanticColorPolicy: input.semanticColorPolicy,
     rationale: `Apply one ${input.variant} ORNL table component with shared Aptos hierarchy, padding, restrained rules, and brand colors while preserving exact cell content and merged-cell structure.`,
     selected: true,
   });
@@ -662,6 +676,19 @@ function directSolidFill(color: string) {
   return `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>`;
 }
 
+function directTableCellFillToken(cellXml: string): string | undefined {
+  const properties = cellXml.match(/<a:tcPr\b[^>]*>([\s\S]*?)<\/a:tcPr>|<a:tcPr\b[^>]*\/>/)?.[0];
+  // Border rules may contain their own colors before the actual cell fill.
+  // Remove those nested line elements so they cannot be mistaken for the
+  // semantic background carried by the cell itself.
+  const cellProperties = properties
+    ?.replace(/<a:ln(?:L|R|T|B|TlToBr|BlToTr)\b[\s\S]*?<\/a:ln(?:L|R|T|B|TlToBr|BlToTr)>/g, "")
+    .replace(/<a:ln(?:L|R|T|B|TlToBr|BlToTr)\b[^>]*\/>/g, "");
+  const fill = cellProperties?.match(/<a:solidFill\b[^>]*>([\s\S]*?)<\/a:solidFill>/)?.[1];
+  const color = fill?.match(/<a:(srgbClr|schemeClr|sysClr)\b[^>]*\bval=(?:"([^"]+)"|'([^']+)')/i);
+  return color ? normalizeCellFillToken(color[1], color[2] ?? color[3] ?? "") : undefined;
+}
+
 function normalizeRunPropertyTag(tag: string, header: boolean, profile: MaterializedTableProfile): string {
   const match = tag.match(/^<a:(rPr|defRPr|endParaRPr)\b([^>]*?)(\/?)>([\s\S]*?)(?:<\/a:\1>)?$/);
   if (!match) return tag;
@@ -742,7 +769,10 @@ function normalizeTableBlock(table: string, variant: TableStyleVariant): string 
     const header = index === 0;
     const lastRow = index === rows.length - 1;
     const fill = header ? profile.header.fill.slice(1) : (index % 2 === 0 ? profile.body.alternateFill : profile.body.fill).slice(1);
-    const normalized = row.replace(/<a:tc\b[\s\S]*?<\/a:tc>/g, (cell) => normalizeCellProperties(normalizeBodyProperties(normalizeTextProperties(cell, header, profile), profile), fill, lastRow, profile));
+    const normalized = row.replace(/<a:tc\b[\s\S]*?<\/a:tc>/g, (cell) => {
+      const semanticTint = !header ? semanticTableTintForToken(directTableCellFillToken(cell))?.slice(1) : undefined;
+      return normalizeCellProperties(normalizeBodyProperties(normalizeTextProperties(cell, header, profile), profile), semanticTint ?? fill, lastRow, profile);
+    });
     const start = rows[index].index ?? 0;
     result = result.slice(0, start) + normalized + result.slice(start + row.length);
   }
@@ -988,6 +1018,9 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
   if (requireAccepted && proposal.status !== "applied") throw new Error("Accept the cleanup plan before exporting a review copy.");
   const selected = proposal.changes.filter((change) => change.selected);
   if (selected.length === 0) throw new Error("Select at least one cleanup change.");
+  const selectedTableStyleChanges = selected.filter((change) => change.kind === "table-style");
+  if (selectedTableStyleChanges.length > 0 && proposal.standardVersion !== PRESENTATION_DESIGN_STANDARD.version) throw new Error("Restage table design with the current Presentation Design Standard before rendering or export.");
+  if (selectedTableStyleChanges.some((change) => change.semanticColorPolicy !== PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy.tableColorPolicy)) throw new Error("Table design is blocked because its semantic-color preservation policy is missing or incompatible.");
   const sourceAudit = await auditPptx(sourceBytes);
   const zip = await JSZip.loadAsync(sourceBytes, { checkCRC32: false });
   let replacementCount = 0;
@@ -1074,6 +1107,19 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     const outputTable = outputAudit.tables.find((table) => table.id === sourceTable.id);
     if (!outputTable || sourceTable.contentHash !== outputTable.contentHash) throw new Error(`Cleanup validation failed because table content changed in ${sourceTable.id}.`);
     if (sourceTable.structureHash !== outputTable.structureHash) throw new Error(`Cleanup validation failed because merged-cell structure changed in ${sourceTable.id}.`);
+    const normalized = normalizedTableIds.includes(sourceTable.id);
+    for (const sourceCell of sourceTable.cells ?? []) {
+      const semanticRole = sourceCell.semanticColorRole ?? semanticColorRoleForToken(sourceCell.fillToken);
+      if (!semanticRole) continue;
+      const outputCell = outputTable.cells?.find((cell) => cell.id === sourceCell.id);
+      const outputRole = outputCell?.semanticColorRole ?? semanticColorRoleForToken(outputCell?.fillToken);
+      if (!outputCell || outputRole !== semanticRole) throw new Error(`Cleanup validation failed because semantic table color ${semanticRole} changed in ${sourceCell.id}.`);
+      if (normalized) {
+        const expectedTint = semanticTableTintForToken(semanticRole)?.toLowerCase();
+        const outputFill = outputCell.fillToken?.replace(/^srgb:/, "#").toLowerCase();
+        if (!expectedTint || outputFill !== expectedTint) throw new Error(`Cleanup validation failed because ${sourceCell.id} did not retain the approved ${semanticRole} table tint.`);
+      }
+    }
   }
   for (const command of selectedGeometryCommands) {
     const outputObject = (outputAudit.editableObjects ?? []).find((object) => object.id === command.objectId);

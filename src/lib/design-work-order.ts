@@ -141,6 +141,12 @@ export function buildSlideDesignWorkOrder(input: {
     const measurement = input.currentMeasurement?.objects.find((item) => item.tableId === table.id)?.table;
     return {
       ...table,
+      semanticColorEvidence: {
+        policy: PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy.tableColorPolicy,
+        roles: inventory?.semanticColorTokens ?? [],
+        cells: (inventory?.cells ?? []).filter((cell) => cell.semanticColorRole).map((cell) => ({ id: cell.id, row: cell.row, column: cell.column, role: cell.semanticColorRole, sourceFillToken: cell.fillToken })),
+        instruction: "Preserve every role-to-cell mapping. A shared table component may adapt a source role only to the approved tint for that same role; it may not neutralize, swap, merge, or reinterpret the mapping.",
+      },
       columns: table.columns.map((column) => ({ ...column, widthInches: column.width / 914_400, nativeWidthPt: measurement?.columnWidthsPt[column.index - 1] })),
       rows: table.rows.map((row) => ({ ...row, heightInches: row.height / 914_400, nativeHeightPt: measurement?.rowHeightsPt[row.index - 1] })),
       cells: table.cells.map((cell) => {
@@ -204,8 +210,14 @@ export function buildSlideDesignWorkOrder(input: {
       componentSystem: PRESENTATION_DESIGN_STANDARD.componentSystem,
       tableProfile: PRESENTATION_DESIGN_STANDARD.tableProfile,
       tableVariants: PRESENTATION_DESIGN_STANDARD.tableVariants,
+      semanticVisualPolicy: PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy,
+      preservationRules: PRESENTATION_DESIGN_STANDARD.preservationRules,
+      collaborationRules: PRESENTATION_DESIGN_STANDARD.collaborationRules,
+      tableRules: PRESENTATION_DESIGN_STANDARD.tableRules,
+      ornlRules: PRESENTATION_DESIGN_STANDARD.ornlRules,
       everySlideChecklist: PRESENTATION_DESIGN_STANDARD.everySlideChecklist,
       visualQaLoop: PRESENTATION_DESIGN_STANDARD.visualQaLoop,
+      reviewOutput: PRESENTATION_DESIGN_STANDARD.reviewOutput,
     },
     requiredSequence: [
       "Inspect the authoritative Current render and every structured object.",
@@ -231,12 +243,23 @@ export function buildDeckDesignWorkOrder(input: {
   threads?: DesignThread[];
 }) {
   const representatives = selectRepresentativeSlides(input.deck);
+  const semanticTableColorMap = Object.entries((input.deck.audit?.tables ?? []).reduce<Record<string, Array<{ slideNumber: number; tableId: string; cellIds: string[] }>>>((result, table) => {
+    for (const role of table.semanticColorTokens ?? []) {
+      (result[role] ??= []).push({ slideNumber: table.slideNumber, tableId: table.id, cellIds: (table.cells ?? []).filter((cell) => cell.semanticColorRole === role).map((cell) => cell.id) });
+    }
+    return result;
+  }, {})).map(([role, occurrences]) => ({ role, definition: PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy.tableColorRoles[role], occurrences }));
   return {
     schema: "presentation-studio/deck-design-work-order" as const,
     version: 1,
     projectUpdatedAt: input.projectUpdatedAt,
     deck: { id: input.deck.id, name: input.deck.name, slideCount: input.deck.audit?.slideCount ?? 0, sceneRevision: input.deck.scene?.revision, targetTemplateId: input.deck.targetTemplateId },
     representativeSlides: representatives,
+    deckSemanticVisuals: {
+      tableColorPolicy: PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy.tableColorPolicy,
+      tableColorMap: semanticTableColorMap,
+      instruction: "Treat repeated color roles as deck-level meaning. Preserve the same role across every listed slide and table before considering local restyling.",
+    },
     workOrders: representatives.map((item) => ({
       ...item,
       workOrder: buildSlideDesignWorkOrder({ ...input, slideNumber: item.slideNumber }),

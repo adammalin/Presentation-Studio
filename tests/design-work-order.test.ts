@@ -57,6 +57,9 @@ test("slide design work order closes content and binds evidence to scene, templa
   assert.equal(workOrder.layoutCandidates[0].layout.semantic?.intent, "cover");
   assert.ok(workOrder.designRules.componentSystem.layoutRecipes["title-table"]);
   assert.equal(workOrder.designRules.tableVariants.denseTechnical.bodyFontSizePt, 10);
+  assert.equal(workOrder.designRules.semanticVisualPolicy.tableColorPolicy, "preserve-source");
+  assert.match(workOrder.designRules.tableRules.join(" "), /semantic color meaning/i);
+  assert.match(workOrder.designRules.ornlRules.join(" "), /Aptos/i);
   assert.match(workOrder.requiredSequence.join(" "), /shared layout recipe/i);
   assert.match(workOrder.requiredSequence.join(" "), /addressedThreadIds/);
   assert.match(workOrder.requiredSequence.join(" "), /PowerPoint/i);
@@ -75,6 +78,11 @@ test("slide design work order exposes optical text starts instead of only shape 
 
 test("deck work order selects a bounded representative qualification set", async () => {
   const deck = await fixtureDeck();
+  const semanticTable = deck.audit?.tables[0];
+  if (semanticTable) {
+    semanticTable.semanticColorTokens = ["accent6"];
+    if (semanticTable.cells?.[3]) semanticTable.cells[3] = { ...semanticTable.cells[3], fillToken: "accent6", semanticColorRole: "accent6" };
+  }
   const representatives = selectRepresentativeSlides(deck);
   assert.equal(representatives[0].role, "cover");
   assert.ok(representatives.some((item) => item.role === "table"));
@@ -83,4 +91,6 @@ test("deck work order selects a bounded representative qualification set", async
   const workOrder = buildDeckDesignWorkOrder({ deck, projectUpdatedAt: "2026-08-12T20:00:00.000Z", templateCatalog: catalog() });
   assert.equal(workOrder.workOrders.length, representatives.length);
   assert.match(workOrder.executionPolicy, /representative set/i);
+  assert.equal(workOrder.deckSemanticVisuals.tableColorMap[0]?.role, "accent6");
+  assert.equal(workOrder.deckSemanticVisuals.tableColorMap[0]?.occurrences[0]?.cellIds[0], semanticTable?.cells?.[3]?.id);
 });

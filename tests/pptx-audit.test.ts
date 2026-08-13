@@ -19,6 +19,27 @@ async function fixtureBytes(): Promise<Uint8Array> {
   return new Uint8Array(await fs.readFile(filePath));
 }
 
+async function semanticTableFixtureBytes(): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await fixtureBytes());
+  const entry = zip.file("ppt/slides/slide2.xml");
+  assert.ok(entry);
+  const xml = await entry.async("text");
+  let rowIndex = 0;
+  const next = xml.replace(/<a:tbl\b[\s\S]*?<\/a:tbl>/, (table) => table.replace(/<a:tr\b[^>]*>[\s\S]*?<\/a:tr>/g, (row) => {
+    const token = rowIndex === 1 ? "accent6" : rowIndex === 2 ? "accent3" : undefined;
+    rowIndex += 1;
+    if (!token) return row;
+    return row.replace(/<a:tc\b[\s\S]*?<\/a:tc>/g, (cell) => {
+      const fill = `<a:solidFill><a:schemeClr val="${token}"/></a:solidFill>`;
+      if (/<a:tcPr\b[^>]*\/>/.test(cell)) return cell.replace(/<a:tcPr\b([^>]*)\/>/, `<a:tcPr$1>${fill}</a:tcPr>`);
+      if (/<a:tcPr\b/.test(cell)) return cell.replace(/<a:tcPr\b([^>]*)>([\s\S]*?)<\/a:tcPr>/, (_tag, attributes, children) => `<a:tcPr${attributes}>${String(children).replace(/<a:solidFill\b[\s\S]*?<\/a:solidFill>/g, "")}${fill}</a:tcPr>`);
+      return cell.replace(/<\/a:tc>/, `<a:tcPr>${fill}</a:tcPr></a:tc>`);
+    });
+  }));
+  zip.file("ppt/slides/slide2.xml", next);
+  return zip.generateAsync({ type: "uint8array" });
+}
+
 test("OOXML audit inventories synthetic slides, fonts, and tables", async () => {
   const audit = await auditPptx(await fixtureBytes());
   assert.equal(audit.slideCount, 2);
@@ -141,7 +162,7 @@ test("dense technical tables use one compact ORNL component without changing tab
   const deck: DeckJob = { id: "deck-dense-table", name: "synthetic.pptx", sourceResourceId: "resource-dense-table", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: audit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateConfirmedAt: revision, status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
   const sourceTable = audit.tables[0];
   assert.ok(sourceTable);
-  const proposal = createTableStyleProposal(deck, revision, { tableIds: [sourceTable.id], variant: "dense-technical" });
+  const proposal = createTableStyleProposal(deck, revision, { tableIds: [sourceTable.id], variant: "dense-technical", semanticColorPolicy: "preserve-source" });
   const preview = await buildCleanupProposalPptx(bytes, proposal);
   const after = await auditPptx(preview.bytes);
   assert.equal(preview.tableCount, 1);
@@ -177,6 +198,41 @@ test("designer cleanup preserves semantic table colors as explicit review except
   assert.equal(proposal.tableExceptions[0]?.rule, "semantic-color");
   assert.equal(proposal.slideDispositions.find((item) => item.slideNumber === 2)?.status, "needs-review");
   assert.equal(proposal.changes.some((change) => change.kind === "table-style"), false);
+});
+
+test("shared table components preserve semantic roles with approved ORNL tints", async () => {
+  const bytes = await semanticTableFixtureBytes();
+  const audit = await auditPptx(bytes);
+  const sourceTable = audit.tables[0];
+  assert.deepEqual(sourceTable.semanticColorTokens, ["accent3", "accent6"]);
+  assert.equal(sourceTable.cells?.filter((cell) => cell.semanticColorRole === "accent6").length, 3);
+  assert.equal(sourceTable.cells?.filter((cell) => cell.semanticColorRole === "accent3").length, 3);
+  const revision = "2026-08-13T12:00:00.000Z";
+  const deck: DeckJob = { id: "deck-semantic-tints", name: "semantic.pptx", sourceResourceId: "resource-semantic-tints", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: audit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateConfirmedAt: revision, status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  const proposal = createTableStyleProposal(deck, revision, { tableIds: [sourceTable.id], variant: "standard", semanticColorPolicy: "preserve-source" });
+  const preview = await buildCleanupProposalPptx(bytes, proposal);
+  const after = await auditPptx(preview.bytes);
+  const outputTable = after.tables[0];
+  assert.ok(outputTable.semanticColorTokens.includes("accent3"));
+  assert.ok(outputTable.semanticColorTokens.includes("accent6"));
+  assert.ok(outputTable.cells?.filter((cell) => cell.semanticColorRole === "accent6").every((cell) => cell.fillToken === "srgb:fbc9df"));
+  assert.ok(outputTable.cells?.filter((cell) => cell.semanticColorRole === "accent3").every((cell) => cell.fillToken === "srgb:c8fbdd"));
+  assert.equal(outputTable.contentHash, sourceTable.contentHash);
+  assert.equal(outputTable.structureHash, sourceTable.structureHash);
+  const unsafe = { ...proposal, changes: proposal.changes.map((change) => change.kind === "table-style" ? { ...change, semanticColorPolicy: undefined } : change) };
+  await assert.rejects(() => buildCleanupProposalPptx(bytes, unsafe), /semantic-color preservation policy/i);
+});
+
+test("restaging a table upgrades retained legacy table changes to semantic preservation", async () => {
+  const bytes = await fixtureBytes();
+  const audit = await auditPptx(bytes);
+  const revision = "2026-08-13T12:30:00.000Z";
+  const deck: DeckJob = { id: "deck-table-upgrade", name: "legacy-table.pptx", sourceResourceId: "resource-table-upgrade", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: audit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateConfirmedAt: revision, status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  const first = createTableStyleProposal(deck, revision, { tableIds: [audit.tables[0].id], variant: "standard", semanticColorPolicy: "preserve-source" });
+  const legacy = { ...first, status: "applied" as const, changes: first.changes.map((change) => change.kind === "table-style" ? { ...change, tableIds: ["legacy-retained-table", audit.tables[0].id], semanticColorPolicy: undefined } : change) };
+  const restaged = createTableStyleProposal({ ...deck, proposal: legacy }, revision, { tableIds: [audit.tables[0].id], variant: "dense-technical", semanticColorPolicy: "preserve-source" });
+  assert.ok(restaged.changes.filter((change) => change.kind === "table-style").every((change) => change.semanticColorPolicy === "preserve-source"));
+  assert.ok(restaged.changes.some((change) => change.kind === "table-style" && change.tableIds?.includes("legacy-retained-table")));
 });
 
 test("designer cleanup does not force the 16-point table profile onto text-dense cells", async () => {

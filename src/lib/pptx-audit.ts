@@ -13,6 +13,9 @@ import type {
   TemplateClassification,
   TextBoxInventoryItem,
 } from "../types";
+import { normalizeCellFillToken, semanticColorRoleForToken } from "./semantic-visuals";
+
+export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 1;
 import { sha256Text } from "./hash";
 
 const MAX_PACKAGE_FILES = 25_000;
@@ -78,6 +81,18 @@ function attributeValue(attributes: string, name: string): string | undefined {
   return match ? decodeXml(match[1] ?? match[2] ?? "") : undefined;
 }
 
+function directCellFillToken(cellXml: string): string | undefined {
+  const properties = cellXml.match(/<a:tcPr\b[^>]*>([\s\S]*?)<\/a:tcPr>|<a:tcPr\b[^>]*\/>/)?.[0];
+  // The first solid fill inside tcPr may belong to a border line. Semantic
+  // table meaning is carried by the direct cell fill, so ignore line colors.
+  const cellProperties = properties
+    ?.replace(/<a:ln(?:L|R|T|B|TlToBr|BlToTr)\b[\s\S]*?<\/a:ln(?:L|R|T|B|TlToBr|BlToTr)>/g, "")
+    .replace(/<a:ln(?:L|R|T|B|TlToBr|BlToTr)\b[^>]*\/>/g, "");
+  const fill = cellProperties?.match(/<a:solidFill\b[^>]*>([\s\S]*?)<\/a:solidFill>/)?.[1];
+  const color = fill?.match(/<a:(srgbClr|schemeClr|sysClr)\b[^>]*\bval=(?:"([^"]+)"|'([^']+)')/i);
+  return color ? normalizeCellFillToken(color[1], color[2] ?? color[3] ?? "") : undefined;
+}
+
 async function extractTableInventory(slideNumber: number, xml: string): Promise<TableInventoryItem[]> {
   const blocks = [...xml.matchAll(/<a:tbl\b[\s\S]*?<\/a:tbl>/g)].map((match) => match[0]);
   const tables: TableInventoryItem[] = [];
@@ -94,6 +109,7 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
     }));
     const styleFingerprint = await sha256Text(JSON.stringify({ styleId: styleId ? decodeXml(styleId).trim() : null, styleFlags, cellFonts: cellFonts.map(normalizeFont), colorTokens, marginSignatures }));
     const cellBlocks = [...block.matchAll(/<a:tc\b[\s\S]*?<\/a:tc>/g)].map((match) => match[0]);
+    const semanticColorTokens = uniqueSorted(cellBlocks.map((cell) => semanticColorRoleForToken(directCellFillToken(cell)) ?? ""));
     const cellTexts = cellBlocks.map((cell) => extractTextRuns(cell).join(""));
     const tableId = `slide-${slideNumber}-table-${index + 1}`;
     const columns = [...(block.match(/<a:tblGrid>[\s\S]*?<\/a:tblGrid>/)?.[0] ?? "").matchAll(/<a:gridCol\b([^>]*)\/?\s*>/g)].map((match, columnIndex) => ({
@@ -121,6 +137,8 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
         };
         const spanAttribute = (name: string) => Math.max(1, Number(attributeValue(cellAttributes, name)) || 1);
         const text = extractTextRuns(cellXml).join("");
+        const fillToken = directCellFillToken(cellXml);
+        const semanticColorRole = semanticColorRoleForToken(fillToken);
         const fontSizes = uniqueSorted([...cellXml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
         const anchor = attributeValue(cellProperties, "anchor")?.toLowerCase();
         cells.push({
@@ -137,6 +155,8 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
           paragraphCount: Math.max(1, xmlCount(cellXml, /<a:p\b/g)),
           fontFamilies: uniqueSorted(extractFonts(cellXml)),
           fontSizes,
+          fillToken,
+          semanticColorRole,
           marginsEmu: {
             left: numberAttribute("marL", 91_440),
             right: numberAttribute("marR", 91_440),
@@ -171,6 +191,7 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
       styleFlags,
       cellFonts,
       colorTokens,
+      semanticColorTokens,
       marginSignatures,
       styleFingerprint,
       contentHash,
@@ -911,6 +932,7 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   }
 
   return {
+    semanticVisualVersion: PPTX_AUDIT_SEMANTIC_VISUAL_VERSION,
     scannedAt: new Date().toISOString(),
     supportLevel: containsMacros || containsOleObjects ? "partial" : "native-ooxml",
     slideCount: slides.length,

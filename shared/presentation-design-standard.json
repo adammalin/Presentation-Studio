@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-12.10",
+  "version": "2026-08-13.11",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer. Improve every in-scope slide, not only fonts, while preserving approved technical content exactly.",
@@ -40,7 +40,17 @@
       "haleNavy": "#00454D",
       "graphite": "#DBDCDB",
       "polar": "#FFFFFF",
-      "darkMatter": "#373A36"
+      "darkMatter": "#373A36",
+      "energy": "#7DBA00",
+      "mist": "#8BFEBF",
+      "biome": "#00B38F",
+      "aqua": "#00BDB5",
+      "infinity": "#006BA6",
+      "hydro": "#005776",
+      "forge": "#FF9E1B",
+      "spark": "#FE5000",
+      "plasma": "#B50094",
+      "pulsar": "#4E008E"
     }
   },
   "autonomy": {
@@ -238,6 +248,27 @@
       "verticalPaddingPt": 4,
       "useWhen": "A native technical table has more than 40 cells, a longest cell above 180 characters, or cannot fit the standard component without clipping. Preserve all cells and structure."
     }
+  },
+  "semanticVisualPolicy": {
+    "version": 1,
+    "classifications": [
+      "semantic",
+      "structural",
+      "brand-furniture",
+      "accidental-formatting"
+    ],
+    "normalizationRule": "Only accidental formatting may be normalized automatically. Semantic color, emphasis, grouping, legends, merged-cell relationships, and connector meaning are protected invariants.",
+    "tableColorPolicy": "preserve-source",
+    "tableColorRoles": {
+      "accent1": { "name": "Hale Navy", "base": "#00454D", "tint100": "#C4F6EB" },
+      "accent2": { "name": "Infinity", "base": "#006BA6", "tint100": "#C8F5FA" },
+      "accent3": { "name": "Biome", "base": "#00B38F", "tint100": "#C8FBDD" },
+      "accent4": { "name": "Energy", "base": "#7DBA00", "tint100": "#F1FBC9" },
+      "accent5": { "name": "Forge", "base": "#FF9E1B", "tint100": "#FFF3D1" },
+      "accent6": { "name": "Plasma", "base": "#B50094", "tint100": "#FBC9DF" }
+    },
+    "mutationGate": "A table-style mutation must be bound to this design-standard version and preserve every detected source semantic color role. It may adapt a role only to its approved tint while retaining the same cell and sequence mapping.",
+    "exportGate": "Reject proposal or export materialization when any source semantic table cell loses, swaps, merges, or obscures its detected color role."
   },
   "preservationRules": [
     "Do not rewrite, summarize, correct, omit, or invent visible content, data, labels, citations, notes, or technical meaning unless the user explicitly authorizes content editing.",

@@ -57,6 +57,9 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(tableDesignTool?.description ?? "", /shared/i);
     assert.match(tableDesignTool?.description ?? "", /unrelated comments remain active/i);
     assert.match(JSON.stringify(tableDesignTool?.inputSchema), /addressedThreadIds/);
+    assert.match(JSON.stringify(tableDesignTool?.inputSchema), /designStandardVersion/);
+    assert.match(JSON.stringify(tableDesignTool?.inputSchema), /semanticColorPolicy/);
+    assert.match(tableDesignTool?.description ?? "", /role-to-cell mapping/i);
     const tableLayoutTool = result.tools.find((tool) => tool.name === "solve_and_stage_table_layout");
     assert.match(tableLayoutTool?.description ?? "", /preserves a table that already passes/i);
     assert.match(tableLayoutTool?.description ?? "", /minimum amount that fits inside the safe region/i);

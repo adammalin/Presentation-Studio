@@ -13,6 +13,8 @@ test("one versioned design standard drives project defaults and MCP", () => {
   assert.equal(packagedStandard.tableProfile.fontFamily, "Aptos");
   assert.equal(packagedStandard.tableProfile.cellPaddingPt.left, 6);
   assert.equal(packagedStandard.tableProfile.strokes.outer, "none");
+  assert.equal(packagedStandard.semanticVisualPolicy.tableColorPolicy, "preserve-source");
+  assert.equal(packagedStandard.semanticVisualPolicy.tableColorRoles.accent6.tint100, "#FBC9DF");
   assert.match(packagedStandard.autonomy.approvalPolicy, /routine deterministic design choices/i);
 });
 

@@ -54,6 +54,7 @@ const tableInventorySchema = z.object({
   styleFlags: z.array(z.string()),
   cellFonts: z.array(z.string()),
   colorTokens: z.array(z.string()),
+  semanticColorTokens: z.array(z.string()).default([]),
   marginSignatures: z.array(z.string()),
   styleFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   contentHash: z.string().regex(/^[0-9a-f]{64}$/).default("0".repeat(64)),
@@ -74,6 +75,8 @@ const tableInventorySchema = z.object({
     paragraphCount: z.number().int().positive(),
     fontFamilies: z.array(z.string()),
     fontSizes: z.array(z.number().nonnegative()),
+    fillToken: z.string().optional(),
+    semanticColorRole: z.string().optional(),
     marginsEmu: z.object({ left: z.number().int().nonnegative(), right: z.number().int().nonnegative(), top: z.number().int().nonnegative(), bottom: z.number().int().nonnegative() }),
     horizontalAlignment: z.enum(["left", "center", "right", "justified", "mixed"]),
     verticalAlignment: z.enum(["top", "middle", "bottom"]),
@@ -296,6 +299,7 @@ const findingSchema = z.object({
   autoFixable: z.boolean(),
 });
 const auditSchema = z.object({
+  semanticVisualVersion: z.number().int().nonnegative().default(0),
   scannedAt: isoTimestamp,
   supportLevel: z.enum(["native-ooxml", "partial", "blocked"]),
   slideCount: z.number().int().nonnegative(),
@@ -337,6 +341,7 @@ const changeSchema = z.object({
   affectedRunCount: z.number().int().nonnegative(),
   tableIds: z.array(z.string()).optional(),
   profileId: z.string().optional(),
+  semanticColorPolicy: z.literal("preserve-source").optional(),
   tableLayoutCommands: z.array(z.object({
     id: z.string().min(1),
     slideNumber: z.number().int().positive(),

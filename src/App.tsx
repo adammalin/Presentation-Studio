@@ -50,13 +50,15 @@ import type {
 import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createNativeLayoutProposal, createNativeLayoutRecompositionProposal, createTableLayoutProposal, createTableStyleProposal, createVisualDesignProposal } from "./lib/cleanup";
 import type { LocalPresentationFont, NativeMeasurementResult, NativeRenderResult, NativeSlideRender, PickedBinaryFile } from "./lib/desktop";
 import { decryptProjectPackage, encryptProjectPackage, isEncryptedProject } from "./lib/encryption";
-import { auditPptx } from "./lib/pptx-audit";
+import { auditPptx, PPTX_AUDIT_SEMANTIC_VISUAL_VERSION } from "./lib/pptx-audit";
 import { createProject, touchProject } from "./lib/project";
 import { removeAddressedDesignThreads, removeCompletedDesignThreads, removeDesignThread } from "./lib/design-threads";
 import { compilePresentationScene, sceneNeedsRebuild } from "./lib/scene-graph";
 import { semanticRecompositionRequests, type SemanticSlotBinding } from "./lib/recomposition";
 import { compareNativeSlideRenders, type PixelComparisonMetrics } from "./lib/render-comparison";
 import { buildProjectPackage, openProjectPackage } from "./lib/project-package";
+import { projectPackageFromDrop } from "./lib/project-drop";
+import { removeResourceFromProject, resourceRemovalImpact } from "./lib/resource-removal";
 import {
   isPowerPointResource,
   MAX_PROJECT_RESOURCE_BYTES,
@@ -80,6 +82,7 @@ import { recommendedTableGrowthPlan, solveTableLayout } from "./lib/table-layout
 import { nativeTextFrameOverflows, solveTextFit } from "./lib/text-fit-solver";
 import { decideVisualIteration } from "./lib/visual-iteration";
 import { sha256 } from "./lib/hash";
+import { cleanFileStem, projectSaveDefaultName } from "./lib/file-names";
 import {
   ONBOARDING_TOUR_STORAGE_KEY,
   ONBOARDING_TOUR_VERSION,
@@ -88,6 +91,7 @@ import {
 
 type ViewId = "batch" | "decks" | "slides" | "designs" | "rules" | "review" | "resources";
 type SlideWorkspaceRequest = { id: string; deckId: string; slideNumber: number; mode: "review" | "edit" | "comment"; representation: "current" | "proposal" };
+const MAX_PROJECT_PACKAGE_BYTES = 1_500_000_000;
 
 function requestedAddressedThreadIds(input: { addressedThreadIds?: unknown }): string[] {
   return Array.isArray(input.addressedThreadIds) ? [...new Set(input.addressedThreadIds.map(String))] : [];
@@ -192,10 +196,6 @@ function previewFontStack(fontFamily?: string): string {
 
 function fontFaceRule(font: LocalPresentationFont): string {
   return `@font-face{font-family:"${font.family}";src:url("data:${font.mediaType};base64,${bytesToBase64(font.bytes)}") format("truetype");font-weight:${font.weight};font-style:${font.style};font-display:block;}`;
-}
-
-function cleanFileStem(name: string): string {
-  return name.replace(/\.pptx$/i, "");
 }
 
 function formatBytes(value: number): string {
@@ -715,7 +715,7 @@ function ReviewView({ deck, projectUpdatedAt, currentCatalog, proposalCatalog, c
     <section className="panel review-completion"><div className="lock-copy"><LockKey size={20} /><span><strong>Exact-content guard</strong><small>Approving applies the selected design plan to the project only. Export remains a separate new-copy action.</small></span></div><div className="review-actions">{proposal.status === "pending" ? <><button className="button ghost" onClick={onReject}><X size={17} />Reject proposal</button><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "edit")}><Crosshair size={17} />Edit this slide</button><button className="button primary" disabled={!canApprovePlan} title={unresolvedRequestCount ? "Resolve requested changes before approving the plan." : undefined} onClick={() => onApply(selectedNumber)}><CheckCircle size={18} />Approve all &amp; continue</button></> : proposal.status === "applied" ? <><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "comment")}><ChatCircleDots size={17} />Comment for AI</button><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "edit")}><Crosshair size={17} />Continue editing</button><button className="button primary" onClick={onExport}><FileArrowDown size={17} />Export review copy</button></> : <span className="muted">Proposal rejected; the source is unchanged.</span>}</div></section></div>;
 }
 
-function ResourcesView({ project, onToggleMcp, onAdd }: { project: PresentationStudioProject; onToggleMcp: (id: string) => void; onAdd: () => void }) {
+function ResourcesView({ project, onToggleMcp, onAdd, onRemove }: { project: PresentationStudioProject; onToggleMcp: (id: string) => void; onAdd: () => void; onRemove: (id: string) => void }) {
   const packagedBytes = project.resources.reduce((sum, resource) => sum + resource.byteLength + (resource.derivatives?.reduce((derivativeSum, derivative) => derivativeSum + derivative.byteLength, 0) ?? 0), 0);
   const extractedCount = project.resources.filter((resource) => resource.derivatives?.some((derivative) => derivative.kind === "extracted-text")).length;
   const needsReviewCount = project.resources.filter((resource) => resource.processing?.status === "needs-review").length;
@@ -727,7 +727,7 @@ function ResourcesView({ project, onToggleMcp, onAdd }: { project: PresentationS
       </header>
       <section className="resource-drop-zone" onClick={onAdd} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onAdd(); }}>
         <span className="resource-drop-icon"><UploadSimple size={25} /></span>
-        <span><strong>Drop files anywhere in Presentation Studio</strong><small>Documents, data, images, audio, video, SVG, and PowerPoint files are processed locally and embedded in this project.</small></span>
+        <span><strong>Drop files anywhere in Presentation Studio</strong><small>Drop one .pstudio package to open it. Documents, data, images, audio, video, SVG, and PowerPoint files are processed locally and embedded in the current project.</small></span>
         <span className="resource-drop-action">Choose files</span>
       </section>
       <div className="metric-strip resource-metrics">
@@ -738,7 +738,7 @@ function ResourcesView({ project, onToggleMcp, onAdd }: { project: PresentationS
       </div>
       <section className="panel">
         <div className="resource-list">
-          <div className="resource-row resource-head"><span>Resource</span><span>Role</span><span>Processing</span><span>Size</span><span>AI session</span></div>
+          <div className="resource-row resource-head"><span>Resource</span><span>Role</span><span>Processing</span><span>Size</span><span>AI session</span><span>Project</span></div>
           {project.resources.length === 0 && <div className="resource-empty"><FileText size={25} /><span><strong>No project Resources yet</strong><small>Drop files into the app or choose files above. Nothing will remain linked to its original location.</small></span></div>}
           {project.resources.map((resource) => {
             const processingStatus = resource.processing?.status ?? "stored-only";
@@ -749,11 +749,12 @@ function ResourcesView({ project, onToggleMcp, onAdd }: { project: PresentationS
               <span className={`processing-state ${processingStatus}`}>{hasWarnings && <Warning size={13} />}{processingStatus === "indexed" ? "Indexed" : processingStatus === "needs-review" ? "Needs review" : "Stored only"}</span>
               <span>{formatBytes(resource.byteLength)}</span>
               <button className={`access-toggle ${resource.mcpAccess !== "none" ? "on" : ""}`} onClick={() => onToggleMcp(resource.id)}>{resource.mcpAccess === "none" ? "Not shared" : "Metadata only"}</button>
+              <button className="resource-remove" onClick={() => onRemove(resource.id)} title="Remove this embedded copy from the project; the original file is never deleted"><Trash size={13} />Remove</button>
             </div>;
           })}
         </div>
       </section>
-      <div className="inline-note wide"><ShieldCheck size={18} />Original bytes and extracted text remain local. Metadata sharing requires both AI session access and a per-Resource choice; file bytes are never returned through MCP.</div>
+      <div className="inline-note wide"><ShieldCheck size={18} />Original bytes and extracted text remain local. Remove affects only the embedded project copy—not the source file. Metadata sharing requires both AI session access and a per-Resource choice; file bytes are never returned through MCP.</div>
     </div>
   );
 }
@@ -811,6 +812,13 @@ export default function App() {
 
   useEffect(() => { projectRef.current = project; }, [project]);
   useEffect(() => {
+    if (project.settings.designStandardVersion === PRESENTATION_DESIGN_STANDARD.version) return;
+    setProject((current) => current.settings.designStandardVersion === PRESENTATION_DESIGN_STANDARD.version ? current : {
+      ...current,
+      settings: { ...current.settings, designStandardVersion: PRESENTATION_DESIGN_STANDARD.version },
+    });
+  }, [project.settings.designStandardVersion]);
+  useEffect(() => {
     if (!project.designThreads.some((thread) => ["proposal-ready", "resolved"].includes(thread.status))) return;
     setProject((current) => {
       const designThreads = removeCompletedDesignThreads(current.designThreads);
@@ -831,11 +839,12 @@ export default function App() {
   }, [desktop]);
 
   useEffect(() => {
-    const candidates = project.decks.filter((deck) => deck.audit && (sceneNeedsRebuild(deck) || !deck.audit.slideSize || !Array.isArray(deck.audit.editableObjects) || (deck.audit.slideCount > 0 && deck.audit.editableObjects.length === 0) || deck.audit.slides.some((slide) => !slide.sourcePartSha256) || deck.audit.textBoxes.some((textBox) => typeof textBox.text !== "string" || (textBox.characterCount > 0 && textBox.text.length === 0) || (textBox.characterCount > 0 && textBox.estimatedOpticalLeftEmu <= 0))) && !auditGeometryUpgradeAttempted.current.has(deck.id));
+    const auditUpgradeKey = (deck: DeckJob) => `${deck.id}:semantic-${deck.audit?.semanticVisualVersion ?? 0}-to-${PPTX_AUDIT_SEMANTIC_VISUAL_VERSION}`;
+    const candidates = project.decks.filter((deck) => deck.audit && (sceneNeedsRebuild(deck) || deck.audit.semanticVisualVersion !== PPTX_AUDIT_SEMANTIC_VISUAL_VERSION || !deck.audit.slideSize || !Array.isArray(deck.audit.editableObjects) || (deck.audit.slideCount > 0 && deck.audit.editableObjects.length === 0) || deck.audit.slides.some((slide) => !slide.sourcePartSha256) || deck.audit.textBoxes.some((textBox) => typeof textBox.text !== "string" || (textBox.characterCount > 0 && textBox.text.length === 0) || (textBox.characterCount > 0 && textBox.estimatedOpticalLeftEmu <= 0))) && !auditGeometryUpgradeAttempted.current.has(auditUpgradeKey(deck)));
     if (candidates.length === 0) return;
     let canceled = false;
     for (const deck of candidates) {
-      auditGeometryUpgradeAttempted.current.add(deck.id);
+      auditGeometryUpgradeAttempted.current.add(auditUpgradeKey(deck));
       const source = sourceForDeck(project, deck);
       if (!source?.bytes) continue;
       void auditPptx(source.bytes).then((audit) => {
@@ -1124,7 +1133,7 @@ export default function App() {
       const current = projectRef.current;
       if (request.operation === "get_app_status") {
         const [renderCapabilities, measurementCapabilities] = await Promise.all([desktop.getNativeRenderCapabilities(), desktop.getNativeMeasurementCapabilities()]);
-        return { app: "Presentation Studio", designStandardVersion: current.settings.designStandardVersion, project: { name: current.project.name, type: current.project.type, resourceCount: current.resources.length, deckCount: current.decks.length, slideCount: current.decks.reduce((sum, deck) => sum + (deck.audit?.slideCount ?? 0), 0), submittedDesignThreadCount: current.designThreads.filter((thread) => thread.status === "submitted").length, updatedAt: current.project.updatedAt }, aiSessionAccess: mcpEnabled, nativePowerPoint: { ready: renderCapabilities.available && measurementCapabilities.available, sessionLocked: Boolean(renderCapabilities.sessionLocked || measurementCapabilities.sessionLocked), render: renderCapabilities, measurement: measurementCapabilities } };
+        return { app: "Presentation Studio", designStandardVersion: PRESENTATION_DESIGN_STANDARD.version, project: { name: current.project.name, type: current.project.type, resourceCount: current.resources.length, deckCount: current.decks.length, slideCount: current.decks.reduce((sum, deck) => sum + (deck.audit?.slideCount ?? 0), 0), submittedDesignThreadCount: current.designThreads.filter((thread) => thread.status === "submitted").length, updatedAt: current.project.updatedAt }, aiSessionAccess: mcpEnabled, nativePowerPoint: { ready: renderCapabilities.available && measurementCapabilities.available, sessionLocked: Boolean(renderCapabilities.sessionLocked || measurementCapabilities.sessionLocked), render: renderCapabilities, measurement: measurementCapabilities } };
       }
       if (!mcpEnabled) throw new Error("Enable AI session access in Presentation Studio before reading project metadata or staging work.");
       if (request.operation === "get_template_layout_catalog") {
@@ -1536,6 +1545,7 @@ export default function App() {
       }
       if (request.operation === "stage_designer_cleanup") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the deck list again before staging a proposal.");
+        if (request.input.designStandardVersion !== PRESENTATION_DESIGN_STANDARD.version) throw new Error("The Presentation Design Standard changed. Read get_design_contract and get_cleanup_rule_profile again before staging Designer Cleanup.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck) throw new Error("The requested deck is not open.");
         const proposal = createDesignerCleanupProposal(deck, current.project.updatedAt);
@@ -1552,11 +1562,13 @@ export default function App() {
       }
       if (request.operation === "stage_table_design_update") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the deck list again before staging table design.");
+        if (request.input.designStandardVersion !== PRESENTATION_DESIGN_STANDARD.version) throw new Error("The Presentation Design Standard changed. Read get_design_contract and get_cleanup_rule_profile again before staging table design.");
+        if (request.input.semanticColorPolicy !== PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy.tableColorPolicy) throw new Error("Table design requires the preserve-source semantic-color policy.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit) throw new Error("The requested deck is not open or audited.");
         const tableIds = Array.isArray(request.input.tableIds) ? request.input.tableIds.map(String) : [];
         const variant = request.input.variant === "dense-technical" ? "dense-technical" as const : "standard" as const;
-        const proposal = createTableStyleProposal(deck, current.project.updatedAt, { tableIds, variant });
+        const proposal = createTableStyleProposal(deck, current.project.updatedAt, { tableIds, variant, semanticColorPolicy: "preserve-source" });
         const next = touchProject({ ...current, designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)), decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item) }, "mcp-table-design-staged", `AI staged the shared ${variant} ORNL table component for ${tableIds.length} table${tableIds.length === 1 ? "" : "s"} in ${deck.name}; explicitly addressed comments were cleared and source bytes remain unchanged.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
         projectRef.current = next;
@@ -2188,6 +2200,51 @@ export default function App() {
     await importFiles(picked, intent);
   }
 
+  function resetProjectRenderState() {
+    slideCatalogsRef.current.clear();
+    proposalCatalogsRef.current.clear();
+    nativeRenderCatalogsRef.current.clear();
+    nativeMeasurementsRef.current.clear();
+    inspectionRendersRef.current.clear();
+    setSlideCatalogs({});
+    setProposalCatalogs({});
+    setNativeRenderCatalogs({});
+    setSlideCatalogLoadingDeckId(undefined);
+    setProposalCatalogLoadingDeckId(undefined);
+    setNativeRenderLoadingKey(undefined);
+    setSlideWorkspaceRequest(undefined);
+  }
+
+  function adoptOpenedProject(opened: PresentationStudioProject, password?: string) {
+    resetProjectRenderState();
+    projectRef.current = opened;
+    setProject(opened);
+    setSelectedDeckId(opened.decks[0]?.id);
+    setSecureAutosavePassword(password);
+    setActiveView("batch");
+    setNotice(`Opened ${opened.project.name}; all embedded resource hashes passed validation.`);
+  }
+
+  async function openProjectFile(file: PickedBinaryFile) {
+    clearMessages();
+    setBusy(`Opening and validating ${file.name}…`);
+    try {
+      let bytes = bytesFrom(file.bytes);
+      if (bytes.byteLength > MAX_PROJECT_PACKAGE_BYTES) throw new Error("This Presentation Studio project exceeds the 1.5 GB package limit.");
+      let password: string | undefined;
+      if (isEncryptedProject(bytes)) {
+        password = window.prompt("Enter the password for this encrypted Presentation Studio project.") ?? undefined;
+        if (!password) return;
+        bytes = await decryptProjectPackage(bytes, password);
+      }
+      adoptOpenedProject(await openProjectPackage(bytes), password);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The project could not be opened.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
     if (![...event.dataTransfer.types].includes("Files")) return;
     event.preventDefault();
@@ -2211,7 +2268,52 @@ export default function App() {
     event.preventDefault();
     fileDragDepth.current = 0;
     setFileDragActive(false);
-    if (event.dataTransfer.files.length > 0) void importWebFiles(event.dataTransfer.files, "resources");
+    if (event.dataTransfer.files.length === 0) return;
+    const files = [...event.dataTransfer.files];
+    try {
+      const projectFile = projectPackageFromDrop(files);
+      if (!projectFile) {
+        void importWebFiles(event.dataTransfer.files, "resources");
+        return;
+      }
+      if (projectFile.size > MAX_PROJECT_PACKAGE_BYTES) throw new Error("This Presentation Studio project exceeds the 1.5 GB package limit.");
+      void projectFile.arrayBuffer()
+        .then((buffer) => openProjectFile({ name: projectFile.name, filePath: projectFile.name, mediaType: projectFile.type, bytes: new Uint8Array(buffer) }))
+        .catch((caught) => setError(caught instanceof Error ? caught.message : "The dropped project could not be read."));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The dropped files could not be opened.");
+    }
+  }
+
+  function removeResource(resourceId: string) {
+    const current = projectRef.current;
+    try {
+      const impact = resourceRemovalImpact(current, resourceId);
+      const dependentSummary = impact.linkedDeckIds.length > 0
+        ? `\n\nThis Resource is the embedded source for ${impact.linkedDeckIds.length} deck${impact.linkedDeckIds.length === 1 ? "" : "s"}. Removing it will also remove the linked deck work, ${impact.removedExemplarCount} style exemplar${impact.removedExemplarCount === 1 ? "" : "s"}, and ${impact.removedThreadCount} design comment${impact.removedThreadCount === 1 ? "" : "s"} from this project.`
+        : "";
+      const confirmed = window.confirm(`Remove “${impact.resource.name}” from this project?${dependentSummary}\n\nThe original file on disk will not be changed or deleted.`);
+      if (!confirmed) return;
+      const result = removeResourceFromProject(current, resourceId);
+      const removedDeckIds = new Set(result.impact.linkedDeckIds);
+      for (const cache of [slideCatalogsRef.current, proposalCatalogsRef.current, nativeRenderCatalogsRef.current, nativeMeasurementsRef.current, inspectionRendersRef.current]) {
+        for (const key of [...cache.keys()]) if ([...removedDeckIds].some((deckId) => key === deckId || key.startsWith(`${deckId}:`))) cache.delete(key);
+      }
+      const withoutRemovedDecks = <T,>(catalog: Record<string, T>) => Object.fromEntries(Object.entries(catalog).filter(([key]) => ![...removedDeckIds].some((deckId) => key === deckId || key.startsWith(`${deckId}:`)))) as Record<string, T>;
+      setSlideCatalogs(withoutRemovedDecks);
+      setProposalCatalogs(withoutRemovedDecks);
+      setNativeRenderCatalogs(withoutRemovedDecks);
+      setSlideCatalogLoadingDeckId((id) => id && removedDeckIds.has(id) ? undefined : id);
+      setProposalCatalogLoadingDeckId((id) => id && removedDeckIds.has(id) ? undefined : id);
+      setNativeRenderLoadingKey((key) => key && [...removedDeckIds].some((id) => key.startsWith(`${id}:`)) ? undefined : key);
+      setSlideWorkspaceRequest((request) => request && removedDeckIds.has(request.deckId) ? undefined : request);
+      projectRef.current = result.project;
+      setProject(result.project);
+      setSelectedDeckId((id) => id && removedDeckIds.has(id) ? result.project.decks[0]?.id : id);
+      setNotice(`${result.impact.resource.name} was removed from this project${result.impact.linkedDeckIds.length > 0 ? ` with ${result.impact.linkedDeckIds.length} linked deck${result.impact.linkedDeckIds.length === 1 ? "" : "s"}` : ""}. The original file was not changed or deleted.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Resource could not be removed from this project.");
+    }
   }
 
   function confirmTemplate(templateId: string) {
@@ -2429,8 +2531,15 @@ export default function App() {
         bytes = await encryptProjectPackage(bytes, password);
       }
       const kind = encrypted ? "secure-project" : "project";
-      const extension = encrypted ? ".pstudio-secure" : ".pstudio";
-      const result = await desktop.saveBinary({ kind, defaultName: `${project.project.name.replace(/[^a-z0-9 _-]+/gi, "").trim() || "Presentation Studio project"}${extension}`, bytes });
+      const result = await desktop.saveBinary({
+        kind,
+        defaultName: projectSaveDefaultName({
+          projectName: project.project.name,
+          deckNames: project.decks.map((deck) => deck.name),
+          encrypted,
+        }),
+        bytes,
+      });
       if (!result.canceled) {
         setSecureAutosavePassword(password);
         setNotice(encrypted ? "Encrypted project saved. External originals and exported files are not covered by this encryption." : "Self-contained project saved.");
@@ -2443,19 +2552,7 @@ export default function App() {
     if (!desktop) return;
     const result = await desktop.openProject();
     if (result.canceled || !result.file) return;
-    clearMessages(); setBusy("Opening and validating project package…");
-    try {
-      let bytes = bytesFrom(result.file.bytes);
-      let password: string | undefined;
-      if (isEncryptedProject(bytes)) {
-        password = window.prompt("Enter the password for this encrypted Presentation Studio project.") ?? undefined;
-        if (!password) return;
-        bytes = await decryptProjectPackage(bytes, password);
-      }
-      const opened = await openProjectPackage(bytes);
-      setProject(opened); setSelectedDeckId(opened.decks[0]?.id); setSecureAutosavePassword(password); setActiveView("batch"); setNotice(`Opened ${opened.project.name}; all embedded resource hashes passed validation.`);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "The project could not be opened."); }
-    finally { setBusy(undefined); }
+    await openProjectFile(result.file);
   }
 
   const mainContent = useMemo(() => {
@@ -2465,7 +2562,7 @@ export default function App() {
     if (activeView === "designs") return <DesignsView catalog={templateCatalog} installedAt={templateInstalledAt} loading={templateLoading} nativeRender={templateNativeRender} nativeLoading={templateNativeLoading} onInstall={() => void installTemplate()} />;
     if (activeView === "rules") return <RulesView deck={selectedDeck} exemplarCount={project.styleExemplars.filter((item) => item.kind === "table").length} />;
     if (activeView === "review") return <ReviewView deck={selectedDeck} projectUpdatedAt={project.project.updatedAt} currentCatalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} proposalCatalog={selectedDeck ? proposalCatalogs[selectedDeck.id] : undefined} currentNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} proposalNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : undefined} previewLoading={Boolean(selectedDeck && (proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal`))} threads={project.designThreads} onToggle={toggleChange} onReviewSlide={reviewSlide} onRequestChanges={requestSlideChanges} onDeleteThread={deleteDesignThread} onOpenSlide={openSlideWorkspace} onReject={rejectProposal} onApply={acceptProposal} onExport={() => void exportCleaned()} />;
-    return <ResourcesView project={project} onAdd={() => void addResources()} onToggleMcp={(id) => setProject((current) => touchProject({ ...current, resources: current.resources.map((resource) => resource.id === id ? { ...resource, mcpAccess: resource.mcpAccess === "none" ? "metadata" : "none" } : resource) }, "resource-access-updated", "Updated session-only Resource metadata permission."))} />;
+    return <ResourcesView project={project} onAdd={() => void addResources()} onRemove={removeResource} onToggleMcp={(id) => setProject((current) => touchProject({ ...current, resources: current.resources.map((resource) => resource.id === id ? { ...resource, mcpAccess: resource.mcpAccess === "none" ? "metadata" : "none" } : resource) }, "resource-access-updated", "Updated session-only Resource metadata permission."))} />;
   }, [activeView, nativeRenderCatalogs, nativeRenderLoadingKey, project, proposalCatalogLoadingDeckId, proposalCatalogs, selectedDeck, slideCatalogLoadingDeckId, slideCatalogs, slideWorkspaceRequest, templateCatalog, templateInstalledAt, templateLoading, templateNativeLoading, templateNativeRender]);
 
   return (
@@ -2493,7 +2590,7 @@ export default function App() {
       <OnboardingTour open={tourOpen} stepIndex={tourStepIndex} onStepChange={setTourStepIndex} onClose={closeOnboardingTour} />
       {mcpActivity && <div className={`mcp-activity ${mcpActivity.state}`} role="status" aria-live="polite"><span>{mcpActivity.state === "active" ? <ArrowsClockwise className="spinner" size={17} /> : mcpActivity.state === "completed" ? <CheckCircle size={17} /> : <Warning size={17} />}</span><div><strong>{mcpActivity.state === "active" ? "AI is using Presentation Studio" : mcpActivity.state === "completed" ? "AI operation completed" : "AI operation needs attention"}</strong><small>{mcpActivity.operation.replaceAll("_", " ")} · {mcpActivity.state === "active" ? "local operation in progress" : mcpActivity.state}</small></div></div>}
       {(notice || error) && <div className={`toast ${error ? "error" : "success"}`}><span>{error ? <Warning size={18} /> : <CheckCircle size={18} />}</span><p>{error ?? notice}</p><button onClick={clearMessages}><X size={16} /></button></div>}
-      {fileDragActive && <div className="file-drop-overlay"><div className="file-drop-card"><UploadSimple size={38} /><strong>Drop to add project Resources</strong><span>Files will be processed locally, embedded by hash, and preserved with this project.</span></div></div>}
+      {fileDragActive && <div className="file-drop-overlay"><div className="file-drop-card"><UploadSimple size={38} /><strong>Drop to open a project or add Resources</strong><span>A single .pstudio package opens as the active project. Other files are processed locally, embedded by hash, and preserved with the current project.</span></div></div>}
       {busy && <div className="busy-overlay"><div className="busy-card"><ArrowsClockwise className="spinner" size={25} /><strong>{busy}</strong><span>Files are processed locally and copied into the project. External originals remain untouched.</span></div></div>}
       <input id="web-deck-picker" hidden type="file" accept=".pptx" multiple onChange={(event) => { void importWebFiles(event.target.files, "decks"); event.currentTarget.value = ""; }} />
       <input id="web-resource-picker" hidden type="file" accept=".pptx,.potx,.docx,.pdf,.md,.markdown,.txt,.csv,.tsv,.json,.xlsx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.svg,.wav,.mp3,.m4a,.mp4,.mov,.doc,.xls" multiple onChange={(event) => { void importWebFiles(event.target.files, "resources"); event.currentTarget.value = ""; }} />

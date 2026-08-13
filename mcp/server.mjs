@@ -131,7 +131,7 @@ server.registerTool("get_slide_inspection_packet", {
 
 server.registerTool("get_deck_design_work_order", {
   title: "Read the representative deck-design qualification set",
-  description: "Select up to five representative slides—cover, text-led content, diagram, image-heavy, and dense table—and return a complete versioned work order for each. Use this bounded set to prove the design loop before expanding across the full deck. Exact source content is included, so visible AI session access is required.",
+  description: "Select up to five representative slides—cover, text-led content, diagram, image-heavy, and dense table—and return a complete versioned work order for each plus the deck-wide semantic table-color map. Use this bounded set to prove the design loop before expanding across the full deck. Exact source content is included, so visible AI session access is required.",
   inputSchema: { deckId: z.string().min(1).max(120) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_deck_design_work_order", input, (result) => `Built ${result.workOrders.length} representative design work orders for ${result.deck.name}.`));
@@ -252,18 +252,20 @@ server.registerTool("stage_font_cleanup", {
 server.registerTool("stage_designer_cleanup", {
   title: "Stage deck-wide designer cleanup",
   description: "Review every slide and every directly editable text box. Stage supported exact-content typography, collision-checked high-confidence cover/peer text-box alignment, and native-table improvements; flag overflow risk, off-slide text, safe-margin cases, ambiguous alignment, complex tables, and semantic colors instead of hiding content or guessing. Record an explicit approved-as-is or needs-review disposition for every slide. This creates a reversible proposal with Current/Proposal renders; it does not apply, save, export, or overwrite anything.",
-  inputSchema: { deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }) },
+  inputSchema: { deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), designStandardVersion: z.string().min(1).max(80) },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("stage_designer_cleanup", input, (result) => `Staged a deck-wide designer proposal covering ${result.proposal.slideDispositions.length} slides. Nothing was applied, saved, or exported.`));
 
 server.registerTool("stage_table_design_update", {
   title: "Stage shared ORNL table components",
-  description: "Apply one shared, versioned ORNL native-table component to 1–40 exact table IDs from get_slide_design_context. Use standard for ordinary tables and dense-technical for large technical tables that require smaller measured type and tighter padding. The component keeps exact cell text, order, merged structure, and editability while standardizing Aptos typography, header treatment, body fills, padding, and restrained rules across slides. Pass the exact IDs of submitted comments this change fully addresses in addressedThreadIds; those comments are removed from the clean canvas while unrelated comments remain active. This accumulates in the reversible proposal and never applies, saves, exports, or overwrites the source.",
+  description: "Apply one shared, versioned ORNL native-table component to 1–40 exact table IDs from get_slide_design_context. Echo the current designStandardVersion and use semanticColorPolicy preserve-source. Use standard for ordinary tables and dense-technical for large technical tables that require smaller measured type and tighter padding. The component keeps exact cell text, order, merged structure, editability, and every detected semantic role-to-cell mapping while adapting source accent fills only to their approved ORNL tints. It rejects a missing, stale, neutralized, or swapped semantic-color mapping. Pass the exact IDs of submitted comments this change fully addresses in addressedThreadIds; those comments are removed from the clean canvas while unrelated comments remain active. This accumulates in the reversible proposal and never applies, saves, exports, or overwrites the source.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     tableIds: z.array(z.string().min(1).max(180)).min(1).max(40),
     variant: z.enum(["standard", "dense-technical"]),
+    designStandardVersion: z.string().min(1).max(80),
+    semanticColorPolicy: z.literal("preserve-source"),
     addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },

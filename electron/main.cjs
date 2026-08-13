@@ -551,9 +551,22 @@ async function createWindow() {
         if (ready) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
+      const removeReady = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.resource-remove') && document.body.innerText.includes('Remove affects only the embedded project copy'))");
+      if (!removeReady) throw new Error("The project-only Resource removal control did not render.");
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
     await mainWindow.webContents.capturePage().then((image) => fs.writeFile(capturePath, image.toPNG()));
+    if (captureResourceFixture && smokeTest) {
+      const removalStarted = await mainWindow.webContents.executeJavaScript(`(() => { const button = document.querySelector('.resource-remove'); if (!button) return false; window.confirm = () => true; button.click(); return true; })()`);
+      if (!removalStarted) throw new Error("The synthetic Resource removal could not be started.");
+      let removed = false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        removed = await mainWindow.webContents.executeJavaScript("document.querySelectorAll('.resource-row:not(.resource-head)').length === 0 && document.body.innerText.includes('original file was not changed or deleted')");
+        if (removed) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (!removed) throw new Error("The synthetic Resource remained in project state after project-only removal.");
+    }
   }
   if (smokeTest || capturePath) setTimeout(() => app.quit(), 900);
   mainWindow.on("closed", () => { mainWindow = null; });

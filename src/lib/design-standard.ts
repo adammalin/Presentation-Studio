@@ -60,6 +60,15 @@ export interface PresentationDesignStandard {
     standard: { headerFontSizePt: number; bodyFontSizePt: number; horizontalPaddingPt: number; verticalPaddingPt: number };
     denseTechnical: { headerFontSizePt: number; bodyFontSizePt: number; horizontalPaddingPt: number; verticalPaddingPt: number; useWhen: string };
   };
+  semanticVisualPolicy: {
+    version: number;
+    classifications: Array<"semantic" | "structural" | "brand-furniture" | "accidental-formatting">;
+    normalizationRule: string;
+    tableColorPolicy: "preserve-source";
+    tableColorRoles: Record<string, { name: string; base: string; tint100: string }>;
+    mutationGate: string;
+    exportGate: string;
+  };
   preservationRules: string[];
   everySlideChecklist: string[];
   collaborationRules: string[];

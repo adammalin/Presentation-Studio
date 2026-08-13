@@ -147,6 +147,7 @@ export interface TableInventoryItem {
   styleFlags: string[];
   cellFonts: string[];
   colorTokens: string[];
+  semanticColorTokens: string[];
   marginSignatures: string[];
   styleFingerprint: string;
   contentHash: string;
@@ -182,6 +183,8 @@ export interface TableCellInventoryItem {
   paragraphCount: number;
   fontFamilies: string[];
   fontSizes: number[];
+  fillToken?: string;
+  semanticColorRole?: string;
   marginsEmu: { left: number; right: number; top: number; bottom: number };
   horizontalAlignment: "left" | "center" | "right" | "justified" | "mixed";
   verticalAlignment: "top" | "middle" | "bottom";
@@ -533,6 +536,7 @@ export interface AuditFinding {
 }
 
 export interface PptxAudit {
+  semanticVisualVersion: number;
   scannedAt: string;
   supportLevel: "native-ooxml" | "partial" | "blocked";
   slideCount: number;
@@ -576,6 +580,7 @@ export interface CleanupChange {
   tableIds?: string[];
   tableLayoutCommands?: TableLayoutCommand[];
   profileId?: string;
+  semanticColorPolicy?: "preserve-source";
   alignmentRepairs?: AlignmentRepairCandidate[];
   geometryCommands?: GeometryEditCommand[];
   layoutCommands?: NativeLayoutRemapCommand[];
