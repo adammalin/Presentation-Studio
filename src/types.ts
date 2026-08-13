@@ -278,7 +278,7 @@ export interface SlideEditableObject {
 }
 
 export const PRESENTATION_SCENE_SCHEMA = "presentation-studio/scene" as const;
-export const PRESENTATION_SCENE_VERSION = 2 as const;
+export const PRESENTATION_SCENE_VERSION = 3 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
 

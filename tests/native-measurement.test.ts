@@ -88,6 +88,33 @@ test("native measurements bind by stable PowerPoint shape ID before z-order or p
   assert.equal(bound?.measuredGeometryPt?.left, 300);
 });
 
+test("native measurement binding ignores duplicate legacy scene IDs instead of consuming another PowerPoint shape", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-native-duplicate-"));
+  const filePath = path.join(directory, "synthetic.pptx");
+  await createSyntheticLegacyDeck(filePath);
+  const audit = await auditPptx(new Uint8Array(await fs.readFile(filePath)));
+  const deck: DeckJob = { id: "native-duplicate", name: "synthetic.pptx", sourceResourceId: "native-duplicate-source", sourceSha256: "c".repeat(64), operationScope: "reflow", templateClassification: audit.classification, status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  deck.scene = compilePresentationScene({ ...deck, audit });
+  const object = deck.scene.objects[0];
+  assert.ok(object);
+  deck.scene = { ...deck.scene, objects: [object, { ...object }, ...deck.scene.objects.slice(1)] };
+  const native: NativeMeasurementResult = {
+    status: "ready",
+    adapter: "macos-powerpoint-applescript",
+    authority: "powerpoint-native",
+    sourceSha256: deck.sourceSha256,
+    slides: [{ number: object.slideNumber, shapeCount: 2, shapes: [
+      { slideNumber: object.slideNumber, shapeIndex: 1, nativeShapeId: object.shapeId, name: object.name, zOrder: 1, boundsPt: { left: 20, top: 20, width: 200, height: 40 }, rotation: 0, hasTextFrame: true, hasTable: false },
+      { slideNumber: object.slideNumber, shapeIndex: 2, nativeShapeId: "other", name: "Other", zOrder: 2, boundsPt: { left: 400, top: 300, width: 100, height: 30 }, rotation: 0, hasTextFrame: true, hasTable: false },
+    ] }],
+    warnings: [],
+  };
+  const packet = bindNativeMeasurement(deck, native);
+  assert.equal(packet.objects.filter((candidate) => candidate.objectId === object.id).length, 1);
+  assert.equal(packet.objects.find((candidate) => candidate.objectId === object.id)?.measuredGeometryPt?.left, 20);
+  assert.ok(packet.warnings.some((warning) => warning.includes(`Duplicate scene object ${object.id}`)));
+});
+
 test("native cell clearance retains negative clipping evidence instead of clamping it away", () => {
   const clearances = calculateNativeCellClearances({ row: 1, column: 1, boundsPt: { left: 0, top: 0, width: 100, height: 20 }, marginsPt: { left: 4, right: 4, top: 4, bottom: 4 }, renderedTextBoundsPt: { left: -2, top: 0, width: 104, height: 16 }, textCoordinateSpace: "cell-relative", textLength: 10, lineCount: 1, verticalAnchor: "anchor top" });
   assert.deepEqual(clearances, { left: -2, right: -2, top: 4, bottom: 0 });

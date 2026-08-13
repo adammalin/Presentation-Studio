@@ -15,7 +15,7 @@ import type {
 } from "../types";
 import { normalizeCellFillToken, semanticColorRoleForToken } from "./semantic-visuals";
 
-export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 1;
+export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 2;
 import { sha256Text } from "./hash";
 
 const MAX_PACKAGE_FILES = 25_000;
@@ -79,6 +79,28 @@ function uniqueSorted(values: string[]): string[] {
 function attributeValue(attributes: string, name: string): string | undefined {
   const match = attributes.match(new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "i"));
   return match ? decodeXml(match[1] ?? match[2] ?? "") : undefined;
+}
+
+/**
+ * PowerPoint stores modern content such as Office Math in mc:AlternateContent.
+ * A capable Office client renders the first compatible mc:Choice and ignores
+ * mc:Fallback, but a raw OOXML scan otherwise sees both copies. Selecting the
+ * active branch before inventory prevents duplicate shape IDs, duplicate text
+ * boxes, and false native-measurement bindings during export acceptance.
+ */
+function selectActiveMarkupCompatibilityContent(xml: string): string {
+  let result = xml;
+  for (let pass = 0; pass < 8; pass += 1) {
+    let changed = false;
+    result = result.replace(/<mc:AlternateContent\b[^>]*>([\s\S]*?)<\/mc:AlternateContent>/g, (_alternate, body: string) => {
+      const choice = body.match(/<mc:Choice\b[^>]*>([\s\S]*?)<\/mc:Choice>/)?.[1];
+      const fallback = body.match(/<mc:Fallback\b[^>]*>([\s\S]*?)<\/mc:Fallback>/)?.[1];
+      changed = true;
+      return choice ?? fallback ?? "";
+    });
+    if (!changed) break;
+  }
+  return result;
 }
 
 function directCellFillToken(cellXml: string): string | undefined {
@@ -710,8 +732,9 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   let searchableText = "";
 
   for (const [path, xml] of xmlByPath.entries()) {
-    searchableText += ` ${extractTextRuns(xml).join(" ")}`;
-    for (const family of extractFonts(xml)) {
+    const activeXml = selectActiveMarkupCompatibilityContent(xml);
+    searchableText += ` ${extractTextRuns(activeXml).join(" ")}`;
+    for (const family of extractFonts(activeXml)) {
       const normalizedFamily = normalizeFont(family);
       const existing = fontMap.get(normalizedFamily) ?? {
         family,
@@ -752,27 +775,28 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   const alignmentRepairs: AlignmentRepairCandidate[] = [];
   for (const path of slidePaths) {
     const xml = xmlByPath.get(path) ?? "";
+    const activeXml = selectActiveMarkupCompatibilityContent(xml);
     const number = slideNumberForPart(path) ?? slides.length + 1;
     const relationshipPart = `ppt/slides/_rels/slide${number}.xml.rels`;
     const relationXml = xmlByPath.get(relationshipPart) ?? "";
-    const runs = extractTextRuns(xml);
+    const runs = extractTextRuns(activeXml);
     const text = runs.join(" ").replace(/\s+/g, " ").trim();
     const title = runs.find((run) => run.trim().length > 0)?.trim().slice(0, 160) || `Slide ${number}`;
-    const slideFonts = [...new Set(extractFonts(xml))].sort();
-    const fontSizes = uniqueSorted([...xml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
+    const slideFonts = [...new Set(extractFonts(activeXml))].sort();
+    const fontSizes = uniqueSorted([...activeXml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
     const warnings: string[] = [];
-    const tableCount = xmlCount(xml, /<a:tbl\b/g);
-    tables.push(...await extractTableInventory(number, xml));
-    const pictureCount = xmlCount(xml, /<p:pic\b/g);
-    pictures.push(...extractPictureInventory(number, xml));
-    const extractedTextBoxes = await extractTextBoxes(number, xml, slideWidth, slideHeight);
+    const tableCount = xmlCount(activeXml, /<a:tbl\b/g);
+    tables.push(...await extractTableInventory(number, activeXml));
+    const pictureCount = xmlCount(activeXml, /<p:pic\b/g);
+    pictures.push(...extractPictureInventory(number, activeXml));
+    const extractedTextBoxes = await extractTextBoxes(number, activeXml, slideWidth, slideHeight);
     textBoxes.push(...extractedTextBoxes.shapes.map((shape) => shape.inventory));
-    editableObjects.push(...await extractEditableObjects(number, xml));
+    editableObjects.push(...await extractEditableObjects(number, activeXml));
     layoutReviews.push(...extractedTextBoxes.reviews);
     const alignment = await extractAlignmentRepairs(number, extractedTextBoxes.shapes, slideWidth);
     alignmentRepairs.push(...alignment.repairs);
     layoutReviews.push(...alignment.reviews);
-    const connectorCount = xmlCount(xml, /<p:cxnSp\b/g);
+    const connectorCount = xmlCount(activeXml, /<p:cxnSp\b/g);
     const chartCount = xmlCount(relationXml, /relationships\/chart(?:"|\/)/gi);
     const commentPart = xmlByPath.get(`ppt/comments/comment${number}.xml`) ?? "";
     const commentCount = xmlCount(commentPart, /<p:cm\b/g);

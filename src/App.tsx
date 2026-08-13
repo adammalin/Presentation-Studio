@@ -840,7 +840,7 @@ export default function App() {
 
   useEffect(() => {
     const auditUpgradeKey = (deck: DeckJob) => `${deck.id}:semantic-${deck.audit?.semanticVisualVersion ?? 0}-to-${PPTX_AUDIT_SEMANTIC_VISUAL_VERSION}`;
-    const candidates = project.decks.filter((deck) => deck.audit && (sceneNeedsRebuild(deck) || deck.audit.semanticVisualVersion !== PPTX_AUDIT_SEMANTIC_VISUAL_VERSION || !deck.audit.slideSize || !Array.isArray(deck.audit.editableObjects) || (deck.audit.slideCount > 0 && deck.audit.editableObjects.length === 0) || deck.audit.slides.some((slide) => !slide.sourcePartSha256) || deck.audit.textBoxes.some((textBox) => typeof textBox.text !== "string" || (textBox.characterCount > 0 && textBox.text.length === 0) || (textBox.characterCount > 0 && textBox.estimatedOpticalLeftEmu <= 0))) && !auditGeometryUpgradeAttempted.current.has(auditUpgradeKey(deck)));
+    const candidates = project.decks.filter((deck) => deck.audit && (sceneNeedsRebuild(deck) || deck.audit.semanticVisualVersion !== PPTX_AUDIT_SEMANTIC_VISUAL_VERSION || !deck.audit.slideSize || !Array.isArray(deck.audit.editableObjects) || (deck.audit.slideCount > 0 && deck.audit.editableObjects.length === 0) || new Set(deck.audit.editableObjects.map((object) => object.id)).size !== deck.audit.editableObjects.length || deck.audit.slides.some((slide) => !slide.sourcePartSha256) || deck.audit.textBoxes.some((textBox) => typeof textBox.text !== "string" || (textBox.characterCount > 0 && textBox.text.length === 0) || (textBox.characterCount > 0 && textBox.estimatedOpticalLeftEmu <= 0))) && !auditGeometryUpgradeAttempted.current.has(auditUpgradeKey(deck)));
     if (candidates.length === 0) return;
     let canceled = false;
     for (const deck of candidates) {
@@ -1215,6 +1215,7 @@ export default function App() {
         const nativeRender = await getOrBuildNativeRender(deck, representation, current);
         if (!nativeRender) throw new Error("PowerPoint-native deck rendering is unavailable.");
         const sheet = await renderNativeContactSheet(nativeRender, page);
+        const { bytes: sheetBytes, ...sheetMetadata } = sheet;
         return {
           updatedAt: current.project.updatedAt,
           deck: { id: deck.id, name: deck.name, sourceSha256: deck.sourceSha256 },
@@ -1230,7 +1231,7 @@ export default function App() {
           totalSlides: sheet.totalSlides,
           firstSlideNumber: sheet.firstSlideNumber,
           lastSlideNumber: sheet.lastSlideNumber,
-          images: [{ ...sheet, data: bytesToBase64(sheet.bytes) }],
+          images: [{ ...sheetMetadata, data: bytesToBase64(sheetBytes) }],
           instruction: "Review every page for cross-slide hierarchy, density, pacing, repeated-component consistency, and visual outliers. Open individual inspection packets for precise diagnosis; do not infer point geometry from this overview.",
         };
       }

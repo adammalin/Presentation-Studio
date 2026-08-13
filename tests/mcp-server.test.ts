@@ -4,6 +4,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { stripImagePayloads } from "../mcp/image-payload.mjs";
+
+test("MCP image metadata never duplicates encoded or raw raster payloads", () => {
+  const metadata = stripImagePayloads([{ id: "contact-sheet", mimeType: "image/png", width: 1200, data: "encoded", bytes: new Uint8Array([1, 2, 3]) }]);
+  assert.deepEqual(metadata, [{ id: "contact-sheet", mimeType: "image/png", width: 1200 }]);
+  assert.doesNotMatch(JSON.stringify(metadata), /encoded|\"bytes\"/);
+});
 
 test("standard STDIO MCP server advertises bounded audit, Resource, and proposal tools", async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

@@ -170,7 +170,16 @@ export function bindNativeMeasurement(deck: DeckJob, native?: NativeMeasurementR
   const nativeReady = native?.status === "ready" && native.authority === "powerpoint-native";
   const warnings = [...(native?.warnings ?? [])];
   const used = new Set<string>();
-  const objects: BoundObjectMeasurement[] = deck.scene.objects.map((object): BoundObjectMeasurement => {
+  const seenObjectIds = new Set<string>();
+  const sceneObjects = deck.scene.objects.filter((object) => {
+    if (seenObjectIds.has(object.id)) {
+      warnings.push(`Duplicate scene object ${object.id} was ignored during native binding; rebuild the scene from the embedded source revision.`);
+      return false;
+    }
+    seenObjectIds.add(object.id);
+    return true;
+  });
+  const objects: BoundObjectMeasurement[] = sceneObjects.map((object): BoundObjectMeasurement => {
     if (!nativeReady) return fallbackObject(deck, object);
     const slide = native.slides.find((item) => item.number === object.slideNumber);
     const expected = sourceGeometryPt(object);

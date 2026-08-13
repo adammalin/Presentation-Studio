@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { PresentationAppClient, PresentationAppUnavailableError } from "./presentation-app-client.mjs";
 import { DESIGN_CONTRACT, designContractMessage } from "./design-contract.mjs";
+import { stripImagePayloads } from "./image-payload.mjs";
 
 const server = new McpServer({ name: "presentation-studio-local", version: "0.1.0" });
 const client = new PresentationAppClient();
@@ -37,7 +38,7 @@ async function callImages(operation, input, message) {
     const result = await client.command(operation, input);
     const images = Array.isArray(result.images) ? result.images : [];
     if (!images.length || images.some((item) => typeof item?.data !== "string" || !["image/jpeg", "image/png"].includes(item?.mimeType))) throw new Error("Presentation Studio did not return the required bounded inspection images.");
-    const structuredContent = { ...result, images: images.map(({ data: _data, ...metadata }) => metadata) };
+    const structuredContent = { ...result, images: stripImagePayloads(images) };
     return {
       structuredContent,
       content: [

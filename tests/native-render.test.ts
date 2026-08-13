@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
@@ -8,12 +11,38 @@ const {
   classifyPowerPointAutomationError,
   jpegDimensions,
   slideNumberFromFile,
+  validatePdfRasterizer,
 } = require("../electron/native-render.cjs") as {
   POWERPOINT_RENDER_SCRIPT: string;
   classifyPowerPointAutomationError(error: unknown): string;
   jpegDimensions(bytes: Uint8Array): { width: number; height: number };
   slideNumberFromFile(fileName: string): number;
+  validatePdfRasterizer(candidate?: string): string | null;
 };
+
+test("native rasterizer readiness resolves symlinks and proves the executable can start", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "presentation studio rasterizer "));
+  try {
+    const binDirectory = path.join(root, "bundled poppler", "bin");
+    mkdirSync(binDirectory, { recursive: true });
+    const target = path.join(binDirectory, "pdftoppm");
+    writeFileSync(target, "#!/usr/bin/env bash\n[ \"$1\" = \"-v\" ]\n", { mode: 0o755 });
+    chmodSync(target, 0o755);
+    const linkedDirectory = path.join(root, "consumer project", "node_modules", ".bin");
+    mkdirSync(linkedDirectory, { recursive: true });
+    const link = path.join(linkedDirectory, "pdftoppm");
+    symlinkSync(target, link);
+
+    assert.equal(validatePdfRasterizer(link), realpathSync(target));
+
+    const broken = path.join(binDirectory, "broken-pdftoppm");
+    writeFileSync(broken, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    chmodSync(broken, 0o755);
+    assert.equal(validatePdfRasterizer(broken), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("native render automation closes its exact temporary presentation after success or failure", () => {
   assert.match(POWERPOINT_RENDER_SCRIPT, /set targetPresentation to active presentation/i);

@@ -40,6 +40,30 @@ async function semanticTableFixtureBytes(): Promise<Uint8Array> {
   return zip.generateAsync({ type: "uint8array" });
 }
 
+async function alternateContentFixtureBytes(): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await fixtureBytes());
+  const entry = zip.file("ppt/slides/slide1.xml");
+  assert.ok(entry);
+  const xml = await entry.async("text");
+  const shape = [...xml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/g)].map((match) => match[0]).find((candidate) => /<p:txBody\b/.test(candidate) && /<a:t>/.test(candidate));
+  assert.ok(shape);
+  const fallback = shape.replace(/<a:t>([\s\S]*?)<\/a:t>/, "<a:t>FALLBACK ONLY</a:t>");
+  const alternate = `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><mc:Choice Requires="a14">${shape}</mc:Choice><mc:Fallback>${fallback}</mc:Fallback></mc:AlternateContent>`;
+  zip.file("ppt/slides/slide1.xml", xml.replace(shape, alternate));
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+test("OOXML audit selects the active AlternateContent branch instead of duplicating PowerPoint shapes", async () => {
+  const audit = await auditPptx(await alternateContentFixtureBytes());
+  const slideObjects = audit.editableObjects.filter((object) => object.slideNumber === 1);
+  const objectIds = slideObjects.map((object) => object.id);
+  assert.equal(new Set(objectIds).size, objectIds.length);
+  const textBoxShapeIds = audit.textBoxes.filter((textBox) => textBox.slideNumber === 1).map((textBox) => textBox.shapeId);
+  assert.ok(textBoxShapeIds.length > 0);
+  assert.equal(new Set(textBoxShapeIds).size, textBoxShapeIds.length);
+  assert.doesNotMatch(audit.slides[0].text, /FALLBACK ONLY/);
+});
+
 test("OOXML audit inventories synthetic slides, fonts, and tables", async () => {
   const audit = await auditPptx(await fixtureBytes());
   assert.equal(audit.slideCount, 2);

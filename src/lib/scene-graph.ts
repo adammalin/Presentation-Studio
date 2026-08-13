@@ -155,7 +155,12 @@ export function compilePresentationScene(input: SceneCompileInput): Presentation
   const objects: PresentationSceneObject[] = [];
   for (const slide of input.audit.slides) {
     const slidePart = slide.sourcePart ?? `ppt/slides/slide${slide.number}.xml`;
-    const slideObjects = input.audit.editableObjects.filter((object) => object.slideNumber === slide.number);
+    const seenShapeIds = new Set<string>();
+    const slideObjects = input.audit.editableObjects.filter((object) => {
+      if (object.slideNumber !== slide.number || seenShapeIds.has(object.shapeId)) return false;
+      seenShapeIds.add(object.shapeId);
+      return true;
+    });
     slideObjects.forEach((object, index) => objects.push(sceneObject(input, object, index, slidePart)));
   }
 

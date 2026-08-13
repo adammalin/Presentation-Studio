@@ -2,7 +2,7 @@ const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const { execFile } = require("node:child_process");
+const { execFile, spawnSync } = require("node:child_process");
 const { createHash, randomUUID } = require("node:crypto");
 const { promisify } = require("node:util");
 const {
@@ -63,6 +63,27 @@ function executableOnPath(name, environmentPath = process.env.PATH || "") {
   return null;
 }
 
+function validatePdfRasterizer(candidate) {
+  if (!candidate) return null;
+  try {
+    fsSync.accessSync(candidate, fsSync.constants.X_OK);
+    // Invoke the canonical target rather than a node_modules/.bin symlink. The
+    // bundled Poppler launchers locate their libraries relative to BASH_SOURCE;
+    // executing a symlink makes that relative lookup start in the consumer
+    // project's .bin directory and breaks otherwise valid installations.
+    const canonicalPath = fsSync.realpathSync(candidate);
+    fsSync.accessSync(canonicalPath, fsSync.constants.X_OK);
+    const probe = spawnSync(canonicalPath, ["-v"], {
+      encoding: "utf8",
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    return probe.status === 0 && !probe.error ? canonicalPath : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolvePdfRasterizer() {
   const configured = process.env.PRESENTATION_STUDIO_PDFTOPPM;
   const candidates = [
@@ -71,12 +92,11 @@ function resolvePdfRasterizer() {
     "/opt/homebrew/bin/pdftoppm",
     "/usr/local/bin/pdftoppm",
   ].filter(Boolean);
-  return candidates.find((candidate) => {
-    try {
-      fsSync.accessSync(candidate, fsSync.constants.X_OK);
-      return true;
-    } catch { return false; }
-  }) || null;
+  for (const candidate of candidates) {
+    const validated = validatePdfRasterizer(candidate);
+    if (validated) return validated;
+  }
+  return null;
 }
 
 function nativeRenderCapabilities(platform = process.platform) {
@@ -221,4 +241,5 @@ module.exports = {
   renderPowerPointNative,
   resolvePdfRasterizer,
   slideNumberFromFile,
+  validatePdfRasterizer,
 };

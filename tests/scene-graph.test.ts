@@ -44,6 +44,7 @@ test("hybrid scene binds every audited object to hashed native slide parts", asy
   assert.equal(scene.preservationEnvelope.exportStrategy, "surgical-ooxml-overlay");
   assert.equal(scene.slides.every((slide) => /^[0-9a-f]{64}$/.test(slide.sourcePartSha256 ?? "")), true);
   assert.equal(scene.slides.every((slide) => slide.objectIds.every((id) => scene.objects.some((object) => object.id === id))), true);
+  assert.equal(new Set(scene.objects.map((object) => object.id)).size, scene.objects.length);
   assert.equal(scene.objects.every((object) => object.sourceLocator.slidePart === `ppt/slides/slide${object.slideNumber}.xml`), true);
   const table = scene.objects.find((object) => object.kind === "table");
   assert.ok(table);
@@ -57,6 +58,17 @@ test("hybrid scene binds every audited object to hashed native slide parts", asy
   assert.equal(sceneTable.rows.length, audit.tables[0].rowCount);
   assert.equal(sceneTable.columns.length, audit.tables[0].columnCount);
   assert.match(sceneTable.cells[0].id, /cell-r1-c1$/);
+});
+
+test("scene compilation collapses legacy duplicate shape IDs from AlternateContent audits", async () => {
+  const audit = await fixtureAudit();
+  const original = audit.editableObjects[0];
+  assert.ok(original);
+  const legacyDuplicate: SlideEditableObject = { ...original, kind: "shape", textHash: undefined };
+  const legacyAudit: PptxAudit = { ...audit, editableObjects: [original, legacyDuplicate, ...audit.editableObjects.slice(1)] };
+  const scene = compilePresentationScene({ ...deckForAudit(legacyAudit), audit: legacyAudit });
+  assert.equal(scene.objects.filter((object) => object.id === original.id).length, 1);
+  assert.equal(new Set(scene.objects.map((object) => object.id)).size, scene.objects.length);
 });
 
 test("scene fidelity distinguishes preserved and conversion-only PowerPoint objects", async () => {
