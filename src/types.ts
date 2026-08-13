@@ -298,7 +298,7 @@ export const PRESENTATION_SCENE_VERSION = 3 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
 export const STUDIO_WEB_SCENE_SCHEMA = "presentation-studio/web-scene" as const;
-export const STUDIO_WEB_SCENE_VERSION = 4 as const;
+export const STUDIO_WEB_SCENE_VERSION = 5 as const;
 
 export type SceneFidelityState = "editable-native" | "preserved-native" | "conversion-required" | "unsupported-blocking";
 export type SceneSemanticRole = "title" | "body" | "caption" | "label" | "image" | "table" | "chart" | "connector" | "group" | "decoration" | "other";
@@ -457,6 +457,8 @@ export interface PresentationScene {
 export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "template-layout";
 export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
 export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "objective-body" | "step-heading" | "step-body" | "figure-label" | "figure-caption" | "footer-logo" | "footer-meta";
+export type StudioFigureTreatmentMode = "preserve-as-unit" | "preserve-and-frame" | "hybrid-rebuild" | "redraw-candidate";
+export type StudioFigureVerificationStatus = "source-locked" | "needs-content-review" | "verified";
 
 export interface StudioWebFrame {
   x: number;
@@ -529,6 +531,18 @@ export interface StudioWebNode {
   };
 }
 
+export interface StudioFigureTreatment {
+  id: string;
+  nodeIds: string[];
+  mode: StudioFigureTreatmentMode;
+  verificationStatus: StudioFigureVerificationStatus;
+  intentSummary: string;
+  informationInventory: string[];
+  invariants: string[];
+  rationale: string;
+  replacementResourceId?: string;
+}
+
 export interface StudioWebSlide {
   id: string;
   slideNumber: number;
@@ -549,6 +563,7 @@ export interface StudioWebSlide {
   background: string;
   status: "imported" | "designed";
   designRationale: string;
+  figureTreatments: StudioFigureTreatment[];
   nodes: StudioWebNode[];
   updatedAt: string;
 }
@@ -804,6 +819,13 @@ export interface CleanupProposal {
       currentRasterSha256: string;
       proposalRasterSha256: string;
       metrics: { improvements: string[]; regressions: string[] };
+      intentReview: {
+        status: "pass" | "needs-review";
+        exactTextPreserved: boolean;
+        sourceVisualsPreserved: boolean;
+        relationshipsPreserved: "yes" | "not-applicable" | "unverified";
+        summary: string;
+      };
     }>;
   };
   changes: CleanupChange[];

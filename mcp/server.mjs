@@ -86,7 +86,7 @@ server.registerTool("get_slide_scene", {
 
 server.registerTool("get_studio_web_scene", {
   title: "Read one slide as a Studio web-design scene",
-  description: "Read the canonical semantic HTML/CSS scene at 13.333 × 7.5 inches for one imported PowerPoint slide: complete source text, exact locked node text and table cells, paragraph-level semantic atom candidates, content-mapping coverage, editable-object/catalog-derived/semantic-atom binding provenance, source and current frames in inches, repeated-component roles, media bindings, ORNL design tokens, separate source-slide dimensions, and the recommended shared layout recipe. Objective columns split 2–4 exact paragraphs into a flat ORNL column system; steps + evidence binds 2–5 exact instruction atoms to one source visual; labeled figures pair source labels and captions with multiple source images. If coverage is incomplete, fresh composition is held instead of silently omitting content. This is the AI and human design surface—make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
+  description: "Read the canonical semantic HTML/CSS scene at 13.333 × 7.5 inches for one imported PowerPoint slide: complete source text, exact locked node text and table cells, paragraph-level semantic atom candidates, content-mapping coverage, editable-object/catalog-derived/semantic-atom binding provenance, source and current frames in inches, repeated-component roles, media bindings, source-locked figure treatments, ORNL design tokens, separate source-slide dimensions, and the recommended shared layout recipe. Objective columns split 2–4 exact paragraphs into a flat ORNL column system; steps + evidence binds 2–5 exact instruction atoms to one source visual; labeled figures pair source labels and captions with multiple source images. If coverage is incomplete, fresh composition is held instead of silently omitting content. This is the AI and human design surface—make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_studio_web_scene", input, (result) => `Read ${result.slide.nodes.length} semantic web nodes for slide ${result.slide.slideNumber} of ${result.deck.name}; recommended recipe: ${result.slide.recommendedRecipe}.`));
@@ -143,7 +143,7 @@ server.registerTool("get_slide_design_work_order", {
 
 server.registerTool("get_slide_inspection_packet", {
   title: "Inspect a slide with native pixels, crops, measurements, and metrics",
-  description: "Return one revision-bound inspection packet containing the exact design work order, a 2,200-pixel PowerPoint-native full-slide PNG, readable title/table/text crops, a deterministic crop overlay, native rendered-text and cell measurements, and objective design metrics. Call this instead of guessing geometry from a screenshot. Use current before design work and proposal after staging; pixels guide gestalt, PowerPoint supplies measurements, and deterministic solvers supply exact coordinates.",
+  description: "Return one revision-bound inspection packet containing the exact design work order, a 2,200-pixel PowerPoint-native full-slide PNG, readable title/table/text crops, a deterministic crop overlay, native rendered-text and cell measurements, objective design metrics, and a Found issues repair ledger. Current inspection records issues and the exact original-intent reference; Proposal inspection enters Rechecking original intent. Call this instead of guessing geometry from a screenshot. Pixels guide gestalt, PowerPoint supplies measurements, and deterministic solvers supply exact coordinates.",
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), representation: z.enum(["current", "proposal"]).default("current") },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => callImages("get_slide_inspection_packet", input, (result) => `Built ${result.representation} inspection packet ${result.revision} with ${result.images.length} PowerPoint-native visual evidence images for slide ${result.slide.number} of ${result.deck.name}.`));
@@ -234,7 +234,7 @@ server.registerTool("reject_design_proposal", {
 
 server.registerTool("record_proposal_visual_critique", {
   title: "Record a revision-bound AI visual critique",
-  description: "After reading the Proposal inspection packet, record whether the native PowerPoint draft is visually better, needs another semantic revision, or should be rejected. The exact inspection revision, PowerPoint raster hashes, objective metric changes, rationale, and attempt number are persisted. A requested better verdict is withheld when deterministic metrics regress or pixels are unchanged. Automatic AI revision is capped at three attempts; attempt three rejects an unresolved draft. This never applies, saves, exports, or overwrites content.",
+  description: "After reading the Proposal inspection packet, record whether the native PowerPoint draft is visually better, needs another semantic revision, or should be rejected. Recheck the proposal against the original human slide's message: exact wording, source visual identity or disclosed verified replacement, meaning-bearing labels/values, and arrows/sequence/causality/grouping. The exact inspection revision, raster hashes, objective metric changes, intent review, rationale, and attempt number are persisted. A requested better verdict is withheld when metrics regress, pixels are unchanged, or intent remains unverified. Automatic AI revision is capped at three attempts; attempt three rejects an unresolved draft. This never applies, saves, exports, or overwrites content.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -243,6 +243,13 @@ server.registerTool("record_proposal_visual_critique", {
     inspectionRevision: z.string().min(1).max(500),
     verdict: z.enum(["better", "revise", "reject"]),
     rationale: z.string().min(1).max(1_000),
+    intentReview: z.object({
+      status: z.enum(["pass", "needs-review"]),
+      exactTextPreserved: z.boolean(),
+      sourceVisualsPreserved: z.boolean(),
+      relationshipsPreserved: z.enum(["yes", "not-applicable", "unverified"]),
+      summary: z.string().min(1).max(1_000),
+    }),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("record_proposal_visual_critique", input, (result) => `Recorded AI visual iteration ${result.critique.attempt}/3 as ${result.recordedVerdict}. The proposal remains ${result.proposal.status}; nothing was applied, saved, exported, or overwritten.`));
@@ -263,7 +270,7 @@ server.registerTool("get_design_thread", {
 
 server.registerTool("stage_studio_web_design", {
   title: "Recompose a slide in Studio and stage editable PowerPoint",
-  description: "Choose one shared Studio HTML/CSS layout recipe—or a real installed Template Pack layout—and atomically recompose the slide's exact content. Use objective columns for 2–4 parallel paragraphs, steps + evidence for instructions beside one source visual, labeled figures for multiple source images with nearby labels/captions, card grid for already-separated comparisons, table for native tables, and template-layout only after reading its semantic slots. Select fresh-composition to persist a genuinely new canonical 16:9 web composition, then call preview_studio_fresh_composition for exact-copy compilation and PowerPoint-native visual QA. Semantic atoms and catalog-derived nodes require fresh-composition; source-bound-overlay is rejected rather than silently dropping them. Optional nodeFrames are deliberate final refinements, not a substitute for a coherent recipe. Make a substantive layout decision when the source is weak; do not default to smaller text or no-op cleanup. Nothing is applied, saved, exported, or overwritten.",
+  description: "Choose one shared Studio HTML/CSS layout recipe—or a real installed Template Pack layout—and make a substantive layout decision that atomically recomposes the slide's exact content. For weak figures, record one source-locked treatment: preserve as one technical evidence unit, preserve and frame it, propose a hybrid rebuild that retains source screenshots/data while replacing only presentation annotations, or mark a full redraw candidate for content verification. Never redraw meaning-bearing UI, code, labels, values, arrows, sequence, or causality from visual guesswork. Redraw candidates remain source-preserved until a verified replacement workflow exists. Select fresh-composition to persist a genuinely new canonical 16:9 web composition, or source-bound-overlay when native internals must survive, then inspect the result through PowerPoint-native visual QA. Optional nodeFrames are deliberate final refinements, not a substitute for a coherent recipe. Nothing is applied, saved, exported, or overwritten.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -289,6 +296,16 @@ server.registerTool("stage_studio_web_design", {
       verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
       objectFit: z.enum(["contain", "cover"]).optional(),
     })).max(30).default([]),
+    figureTreatments: z.array(z.object({
+      id: z.string().min(1).max(180).optional(),
+      nodeIds: z.array(z.string().min(1).max(180)).min(1).max(30),
+      mode: z.enum(["preserve-as-unit", "preserve-and-frame", "hybrid-rebuild", "redraw-candidate"]),
+      verificationStatus: z.enum(["source-locked", "needs-content-review", "verified"]),
+      intentSummary: z.string().min(1).max(1_000),
+      informationInventory: z.array(z.string().min(1).max(500)).min(1).max(40),
+      invariants: z.array(z.string().min(1).max(500)).min(1).max(40),
+      rationale: z.string().min(1).max(1_000),
+    })).max(8).default([]),
     addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },

@@ -8,7 +8,7 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { atomizeStudioWebSlide, compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { atomizeStudioWebSlide, compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioFigureTreatment, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { sha256, sha256Text } from "../src/lib/hash";
@@ -59,6 +59,34 @@ test("shared ORNL web recipes recompose complete slides and compile back to sour
   assert.equal(visual.slideNumber, slideNumber);
   assert.equal(visual.decorations[0]?.name, "ORNL title rule");
   assert.equal(visual.textStyles.every((style) => style.fontSizePt && style.fontSizePt >= 14), true);
+});
+
+test("source-locked figure treatments preserve the technical object and add one shared ORNL frame", async () => {
+  const { bytes, deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const figureNode = source.slides.flatMap((slide) => slide.nodes.map((node) => ({ slide, node }))).find(({ node }) => ["image", "native-object", "shape", "connector"].includes(node.kind));
+  assert.ok(figureNode);
+  const treated = updateStudioFigureTreatment(source, figureNode.slide.slideNumber, {
+    id: `technical-figure-${figureNode.slide.slideNumber}`,
+    nodeIds: [figureNode.node.id],
+    mode: "preserve-and-frame",
+    verificationStatus: "source-locked",
+    intentSummary: "Preserve the original technical evidence while improving its relationship to the page grid.",
+    informationInventory: ["The complete source visual"],
+    invariants: ["Do not change labels, values, arrows, code, screenshots, or technical relationships."],
+    rationale: "The source object carries more meaning than can safely be inferred and redrawn automatically.",
+  });
+  const slide = treated.slides.find((item) => item.slideNumber === figureNode.slide.slideNumber)!;
+  assert.equal(slide.figureTreatments.length, 1);
+  assert.equal(slide.nodes.find((node) => node.id === figureNode.node.id)?.visible, true);
+  assert.equal(slide.nodes.find((node) => node.id === figureNode.node.id)?.mediaPart, figureNode.node.mediaPart);
+  assert.deepEqual(studioGeneratedComponents(slide).map((component) => component.id), [`${slide.figureTreatments[0].id}-surface`, `${slide.figureTreatments[0].id}-accent`]);
+  const proposal = createVisualDesignProposal(deck, "2026-08-13T17:00:00.000Z", studioVisualDesignRequest(treated, slide.slideNumber));
+  const compiled = await buildCleanupProposalPptx(bytes, proposal);
+  const after = await auditPptx(compiled.bytes);
+  assert.equal(compiled.decorationCount, 2);
+  assert.deepEqual(after.slides.map((item) => item.textHash), deck.audit?.slides.map((item) => item.textHash));
+  assert.throws(() => updateStudioFigureTreatment(source, figureNode.slide.slideNumber, { ...slide.figureTreatments[0], mode: "redraw-candidate", verificationStatus: "source-locked" }), /needs-content-review/i);
 });
 
 test("comparison-card recipe ignores footer furniture and composes repeated semantic groups", async () => {

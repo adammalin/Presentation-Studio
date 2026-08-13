@@ -99,6 +99,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(critiqueTool?.description ?? "", /capped at three attempts/i);
     assert.match(critiqueTool?.description ?? "", /withheld/i);
     assert.match(JSON.stringify(critiqueTool?.inputSchema), /inspectionRevision/);
+    assert.match(JSON.stringify(critiqueTool?.inputSchema), /intentReview/);
     const proposalManifestTool = result.tools.find((tool) => tool.name === "get_pending_proposal_manifest");
     assert.match(proposalManifestTool?.description ?? "", /selected command kinds/i);
     assert.match(proposalManifestTool?.description ?? "", /without returning slide text or presentation bytes/i);
@@ -148,7 +149,13 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /fresh-composition/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeFrames/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeStyles/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /figureTreatments/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /preserve-and-frame/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /redraw-candidate/);
     assert.equal(studioStageTool?.annotations?.destructiveHint, false);
+    const inspectionTool = result.tools.find((tool) => tool.name === "get_slide_inspection_packet");
+    assert.match(inspectionTool?.description ?? "", /Found issues/i);
+    assert.match(inspectionTool?.description ?? "", /Rechecking original intent/i);
     const freshCompositionTool = result.tools.find((tool) => tool.name === "preview_studio_fresh_composition");
     assert.match(freshCompositionTool?.description ?? "", /genuinely new editable native PowerPoint slide/i);
     assert.match(freshCompositionTool?.description ?? "", /exact visible source text/i);

@@ -1,6 +1,7 @@
 import type {
   DeckJob,
   SceneSemanticRole,
+  StudioFigureTreatment,
   StudioLayoutRecipe,
   StudioWebFrame,
   StudioWebNode,
@@ -271,6 +272,7 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
       background: color(preview?.background, PRESENTATION_DESIGN_STANDARD.defaults.palette.polar),
       status: "imported",
       designRationale: "Faithful semantic web representation of the imported PowerPoint slide before Studio recomposition.",
+      figureTreatments: [],
       nodes,
       updatedAt: now,
     };
@@ -501,10 +503,24 @@ export interface StudioGeneratedComponent {
 }
 
 export function studioGeneratedComponents(slide: StudioWebSlide): StudioGeneratedComponent[] {
-  if (slide.recipe === "source" || slide.recipe === "template-layout") return [];
   const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
   const hasEyebrow = slide.nodes.some((node) => node.component?.role === "eyebrow");
-  const components: StudioGeneratedComponent[] = [{ id: `studio-title-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, hasEyebrow ? 1.10 : .93, hasEyebrow ? .62 : .96, .035), fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }];
+  const components: StudioGeneratedComponent[] = slide.recipe === "source" || slide.recipe === "template-layout" ? [] : [{ id: `studio-title-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, hasEyebrow ? 1.10 : .93, hasEyebrow ? .62 : .96, .035), fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }];
+  for (const treatment of (slide.figureTreatments ?? []).filter((item) => item.mode === "preserve-and-frame")) {
+    const nodes = treatment.nodeIds.map((id) => slide.nodes.find((node) => node.id === id)).filter((node): node is StudioWebNode => Boolean(node?.visible));
+    if (!nodes.length) continue;
+    const padding = points(6);
+    const slideWidth = PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches * EMU_PER_INCH;
+    const slideHeight = PRESENTATION_DESIGN_STANDARD.defaults.slide.heightInches * EMU_PER_INCH;
+    const left = Math.max(0, Math.min(...nodes.map((node) => node.frame.x)) - padding);
+    const top = Math.max(0, Math.min(...nodes.map((node) => node.frame.y)) - padding);
+    const right = Math.min(slideWidth, Math.max(...nodes.map((node) => node.frame.x + node.frame.width)) + padding);
+    const bottom = Math.min(slideHeight, Math.max(...nodes.map((node) => node.frame.y + node.frame.height)) + padding);
+    const figureFrame = { x: left, y: top, width: Math.max(points(12), right - left), height: Math.max(points(12), bottom - top), rotation: 0 };
+    components.push({ id: `${treatment.id}-surface`, kind: "rect", frame: figureFrame, fillColor: palette.polar, lineColor: palette.graphite, lineWidthPt: .75, behindContent: true });
+    components.push({ id: `${treatment.id}-accent`, kind: "rect", frame: { ...figureFrame, height: points(2) }, fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true });
+  }
+  if (slide.recipe === "source" || slide.recipe === "template-layout") return components;
   if (slide.recipe === "ornl-title-objective-columns") {
     const groups = slide.nodes.filter((node) => node.component?.role === "objective-body");
     groups.forEach((node, ordinal) => {
@@ -777,6 +793,43 @@ export function updateStudioWebNodeStyle(scene: StudioWebScene, slideNumber: num
   };
 }
 
+export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: number, treatment: StudioFigureTreatment): StudioWebScene {
+  const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
+  if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+  const nodeIds = [...new Set(treatment.nodeIds)];
+  if (!treatment.id.trim() || nodeIds.length === 0 || nodeIds.length > 30) throw new Error("A figure treatment requires an ID and 1–30 unique Studio node IDs.");
+  if (!["preserve-as-unit", "preserve-and-frame", "hybrid-rebuild", "redraw-candidate"].includes(treatment.mode)) throw new Error("Choose a supported figure-treatment mode.");
+  if (!["source-locked", "needs-content-review", "verified"].includes(treatment.verificationStatus)) throw new Error("Choose a supported figure verification status.");
+  const nodes = nodeIds.map((id) => slide.nodes.find((node) => node.id === id));
+  if (nodes.some((node) => !node)) throw new Error("A figure-treatment node is not present in the current Studio slide revision.");
+  if (!nodes.some((node) => node && ["image", "native-object", "shape", "connector"].includes(node.kind))) throw new Error("A figure treatment must contain at least one source visual, native object, shape, or connector.");
+  if (!treatment.intentSummary.trim() || treatment.informationInventory.length === 0 || treatment.invariants.length === 0 || !treatment.rationale.trim()) throw new Error("A figure treatment requires an intent summary, information inventory, invariants, and rationale.");
+  if (treatment.mode === "redraw-candidate" && treatment.verificationStatus === "source-locked") throw new Error("A redraw candidate must remain needs-content-review until its information and relationships are verified.");
+  if (treatment.replacementResourceId && treatment.verificationStatus !== "verified") throw new Error("A replacement Resource may be bound only after the figure treatment is verified.");
+  const normalized: StudioFigureTreatment = {
+    ...treatment,
+    id: treatment.id.trim().slice(0, 180),
+    nodeIds,
+    intentSummary: treatment.intentSummary.trim().slice(0, 1_000),
+    informationInventory: treatment.informationInventory.map((item) => item.trim()).filter(Boolean).slice(0, 40),
+    invariants: treatment.invariants.map((item) => item.trim()).filter(Boolean).slice(0, 40),
+    rationale: treatment.rationale.trim().slice(0, 1_000),
+  };
+  const affected = new Set(nodeIds);
+  const now = new Date().toISOString();
+  return {
+    ...scene,
+    revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
+    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : {
+      ...item,
+      status: "designed",
+      updatedAt: now,
+      designRationale: `${item.designRationale} Figure treatment: ${normalized.mode}.`.trim().slice(0, 1_000),
+      figureTreatments: [...(item.figureTreatments ?? []).filter((candidate) => candidate.id !== normalized.id && !candidate.nodeIds.some((id) => affected.has(id))), normalized],
+    }),
+  };
+}
+
 function frameChanged(left: StudioWebFrame, right: StudioWebFrame): boolean {
   return Math.max(Math.abs(left.x - right.x), Math.abs(left.y - right.y), Math.abs(left.width - right.width), Math.abs(left.height - right.height)) > 1_000;
 }
@@ -797,6 +850,7 @@ export function studioGeometryRequests(deck: DeckJob, scene: StudioWebScene, sli
 export function studioVisualDesignRequest(scene: StudioWebScene, slideNumber: number, author: "human" | "ai" = "ai"): VisualDesignRequest {
   const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
   if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+  const figureTreatmentIds = new Set((slide.figureTreatments ?? []).map((treatment) => treatment.id));
   const textStyles = slide.nodes.filter((node) => node.sourceBinding === "editable-object" && node.visible && !node.locked && node.kind === "text").map((node) => ({
     objectId: node.sourceObjectId,
     fontSizePt: node.style.fontSizePt,
@@ -814,17 +868,20 @@ export function studioVisualDesignRequest(scene: StudioWebScene, slideNumber: nu
     rationale: `${slide.designRationale} Apply the Studio web typography for ${node.name}.`.slice(0, 700),
     author,
   }));
-  const decorations: VisualDesignRequest["decorations"] = studioGeneratedComponents(slide).map((component) => ({
-    id: component.id,
-    name: component.id.includes("title-rule") ? "ORNL title rule" : component.id.includes("footer-rule") ? "ORNL footer rule" : component.id.endsWith("-accent") ? "ORNL card accent" : "ORNL content card",
-    geometry: scaleFrame(component.frame, scene.slideSize, scene.sourceSlideSize),
-    fillColor: component.fillColor,
-    lineColor: component.lineColor,
-    lineWidthPt: component.lineWidthPt,
-    behindContent: component.behindContent,
-    rationale: "Use the shared square-cornered ORNL web component rather than a slide-specific decoration.",
-    author,
-  }));
+  const decorations: VisualDesignRequest["decorations"] = studioGeneratedComponents(slide).map((component) => {
+    const isFigureTreatment = [...figureTreatmentIds].some((id) => component.id === `${id}-surface` || component.id === `${id}-accent`);
+    return {
+      id: component.id,
+      name: isFigureTreatment ? (component.id.endsWith("-accent") ? "ORNL technical figure accent" : "ORNL technical figure frame") : component.id.includes("title-rule") ? "ORNL title rule" : component.id.includes("footer-rule") ? "ORNL footer rule" : component.id.endsWith("-accent") ? "ORNL card accent" : "ORNL content card",
+      geometry: scaleFrame(component.frame, scene.slideSize, scene.sourceSlideSize),
+      fillColor: component.fillColor,
+      lineColor: component.lineColor,
+      lineWidthPt: component.lineWidthPt,
+      behindContent: component.behindContent,
+      rationale: isFigureTreatment ? "Frame the complete source-locked technical evidence unit without altering its internal pixels, labels, values, code, arrows, or relationships." : "Use the shared square-cornered ORNL web component rather than a slide-specific decoration.",
+      author,
+    };
+  });
   return { slideNumber, textStyles, decorations };
 }
 

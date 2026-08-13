@@ -16,6 +16,9 @@ test("one versioned design standard drives project defaults and MCP", () => {
   assert.equal(packagedStandard.semanticVisualPolicy.tableColorPolicy, "preserve-source");
   assert.equal(packagedStandard.semanticVisualPolicy.tableColorRoles.accent6.tint100, "#FBC9DF");
   assert.match(packagedStandard.autonomy.approvalPolicy, /routine deterministic design choices/i);
+  assert.match(packagedStandard.componentSystem.patterns.technicalFigure, /preserve.*source-locked evidence unit/i);
+  assert.match(packagedStandard.studioWebDesign.requiredLoop.join(" "), /Found issues.*Fixing.*Rechecking original intent/i);
+  assert.match(packagedStandard.studioWebDesign.antiPatterns.join(" "), /Blindly redrawing screenshots, code, technical diagrams/i);
 });
 
 test("older project metadata adopts design defaults without inventing review threads", () => {
