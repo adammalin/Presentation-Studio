@@ -8,10 +8,11 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { compileStudioWebScene, recomposeStudioWebSlide, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
+import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { sha256 } from "../src/lib/hash";
-import type { DeckJob } from "../src/types";
+import type { DeckJob, StudioWebNode } from "../src/types";
 
 async function fixture() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-web-scene-"));
@@ -30,6 +31,7 @@ test("Studio Web Scene separates exact PowerPoint content from redesignable web 
   const scene = compileStudioWebScene(deck, catalog);
   assert.equal(scene.designSystem.renderer, "html-css");
   assert.equal(scene.designSystem.exportTarget, "editable-powerpoint");
+  assert.deepEqual(scene.designSystem.compilerModes, ["source-bound-overlay", "fresh-composition"]);
   assert.equal(scene.slides.length, deck.audit?.slideCount);
   assert.equal(scene.slides.every((slide) => slide.sourceTextHash === deck.audit?.slides.find((item) => item.number === slide.slideNumber)?.textHash), true);
   assert.equal(scene.slides.flatMap((slide) => slide.nodes).every((node) => node.sourceObjectId && node.sourceShapeId && node.style.fontFamily === "Aptos"), true);
@@ -57,6 +59,44 @@ test("shared ORNL web recipes recompose complete slides and compile back to sour
   assert.equal(visual.textStyles.every((style) => style.fontSizePt && style.fontSizePt >= 14), true);
 });
 
+test("comparison-card recipe ignores footer furniture and composes repeated semantic groups", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const base = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const makeText = (id: string, text: string, role: StudioWebNode["role"], zIndex: number, y: number): StudioWebNode => ({
+    ...base,
+    id,
+    sourceObjectId: id,
+    sourceShapeId: id,
+    name: id,
+    kind: "text",
+    role,
+    zIndex,
+    text,
+    sourceFrame: { x: 500_000, y, width: 3_000_000, height: 400_000, rotation: 0 },
+    frame: { x: 500_000, y, width: 3_000_000, height: 400_000, rotation: 0 },
+    locked: false,
+    visible: true,
+  });
+  const nodes: StudioWebNode[] = [makeText("eyebrow", "SECTION", "label", 1, 200_000), makeText("title", "Four comparable systems", "title", 2, 500_000)];
+  for (let index = 0; index < 4; index += 1) {
+    nodes.push(makeText(`kicker-${index}`, `S${index + 1}`, "label", 3 + index * 3, 1_400_000 + index * 500_000));
+    nodes.push(makeText(`heading-${index}`, `System ${index + 1}`, "label", 4 + index * 3, 1_400_000 + index * 500_000));
+    nodes.push(makeText(`body-${index}`, `Exact technical explanation ${index + 1}.`, "body", 5 + index * 3, 1_800_000 + index * 500_000));
+  }
+  nodes.push({ ...makeText("footer", "Presentation · 20", "caption", 40, 6_500_000), sourceFrame: { x: 8_000_000, y: 6_300_000, width: 3_000_000, height: 200_000, rotation: 0 }, frame: { x: 8_000_000, y: 6_300_000, width: 3_000_000, height: 200_000, rotation: 0 } });
+  const cardSource = { ...scene, slides: [{ ...sourceSlide, nodes }] };
+  assert.equal(recommendedStudioRecipe(cardSource.slides[0]), "ornl-title-card-grid");
+  const designed = recomposeStudioWebSlide(cardSource, sourceSlide.slideNumber);
+  const slide = designed.slides[0];
+  assert.equal(slide.recipe, "ornl-title-card-grid");
+  assert.equal(slide.nodes.filter((node) => node.component?.role === "card-body").length, 4);
+  assert.equal(new Set(slide.nodes.filter((node) => node.component?.role === "card-body").map((node) => node.component?.groupId)).size, 4);
+  assert.equal(studioGeneratedComponents(slide).length, 10);
+  assert.deepEqual(slide.nodes.map((node) => node.text).filter(Boolean).sort(), nodes.map((node) => node.text).filter(Boolean).sort());
+});
+
 test("a Studio web composition round-trips to editable PowerPoint without changing exact content", async () => {
   const { bytes, deck, catalog } = await fixture();
   const source = compileStudioWebScene(deck, catalog);
@@ -77,6 +117,25 @@ test("a Studio web composition round-trips to editable PowerPoint without changi
   const outputTable = after.editableObjects.find((object) => object.id === sourceTable?.id);
   assert.ok(sourceTable && outputTable);
   assert.notDeepEqual(outputTable.geometry, sourceTable.geometry);
+});
+
+test("fresh-composition mode builds a new editable native deck from the web scene", async () => {
+  const { bytes, deck, catalog } = await fixture();
+  const before = await auditPptx(bytes);
+  let scene = compileStudioWebScene(deck, catalog);
+  for (const slide of scene.slides) scene = recomposeStudioWebSlide(scene, slide.slideNumber);
+  const rebuilt = await buildStudioCompositionPptx(scene, { catalog, title: "Synthetic Studio rebuild" });
+  const after = await auditPptx(rebuilt.bytes);
+  assert.equal(rebuilt.slideCount, before.slideCount);
+  assert.ok(rebuilt.textNodeCount > 0);
+  assert.equal(rebuilt.tableCount, before.tableCount);
+  assert.equal(rebuilt.warnings.length, 0);
+  assert.deepEqual(after.slides.map((slide) => slide.textHash), before.slides.map((slide) => slide.textHash));
+  assert.deepEqual(after.tables.map((table) => table.contentHash), before.tables.map((table) => table.contentHash));
+  assert.deepEqual(after.tables.map((table) => table.structureHash), before.tables.map((table) => table.structureHash));
+  assert.equal(after.fonts.some((font) => font.family === "Aptos"), true);
+  assert.equal(after.textBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos")), true);
+  assert.equal(after.tables.every((table) => table.cellFonts.every((family) => family === "Aptos")), true);
 });
 
 test("human canvas edits remain bounded and the self-contained project persists the web scene", async () => {

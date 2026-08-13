@@ -260,6 +260,7 @@ const studioNodeSchema = z.object({
     cells: z.array(z.object({ id: z.string().min(1), row: z.number().int().positive(), column: z.number().int().positive(), rowSpan: z.number().int().positive(), columnSpan: z.number().int().positive(), text: z.string(), fill: z.string().optional(), semanticColorRole: z.string().optional() })),
   }).optional(),
   mediaPart: z.string().optional(),
+  component: z.object({ groupId: z.string().min(1), role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "footer-logo", "footer-meta"]), ordinal: z.number().int().nonnegative().optional() }).optional(),
   style: z.object({
     fontFamily: z.literal("Aptos"),
     fontSizePt: z.number().positive(),
@@ -282,10 +283,11 @@ const studioWebSceneSchema = z.object({
   deckId: z.string().min(1),
   sourceSha256: z.string().regex(/^[0-9a-f]{64}$/),
   slideSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
-  designSystem: z.object({ id: z.literal("ornl-presentation-web-v1"), standardVersion: z.string().min(1), unit: z.literal("emu"), renderer: z.literal("html-css"), exportTarget: z.literal("editable-powerpoint") }),
+  sourceSlideSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
+  designSystem: z.object({ id: z.literal("ornl-presentation-web-v1"), standardVersion: z.string().min(1), unit: z.literal("emu"), renderer: z.literal("html-css"), exportTarget: z.literal("editable-powerpoint"), compilerModes: z.tuple([z.literal("source-bound-overlay"), z.literal("fresh-composition")]).default(["source-bound-overlay", "fresh-composition"]) }),
   slides: z.array(z.object({
     id: z.string().min(1), slideNumber: z.number().int().positive(), sourceSlideId: z.string().min(1), sourceTextHash: z.string().regex(/^[0-9a-f]{64}$/), sourceRevision: z.string().min(1),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-table", "ornl-title-figure-grid", "template-layout"]),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "template-layout"]),
     targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000), nodes: z.array(studioNodeSchema), updatedAt: isoTimestamp,
   })),
 });

@@ -86,10 +86,21 @@ server.registerTool("get_slide_scene", {
 
 server.registerTool("get_studio_web_scene", {
   title: "Read one slide as a Studio web-design scene",
-  description: "Read the canonical semantic HTML/CSS scene for one imported PowerPoint slide: exact locked text and table cells, source-bound editable node IDs, source and current frames in inches, semantic roles, media bindings, ORNL design tokens, and the recommended shared layout recipe. This is the AI and human design surface—use it to make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
+  description: "Read the canonical semantic HTML/CSS scene at 13.333 × 7.5 inches for one imported PowerPoint slide: exact locked text and table cells, source-bound editable node IDs, source and current frames in inches, repeated-component group roles, media bindings, ORNL design tokens, separate source-slide dimensions, and the recommended shared layout recipe. This is the AI and human design surface—use it to make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_studio_web_scene", input, (result) => `Read ${result.slide.nodes.length} semantic web nodes for slide ${result.slide.slideNumber} of ${result.deck.name}; recommended recipe: ${result.slide.recommendedRecipe}.`));
+
+server.registerTool("preview_studio_fresh_composition", {
+  title: "Build and view a fresh editable Studio composition",
+  description: "Compile one already-designed Studio HTML/CSS slide into a genuinely new editable native PowerPoint slide, validate exact visible source text and native table content/merged structure, render the written artifact with Microsoft PowerPoint, and return that authoritative PNG for AI visual critique. This is the fresh-composition path for weak source layouts: it deliberately replaces source coordinates and design furniture instead of overlaying them. It does not preserve the imported master, animations, transitions, or unsupported PowerPoint internals, and it never applies, saves, exports, or overwrites the project or source file.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => callImage("preview_studio_fresh_composition", input, (result) => `Built a fresh editable PowerPoint composition for slide ${result.slide.number} of ${result.deck.name}, passed exact-copy guards, and rendered the written artifact authoritatively in Microsoft PowerPoint. Nothing was applied, saved, exported, or overwritten.`));
 
 server.registerTool("list_resources", {
   title: "List authorized project Resources",
@@ -252,12 +263,13 @@ server.registerTool("get_design_thread", {
 
 server.registerTool("stage_studio_web_design", {
   title: "Recompose a slide in Studio and stage editable PowerPoint",
-  description: "Choose one shared Studio HTML/CSS layout recipe—or a real installed Template Pack layout—then atomically recompose the slide's exact source-bound content and compile its web-computed frames, typography, and ORNL components back to editable native PowerPoint objects. Optional nodeFrames are deliberate final refinements in inches, not a substitute for choosing a coherent recipe. Use get_studio_web_scene first. Make a substantive layout decision when the source is weak; do not default to smaller text or no-op cleanup. Submitted comments listed in addressedThreadIds are removed only when this proposal actually affects their slide. The result is a reversible Current/Proposal draft and never applies, saves, exports, or overwrites the source.",
+  description: "Choose one shared Studio HTML/CSS layout recipe—or a real installed Template Pack layout—and atomically recompose the slide's exact content. Select fresh-composition to persist a genuinely new canonical 16:9 web composition without creating a misleading source-overlay proposal, then call preview_studio_fresh_composition for editable-PPTX compilation and PowerPoint-native visual QA. Select source-bound-overlay only when the imported package's native master, animations, transitions, or unsupported internals must survive; that mode can compile its web-computed frames and typography into a reversible Current/Proposal draft. Optional nodeFrames are deliberate final refinements, not a substitute for a coherent recipe. Make a substantive layout decision when the source is weak; do not default to smaller text or no-op cleanup. Nothing is applied, saved, exported, or overwritten.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-table", "ornl-title-figure-grid", "template-layout"]),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "template-layout"]),
+    compilerMode: z.enum(["source-bound-overlay", "fresh-composition"]).default("fresh-composition"),
     layoutId: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
     nodeFrames: z.array(z.object({
@@ -280,7 +292,7 @@ server.registerTool("stage_studio_web_design", {
     addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, (input) => call("stage_studio_web_design", input, (result) => `Recomposed slide ${result.slide.number} with ${result.slide.recipe} and staged ${result.proposal.geometryCount} source-bound PowerPoint geometry edits for native Current/Proposal review. Nothing was applied, saved, exported, or overwritten.`));
+}, (input) => call("stage_studio_web_design", input, (result) => result.compilerMode === "fresh-composition" ? `Recomposed slide ${result.slide.number} with ${result.slide.recipe} in the canonical Studio web scene for fresh editable-PowerPoint compilation. No source-overlay proposal was created and nothing was applied, saved, exported, or overwritten.` : `Recomposed slide ${result.slide.number} with ${result.slide.recipe} and staged ${result.proposal.geometryCount} source-bound PowerPoint geometry edits for native Current/Proposal review. Nothing was applied, saved, exported, or overwritten.`));
 
 server.registerTool("stage_font_cleanup", {
   title: "Stage conservative font cleanup",

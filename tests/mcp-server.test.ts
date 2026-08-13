@@ -19,7 +19,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
   try {
     await client.connect(transport);
     const result = await client.listTools();
-    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["fit_scene_to_layout", "get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_contact_sheet", "get_deck_design_work_order", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_slide_design_context", "get_slide_design_work_order", "get_slide_inspection_packet", "get_slide_measurements", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_studio_web_scene", "get_template_layout_catalog", "get_template_layout_render", "list_decks", "list_design_threads", "list_resources", "recommend_slide_layouts", "record_proposal_visual_critique", "reject_design_proposal", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_group_layout", "solve_and_stage_safe_region", "solve_and_stage_table_layout", "solve_and_stage_text_fit", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_studio_web_design", "stage_table_design_update"]);
+    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["fit_scene_to_layout", "get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_contact_sheet", "get_deck_design_work_order", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_slide_design_context", "get_slide_design_work_order", "get_slide_inspection_packet", "get_slide_measurements", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_studio_web_scene", "get_template_layout_catalog", "get_template_layout_render", "list_decks", "list_design_threads", "list_resources", "preview_studio_fresh_composition", "recommend_slide_layouts", "record_proposal_visual_critique", "reject_design_proposal", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_group_layout", "solve_and_stage_safe_region", "solve_and_stage_table_layout", "solve_and_stage_text_fit", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_studio_web_design", "stage_table_design_update"]);
     const contractTool = result.tools.find((tool) => tool.name === "get_design_contract");
     assert.match(contractTool?.description ?? "", /improving every slide/i);
     const contract = await client.callTool({ name: "get_design_contract", arguments: {} });
@@ -140,9 +140,18 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(studioStageTool?.description ?? "", /substantive layout decision/i);
     assert.match(studioStageTool?.description ?? "", /Current\/Proposal/i);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-two-column/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-card-grid/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /fresh-composition/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeFrames/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeStyles/);
     assert.equal(studioStageTool?.annotations?.destructiveHint, false);
+    const freshCompositionTool = result.tools.find((tool) => tool.name === "preview_studio_fresh_composition");
+    assert.match(freshCompositionTool?.description ?? "", /genuinely new editable native PowerPoint slide/i);
+    assert.match(freshCompositionTool?.description ?? "", /exact visible source text/i);
+    assert.match(freshCompositionTool?.description ?? "", /does not preserve the imported master/i);
+    assert.match(freshCompositionTool?.description ?? "", /never applies, saves, exports, or overwrites/i);
+    assert.equal(freshCompositionTool?.annotations?.destructiveHint, false);
+    assert.equal(freshCompositionTool?.annotations?.readOnlyHint, false);
     const workOrderTool = result.tools.find((tool) => tool.name === "get_slide_design_work_order");
     assert.match(workOrderTool?.description ?? "", /exact locked copy/i);
     assert.match(workOrderTool?.description ?? "", /iterative visual-design loop/i);

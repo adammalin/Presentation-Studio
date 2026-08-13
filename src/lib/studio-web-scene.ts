@@ -14,9 +14,15 @@ import type { TemplateLayoutPreview, SlideRenderCatalog, TemplatePreviewElement 
 
 const EMU_PER_INCH = 914_400;
 const EMU_PER_POINT = 12_700;
+const STUDIO_WIDTH_INCHES = PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches;
+const STUDIO_HEIGHT_INCHES = PRESENTATION_DESIGN_STANDARD.defaults.slide.heightInches;
 
 function inches(value: number): number {
   return Math.round(value * EMU_PER_INCH);
+}
+
+function emuInches(value: number): number {
+  return value / EMU_PER_INCH;
 }
 
 function points(value: number): number {
@@ -29,6 +35,16 @@ function frame(x: number, y: number, width: number, height: number, rotation = 0
 
 function sourceFrame(value: { x: number; y: number; width: number; height: number; rotation: number }): StudioWebFrame {
   return { x: value.x, y: value.y, width: value.width, height: value.height, rotation: value.rotation };
+}
+
+function scaleFrame(value: StudioWebFrame, from: { width: number; height: number }, to: { width: number; height: number }): StudioWebFrame {
+  return {
+    x: Math.round(value.x * to.width / from.width),
+    y: Math.round(value.y * to.height / from.height),
+    width: Math.round(value.width * to.width / from.width),
+    height: Math.round(value.height * to.height / from.height),
+    rotation: value.rotation,
+  };
 }
 
 function previewElementFor(catalog: SlideRenderCatalog | undefined, slideNumber: number, shapeId: string, kind?: TemplatePreviewElement["kind"]): TemplatePreviewElement | undefined {
@@ -78,7 +94,7 @@ function roleStyle(role: SceneSemanticRole, preview: TemplatePreviewElement | un
   };
 }
 
-function compileNode(deck: DeckJob, objectId: string, catalog?: SlideRenderCatalog): StudioWebNode | undefined {
+function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: number; height: number }, catalog?: SlideRenderCatalog): StudioWebNode | undefined {
   const audit = deck.audit;
   const sceneObject = deck.scene?.objects.find((item) => item.id === objectId);
   const object = audit?.editableObjects.find((item) => item.id === objectId);
@@ -98,6 +114,7 @@ function compileNode(deck: DeckJob, objectId: string, catalog?: SlideRenderCatal
     fill: cell.fillToken,
     semanticColorRole: cell.semanticColorRole,
   }));
+  const normalizedSourceFrame = scaleFrame(sourceFrame(object.geometry), audit.slideSize, studioSlideSize);
   return {
     id: `studio-${object.id}`,
     sourceObjectId: object.id,
@@ -105,8 +122,8 @@ function compileNode(deck: DeckJob, objectId: string, catalog?: SlideRenderCatal
     name: object.name,
     kind,
     role: sceneObject.semanticRole,
-    sourceFrame: sourceFrame(object.geometry),
-    frame: sourceFrame(object.geometry),
+    sourceFrame: normalizedSourceFrame,
+    frame: normalizedSourceFrame,
     zIndex: sceneObject.zIndex,
     visible: true,
     locked: sceneObject.protected || sceneObject.fidelityState === "unsupported-blocking" || sceneObject.fidelityState === "conversion-required",
@@ -123,9 +140,10 @@ function compileNode(deck: DeckJob, objectId: string, catalog?: SlideRenderCatal
 export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalog): StudioWebScene {
   if (!deck.audit || !deck.scene) throw new Error("Audit and compile the PowerPoint preservation scene before creating a Studio Web Scene.");
   const now = new Date().toISOString();
+  const studioSlideSize = { width: inches(STUDIO_WIDTH_INCHES), height: inches(STUDIO_HEIGHT_INCHES) };
   const slides: StudioWebSlide[] = deck.scene.slides.map((slide) => {
     const preview = catalog?.slides.find((item) => item.number === slide.number);
-    let nodes = slide.objectIds.map((objectId) => compileNode(deck, objectId, catalog)).filter((node): node is StudioWebNode => Boolean(node));
+    let nodes = slide.objectIds.map((objectId) => compileNode(deck, objectId, studioSlideSize, catalog)).filter((node): node is StudioWebNode => Boolean(node));
     if (!nodes.some((node) => node.role === "title")) {
       const inferredTitle = nodes
         .filter((node) => node.kind === "text" && Boolean(node.text?.trim()) && node.sourceFrame.y < inches(1.3))
@@ -158,13 +176,15 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
     revision: `${deck.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
     deckId: deck.id,
     sourceSha256: deck.sourceSha256,
-    slideSize: { ...deck.audit.slideSize },
+    slideSize: studioSlideSize,
+    sourceSlideSize: { ...deck.audit.slideSize },
     designSystem: {
       id: "ornl-presentation-web-v1",
       standardVersion: PRESENTATION_DESIGN_STANDARD.version,
       unit: "emu",
       renderer: "html-css",
       exportTarget: "editable-powerpoint",
+      compilerModes: ["source-bound-overlay", "fresh-composition"],
     },
     slides,
   };
@@ -174,12 +194,32 @@ function activeNodes(slide: StudioWebSlide): StudioWebNode[] {
   return slide.nodes.filter((node) => node.visible && !node.locked && !["shape", "connector"].includes(node.kind));
 }
 
+function footerNode(node: StudioWebNode): boolean {
+  return node.sourceFrame.y >= inches(6.78) || node.component?.role === "footer-logo" || node.component?.role === "footer-meta";
+}
+
+function meaningfulImage(node: StudioWebNode): boolean {
+  return node.kind === "image" && !footerNode(node) && node.sourceFrame.width * node.sourceFrame.height >= inches(.45) * inches(.35);
+}
+
 function styleForDesignedNode(node: StudioWebNode): StudioWebNode["style"] {
   const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
   if (node.role === "title") return { ...node.style, fontFamily: "Aptos", fontSizePt: 29.25, fontWeight: 700, lineHeight: 1.02, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
   if (node.role === "caption" || node.role === "label") return { ...node.style, fontFamily: "Aptos", fontSizePt: 14, fontWeight: 400, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
   if (node.kind === "table") return { ...node.style, fontFamily: "Aptos", fontSizePt: 16, fontWeight: 400, lineHeight: 1.05, color: palette.darkMatter, background: palette.polar, borderColor: palette.graphite, borderWidthPt: .75, textAlign: "left", verticalAlign: "middle", paddingPt: { top: 4, right: 6, bottom: 4, left: 6 } };
   return { ...node.style, fontFamily: "Aptos", fontSizePt: Math.max(16, Math.min(22, node.style.fontSizePt)), fontWeight: node.style.fontWeight === 700 ? 600 : node.style.fontWeight, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: node.kind === "image" ? "contain" : node.style.objectFit };
+}
+
+function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
+  const base = styleForDesignedNode(node);
+  const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
+  if (node.component?.role === "eyebrow") return { ...base, fontSizePt: 10.5, fontWeight: 700, lineHeight: 1, color: palette.ornlGreen, textAlign: "left" };
+  if (node.component?.role === "card-kicker") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1, color: [palette.ornlGreen, palette.infinity, palette.hydro, palette.darkMatter][node.component.ordinal ?? 0] ?? palette.ornlGreen };
+  if (node.component?.role === "card-heading") return { ...base, fontSizePt: 13.5, fontWeight: 400, lineHeight: 1.05, color: "#666B68" };
+  if (node.component?.role === "card-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.13, color: palette.darkMatter };
+  if (node.component?.role === "footer-logo") return { ...base, paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: "contain" };
+  if (node.component?.role === "footer-meta") return { ...base, fontSizePt: 9, fontWeight: 400, lineHeight: 1, color: "#6B716E", textAlign: "right", verticalAlign: "middle" };
+  return base;
 }
 
 function contained(node: StudioWebNode, target: StudioWebFrame): StudioWebFrame {
@@ -234,10 +274,53 @@ function grid(nodes: StudioWebNode[], target: StudioWebFrame, columns = 2, gapPt
 export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutRecipe {
   const nodes = activeNodes(slide);
   if (nodes.some((node) => node.kind === "table")) return "ornl-title-table";
-  const images = nodes.filter((node) => node.kind === "image").length;
+  const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
+  const labelCount = nodes.filter((node) => node.kind === "text" && node.role === "label" && !footerNode(node)).length;
+  if (bodyCount >= 3 && bodyCount <= 6 && labelCount >= bodyCount) return "ornl-title-card-grid";
+  const images = nodes.filter(meaningfulImage).length;
   if (images >= 2) return "ornl-title-figure-grid";
   if (images === 1) return "ornl-title-two-column";
   return "ornl-title-content";
+}
+
+function cardFrame(ordinal: number, count: number): StudioWebFrame {
+  const columns = count <= 2 ? Math.max(1, count) : 2;
+  const rows = Math.ceil(count / columns);
+  const gapX = .24;
+  const gapY = .24;
+  const region = { x: .47, y: 1.36, width: 12.39, height: rows === 1 ? 2.42 : 5.05 };
+  const width = (region.width - gapX * (columns - 1)) / columns;
+  const height = (region.height - gapY * (rows - 1)) / rows;
+  const column = ordinal % columns;
+  const row = Math.floor(ordinal / columns);
+  return frame(region.x + column * (width + gapX), region.y + row * (height + gapY), width, height);
+}
+
+export interface StudioGeneratedComponent {
+  id: string;
+  kind: "rect" | "line";
+  frame: StudioWebFrame;
+  fillColor?: string;
+  lineColor?: string;
+  lineWidthPt: number;
+  behindContent: boolean;
+}
+
+export function studioGeneratedComponents(slide: StudioWebSlide): StudioGeneratedComponent[] {
+  if (slide.recipe === "source" || slide.recipe === "template-layout") return [];
+  const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
+  const hasEyebrow = slide.nodes.some((node) => node.component?.role === "eyebrow");
+  const components: StudioGeneratedComponent[] = [{ id: `studio-title-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, hasEyebrow ? 1.10 : .93, hasEyebrow ? .62 : .96, .035), fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }];
+  if (slide.recipe !== "ornl-title-card-grid") return components;
+  const groups = [...new Set(slide.nodes.filter((node) => node.component?.role === "card-body").map((node) => node.component!.groupId))];
+  const accents = [palette.ornlGreen, palette.aqua, palette.infinity, palette.forge, palette.plasma, palette.pulsar];
+  groups.forEach((groupId, ordinal) => {
+    const card = cardFrame(ordinal, groups.length);
+    components.push({ id: `${groupId}-surface`, kind: "rect", frame: card, fillColor: palette.polar, lineColor: palette.graphite, lineWidthPt: .75, behindContent: true });
+    components.push({ id: `${groupId}-accent`, kind: "rect", frame: { ...card, height: points(2) }, fillColor: accents[ordinal] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
+  });
+  components.push({ id: `studio-footer-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, 6.92, 12.39, .012), fillColor: palette.graphite, lineWidthPt: 0, behindContent: true });
+  return components;
 }
 
 function templatePlacements(nodes: StudioWebNode[], layout: TemplateLayoutPreview): Map<string, StudioWebFrame> {
@@ -265,11 +348,18 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   if (recipe === "template-layout" && !layout?.semantic) throw new Error("Choose an installed template layout with semantic regions before applying template-layout.");
   const nodes = activeNodes(slide);
   const title = nodes.find((node) => node.role === "title");
-  const content = nodes.filter((node) => node.id !== title?.id && node.role !== "caption" && node.role !== "label");
-  const captions = nodes.filter((node) => node.role === "caption" || node.role === "label");
+  const footer = nodes.filter(footerNode);
+  const eyebrow = nodes.find((node) => node.kind === "text" && node.role === "label" && !footerNode(node) && (!title || node.sourceFrame.y < title.sourceFrame.y));
+  const content = nodes.filter((node) => node.id !== title?.id && node.id !== eyebrow?.id && !footerNode(node) && node.role !== "caption" && node.role !== "label");
+  const captions = nodes.filter((node) => node.id !== eyebrow?.id && !footerNode(node) && (node.role === "caption" || node.role === "label"));
   const placements = new Map<string, StudioWebFrame>();
-  const titleFrame = frame(.47, .29, 12.39, .63);
+  const components = new Map<string, StudioWebNode["component"]>();
+  const titleFrame = frame(.47, eyebrow ? .58 : .29, 12.39, eyebrow ? .50 : .68);
   if (title) placements.set(title.id, titleFrame);
+  if (eyebrow) {
+    placements.set(eyebrow.id, frame(.47, .32, 12.39, .18));
+    components.set(eyebrow.id, { groupId: `studio-header-${slideNumber}`, role: "eyebrow" });
+  }
   if (recipe === "source") for (const node of nodes) placements.set(node.id, { ...node.sourceFrame });
   else if (recipe === "template-layout" && layout) for (const [id, value] of templatePlacements(nodes, layout)) placements.set(id, value);
   else if (recipe === "ornl-title-table") {
@@ -284,18 +374,57 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       for (const [id, value] of stack(support, frame(.47, 5.98, 12.39, .64), 8)) placements.set(id, value);
     }
   } else if (recipe === "ornl-title-two-column") {
-    const visual = content.find((node) => node.kind === "image" || node.kind === "table");
+    const visual = content.find((node) => meaningfulImage(node) || node.kind === "table");
     const left = content.filter((node) => node.id !== visual?.id);
     for (const [id, value] of stack(left, frame(.47, 1.15, 5.78, 5.40), 18)) placements.set(id, value);
     if (visual) placements.set(visual.id, contained(visual, frame(6.63, 1.15, 6.23, 5.40)));
     for (const [id, value] of stack(captions, frame(6.63, 6.58, 6.23, .18), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-figure-grid") {
-    const visuals = content.filter((node) => node.kind === "image");
+    const visuals = content.filter(meaningfulImage);
     const remaining = content.filter((node) => node.kind !== "image");
     for (const [id, value] of grid(visuals, frame(.47, 1.15, 12.39, 4.70), visuals.length <= 2 ? 2 : 3, 18)) placements.set(id, value);
     for (const [id, value] of stack([...remaining, ...captions], frame(.47, 5.98, 12.39, .64), 8)) placements.set(id, value);
+  } else if (recipe === "ornl-title-card-grid") {
+    const bodies = content.filter((node) => node.kind === "text" && node.role === "body").sort((left, right) => left.zIndex - right.zIndex);
+    const groupNodeIds = new Set<string>();
+    let priorBodyZ = title?.zIndex ?? -Infinity;
+    bodies.forEach((body, ordinal) => {
+      const groupId = `studio-card-${slideNumber}-${ordinal + 1}`;
+      const card = cardFrame(ordinal, bodies.length);
+      const labels = captions.filter((node) => node.kind === "text" && node.zIndex > priorBodyZ && node.zIndex < body.zIndex).sort((left, right) => left.zIndex - right.zIndex);
+      const kicker = labels[0];
+      const heading = labels.at(-1);
+      if (kicker) {
+        placements.set(kicker.id, frame(emuInches(card.x) + .27, emuInches(card.y) + .27, heading && heading.id !== kicker.id ? .75 : emuInches(card.width) - .54, .30));
+        components.set(kicker.id, { groupId, role: "card-kicker", ordinal });
+        groupNodeIds.add(kicker.id);
+      }
+      if (heading && heading.id !== kicker?.id) {
+        placements.set(heading.id, frame(emuInches(card.x) + 1.04, emuInches(card.y) + .29, emuInches(card.width) - 1.31, .28));
+        components.set(heading.id, { groupId, role: "card-heading", ordinal });
+        groupNodeIds.add(heading.id);
+      }
+      placements.set(body.id, frame(emuInches(card.x) + .27, emuInches(card.y) + .72, emuInches(card.width) - .49, emuInches(card.height) - .88));
+      components.set(body.id, { groupId, role: "card-body", ordinal });
+      groupNodeIds.add(body.id);
+      priorBodyZ = body.zIndex;
+    });
+    const extras = [...content, ...captions].filter((node) => !groupNodeIds.has(node.id));
+    for (const [id, value] of stack(extras, frame(.47, 5.96, 12.39, .52), 6)) placements.set(id, value);
   } else {
     for (const [id, value] of stack([...content, ...captions], frame(.47, 1.15, 12.39, 5.57), 18)) placements.set(id, value);
+  }
+  const footerLogo = footer.find((node) => node.kind === "image");
+  const footerMeta = footer.find((node) => node.kind === "text");
+  if (recipe !== "source" && recipe !== "template-layout") {
+    if (footerLogo) {
+      placements.set(footerLogo.id, contained(footerLogo, frame(.47, 7.06, .76, .20)));
+      components.set(footerLogo.id, { groupId: `studio-footer-${slideNumber}`, role: "footer-logo" });
+    }
+    if (footerMeta) {
+      placements.set(footerMeta.id, frame(9.01, 7.04, 3.89, .20));
+      components.set(footerMeta.id, { groupId: `studio-footer-${slideNumber}`, role: "footer-meta" });
+    }
   }
   const now = new Date().toISOString();
   const nextSlide: StudioWebSlide = {
@@ -305,7 +434,12 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     targetLayoutName: recipe === "template-layout" ? layout?.name : undefined,
     status: recipe === "source" ? "imported" : "designed",
     designRationale: (rationale ?? `Recompose exact source content with the shared ${recipe} ORNL web component recipe.`).trim().slice(0, 1_000),
-    nodes: slide.nodes.map((node) => placements.has(node.id) ? { ...node, frame: placements.get(node.id)!, style: styleForDesignedNode(node) } : node),
+    nodes: slide.nodes.map((node) => {
+      const component = recipe === "source" || recipe === "template-layout" ? undefined : components.get(node.id);
+      if (!placements.has(node.id)) return { ...node, component };
+      const nextNode = { ...node, component };
+      return { ...nextNode, frame: placements.get(node.id)!, style: component ? styleForComponent(nextNode) : styleForDesignedNode(nextNode) };
+    }),
     updatedAt: now,
   };
   return { ...scene, revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`, slides: scene.slides.map((item) => item.slideNumber === slideNumber ? nextSlide : item) };
@@ -362,7 +496,7 @@ export function studioGeometryRequests(deck: DeckJob, scene: StudioWebScene, sli
   if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
   return slide.nodes.filter((node) => node.visible && !node.locked && frameChanged(node.sourceFrame, node.frame)).map((node) => ({
     objectId: node.sourceObjectId,
-    target: { x: node.frame.x, y: node.frame.y, width: node.frame.width, height: node.frame.height },
+    target: scaleFrame(node.frame, scene.slideSize, scene.sourceSlideSize),
     rationale: `${slide.designRationale} Compile the web-computed frame for ${node.name} back to its editable PowerPoint object.`.slice(0, 700),
     author,
     constraints: { allowIntentionalOverlap: false, allowFitRisk: false, allowSafeArea: false, allowAspectRatioChange: false },
@@ -389,16 +523,17 @@ export function studioVisualDesignRequest(scene: StudioWebScene, slideNumber: nu
     rationale: `${slide.designRationale} Apply the Studio web typography for ${node.name}.`.slice(0, 700),
     author,
   }));
-  const decorations: VisualDesignRequest["decorations"] = slide.recipe === "source" ? [] : [{
-    id: `studio-title-rule-${slideNumber}`,
-    name: "ORNL title rule",
-    geometry: frame(.47, .93, .96, .063),
-    fillColor: PRESENTATION_DESIGN_STANDARD.defaults.palette.ornlGreen,
-    lineWidthPt: 0,
-    behindContent: true,
-    rationale: "Use the shared square-cornered ORNL title rule component rather than a slide-specific decoration.",
+  const decorations: VisualDesignRequest["decorations"] = studioGeneratedComponents(slide).map((component) => ({
+    id: component.id,
+    name: component.id.includes("title-rule") ? "ORNL title rule" : component.id.includes("footer-rule") ? "ORNL footer rule" : component.id.endsWith("-accent") ? "ORNL card accent" : "ORNL content card",
+    geometry: scaleFrame(component.frame, scene.slideSize, scene.sourceSlideSize),
+    fillColor: component.fillColor,
+    lineColor: component.lineColor,
+    lineWidthPt: component.lineWidthPt,
+    behindContent: component.behindContent,
+    rationale: "Use the shared square-cornered ORNL web component rather than a slide-specific decoration.",
     author,
-  }];
+  }));
   return { slideNumber, textStyles, decorations };
 }
 

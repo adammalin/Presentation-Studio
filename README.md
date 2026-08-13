@@ -6,7 +6,7 @@ The application never overwrites an imported deck. It embeds source bytes in a s
 
 ## Current working slice
 
-- A persisted `presentation-studio/web-scene` design model that extracts exact source-bound text, tables, pictures, and preserved native objects into semantic React/HTML/CSS slides; shared ORNL title/content, two-column, table, figure-grid, and installed-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and side-by-side source reference; MCP scene inspection and staging; and editable PowerPoint round-trip tests with exact visible-copy and table-structure preservation.
+- A persisted `presentation-studio/web-scene` design model that normalizes imported content onto a canonical 13.333 × 7.5-inch React/HTML/CSS canvas while retaining source-coordinate bindings; shared ORNL title/content, two-column, repeated comparison-card, table, figure-grid, footer, and installed-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and side-by-side source reference; MCP scene inspection, fresh-composition preview, and preservation staging; plus dual editable-PowerPoint compilers for preservation overlays and true fresh composition from native text, vectors, images, and tables. Exact visible-copy and table-structure round trips are tested in both modes.
 - Multi-file `.pptx` import with bounded OOXML preflight, unsafe-path checks, and expanded-size/compression-ratio limits.
 - App-wide drag-and-drop and Resources file-picker intake for presentations, documents, data, images, audio, video, and SVG assets.
 - Versioned first-run onboarding walkthrough with keyboard navigation, deterministic spotlights, persisted completion, and an always-available Tour replay control.

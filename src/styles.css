@@ -470,9 +470,10 @@ button.deck-row.selected { background: #eef6f1; box-shadow: inset 3px 0 var(--or
 .studio-toolbar label { display: grid; gap: 4px; min-width: 190px; color: #59655f; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .studio-toolbar select { min-height: 31px; border: 1px solid #b9c1bd; background: #fff; color: #26312c; font: 500 12px Aptos, Arial, sans-serif; }
 .studio-mode-chip { margin-left: auto; align-self: center; padding: 5px 8px; background: #c4f6eb; color: #00454d; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.studio-header-actions { flex-wrap: wrap; justify-content: flex-end; }
 .studio-web-canvas { position: relative; container-type: inline-size; width: min(100%, 1050px); flex: 0 0 auto; overflow: hidden; isolation: isolate; box-shadow: 0 17px 45px rgba(20, 37, 29, .15); touch-action: none; }
 .studio-template-base { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
-.studio-title-rule { position: absolute; left: 3.525%; top: 12.4%; width: 7.2%; height: .84%; z-index: 8; background: #00662c; }
+.studio-generated-component { position: absolute; z-index: 8; box-sizing: border-box; border-style: solid; pointer-events: none; }
 .studio-node { position: absolute; margin: 0; display: flex; box-sizing: border-box; overflow: hidden; border-style: solid; border-radius: 0; font-family: Aptos, Arial, sans-serif; white-space: pre-wrap; cursor: grab; appearance: none; }
 .studio-node:active { cursor: grabbing; }
 .studio-node.selected { outline: max(2px, .18cqw) solid #00bdb5; outline-offset: max(1px, .08cqw); }
@@ -508,6 +509,8 @@ button.deck-row.selected { background: #eef6f1; box-shadow: inset 3px 0 var(--or
 .studio-source-thumb { display: block; overflow: hidden; border: 1px solid #cfd5d2; background: #eef1ef; box-shadow: 0 7px 18px rgba(20,37,29,.09); }
 .studio-source-thumb .native-slide-render, .studio-source-thumb svg { display: block; width: 100%; height: auto; }
 .studio-source-reference > small { margin: 0; color: #76827b; font-size: 9px; }
+.studio-source-reference.fresh { border-top-color: #8ad3b2; }
+.studio-source-reference.fresh .studio-source-thumb { border-color: #00662c; box-shadow: 0 7px 18px rgba(0,102,44,.14); }
 
 @media (max-width: 1260px) {
   .app-shell { grid-template-columns: 154px minmax(660px, 1fr) 242px; }

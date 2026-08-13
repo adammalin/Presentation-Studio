@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-13.12-web-scene",
+  "version": "2026-08-13.13-fresh-composition",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -109,8 +109,9 @@
       "Choose one shared ORNL web recipe or one compatible approved Template Pack layout.",
       "Recompose the whole semantic slide; do not preserve weak source coordinates by default.",
       "Use bounded node frame and style refinements only after the composition choice.",
-      "Compile supported web nodes back to editable source-bound PowerPoint objects.",
-      "Inspect the PowerPoint-native Current and Proposal renders, remeasure, and revise or reject regressions.",
+      "Choose source-bound-overlay when native source internals must survive, or fresh-composition when weak source geometry should be replaced by a new canonical 16:9 composition.",
+      "Compile supported web nodes to editable PowerPoint text, native tables, extracted images, and restrained ORNL vectors.",
+      "Inspect and remeasure the written artifact in Microsoft PowerPoint, and revise or reject visual or geometry regressions.",
       "Leave the proposal for human acceptance; never silently apply or export it."
     ],
     "antiPatterns": [
@@ -123,6 +124,7 @@
     "supportedRecipes": [
       "ornl-title-content",
       "ornl-title-two-column",
+      "ornl-title-card-grid",
       "ornl-title-table",
       "ornl-title-figure-grid",
       "template-layout"

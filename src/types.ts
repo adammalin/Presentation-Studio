@@ -282,7 +282,7 @@ export const PRESENTATION_SCENE_VERSION = 3 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
 export const STUDIO_WEB_SCENE_SCHEMA = "presentation-studio/web-scene" as const;
-export const STUDIO_WEB_SCENE_VERSION = 1 as const;
+export const STUDIO_WEB_SCENE_VERSION = 2 as const;
 
 export type SceneFidelityState = "editable-native" | "preserved-native" | "conversion-required" | "unsupported-blocking";
 export type SceneSemanticRole = "title" | "body" | "caption" | "label" | "image" | "table" | "chart" | "connector" | "group" | "decoration" | "other";
@@ -438,8 +438,9 @@ export interface PresentationScene {
   preservationEnvelope: PowerPointPreservationEnvelope;
 }
 
-export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-table" | "ornl-title-figure-grid" | "template-layout";
+export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "template-layout";
 export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
+export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "footer-logo" | "footer-meta";
 
 export interface StudioWebFrame {
   x: number;
@@ -480,6 +481,7 @@ export interface StudioWebNode {
     }>;
   };
   mediaPart?: string;
+  component?: { groupId: string; role: StudioComponentRole; ordinal?: number };
   style: {
     fontFamily: "Aptos";
     fontSizePt: number;
@@ -519,12 +521,14 @@ export interface StudioWebScene {
   deckId: string;
   sourceSha256: string;
   slideSize: { width: number; height: number };
+  sourceSlideSize: { width: number; height: number };
   designSystem: {
     id: "ornl-presentation-web-v1";
     standardVersion: string;
     unit: "emu";
     renderer: "html-css";
     exportTarget: "editable-powerpoint";
+    compilerModes: ["source-bound-overlay", "fresh-composition"];
   };
   slides: StudioWebSlide[];
 }
