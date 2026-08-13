@@ -130,6 +130,7 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
     exactContent: Boolean(textBox?.text || table),
     text: textBox?.text,
     textHash: textBox?.textHash,
+    sourceParagraphs: textBox?.paragraphs,
     tableId: table?.id,
     table: table ? { rows: table.rowCount, columns: table.columnCount, cells: tableCells ?? [] } : undefined,
     mediaPart: preview?.mediaId,
@@ -137,11 +138,27 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
   };
 }
 
+function normalizedVisibleText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function nodeVisibleText(node: StudioWebNode): string {
+  if (node.kind === "text") return node.text ?? "";
+  if (node.kind === "table" && node.table) {
+    return [...node.table.cells]
+      .sort((left, right) => left.row - right.row || left.column - right.column)
+      .map((cell) => cell.text)
+      .join(" ");
+  }
+  return "";
+}
+
 export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalog): StudioWebScene {
   if (!deck.audit || !deck.scene) throw new Error("Audit and compile the PowerPoint preservation scene before creating a Studio Web Scene.");
   const now = new Date().toISOString();
   const studioSlideSize = { width: inches(STUDIO_WIDTH_INCHES), height: inches(STUDIO_HEIGHT_INCHES) };
   const slides: StudioWebSlide[] = deck.scene.slides.map((slide) => {
+    const sourceSlide = deck.audit!.slides.find((item) => item.number === slide.number);
     const preview = catalog?.slides.find((item) => item.number === slide.number);
     let nodes = slide.objectIds.map((objectId) => compileNode(deck, objectId, studioSlideSize, catalog)).filter((node): node is StudioWebNode => Boolean(node));
     if (!nodes.some((node) => node.role === "title")) {
@@ -156,11 +173,24 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
         });
       }
     }
+    const mappedTextNodes = nodes.filter((node) => Boolean(nodeVisibleText(node)));
+    const sourceText = normalizedVisibleText(sourceSlide?.text ?? "");
+    const mappedText = normalizedVisibleText(mappedTextNodes.map(nodeVisibleText).join(" "));
+    const exactTextMapped = sourceText === mappedText;
+    const sourceObjects = deck.scene!.objects.filter((object) => object.slideNumber === slide.number);
     return {
       id: `studio-${slide.id}`,
       slideNumber: slide.number,
       sourceSlideId: slide.id,
       sourceTextHash: slide.sourceTextHash,
+      contentCoverage: {
+        exactTextMapped,
+        sourceCharacterCount: sourceText.length,
+        mappedCharacterCount: mappedText.length,
+        sourceTextBoxCount: deck.audit!.textBoxes.filter((item) => item.slideNumber === slide.number).length,
+        mappedTextNodeCount: mappedTextNodes.length,
+        groupedOrUnsupportedTextPresent: !exactTextMapped && (sourceText.length !== mappedText.length || sourceObjects.some((object) => ["group", "graphic-frame", "chart"].includes(object.kind))),
+      },
       sourceRevision: deck.scene!.revision,
       recipe: "source",
       background: color(preview?.background, PRESENTATION_DESIGN_STANDARD.defaults.palette.polar),

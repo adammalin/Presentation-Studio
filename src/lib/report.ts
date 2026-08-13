@@ -55,7 +55,10 @@ export function buildAuditReport(project: PresentationStudioProject, deck: DeckJ
       hasEffect,
       hasStoredDescription: Boolean(description),
     })),
-    textBoxes: (audit.textBoxes ?? []).map(({ text: _text, textHash: _textHash, ...textBox }) => textBox),
+    textBoxes: (audit.textBoxes ?? []).map(({ text: _text, textHash: _textHash, paragraphs, ...textBox }) => ({
+      ...textBox,
+      paragraphs: (paragraphs ?? []).map(({ text: _paragraphText, textHash: _paragraphTextHash, ...paragraph }) => paragraph),
+    })),
     layoutReviews: audit.layoutReviews ?? [],
     alignmentRepairs: (audit.alignmentRepairs ?? []).map(({ textHash: _textHash, ...repair }) => repair),
     findings: audit.findings,

@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-13.13-fresh-composition",
+  "version": "2026-08-13.14-semantic-atoms",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -131,7 +131,7 @@
     ]
   },
   "componentSystem": {
-    "version": 3,
+    "version": 4,
     "principle": "Compose slides from shared ORNL page, typography, content-region, figure, table, and footer components. Do not redraw each slide as an unrelated one-off canvas.",
     "page": {
       "leftInches": 0.47,
@@ -155,10 +155,11 @@
     },
     "patterns": {
       "content": "One primary content region aligned to the page grid; avoid ornamental boxes unless they communicate grouping.",
+      "semanticAtoms": "Read every exact source paragraph, list item, label, table cell, and media binding as an ordered semantic atom before composition. A dense source text box may become several editable web and PowerPoint objects only when their ordered normalized text exactly reproduces the approved source copy. Hold fresh composition when grouped, inherited, or unsupported content is not fully mapped.",
       "twoColumn": "Use one shared gutter and equal optical top edges; contain images without changing aspect ratio.",
       "diagram": "Move nodes, labels, and connectors as a relationship-preserving system; never independently enlarge diagram labels until relationships break.",
       "table": "Use the shared table component, keep the lower logo safe zone clear, and select standard or dense-technical typography from measured content density.",
-      "figureGrid": "Use consistent figure frames and caption spacing; contain source images without distortion.",
+      "figureGrid": "Use consistent figure frames and caption spacing; contain source images without distortion. Keep each source figure, its exact label, and its caption bound as one reusable component when the relationship is unambiguous.",
       "references": "Use the shared body-list component with consistent bullet indentation, hanging indent, line spacing, and paragraph spacing."
     },
     "paragraph": {
@@ -174,6 +175,7 @@
     },
     "components": {
       "titleBar": "One Aptos title frame and one ORNL Green rule at the exact shared title geometry.",
+      "semanticTextAtom": "One exact source paragraph or ordered paragraph group with a stable source locator and hash. It may be placed independently in fresh composition but may not be rewritten or silently omitted.",
       "bodyList": "One left-aligned content frame using shared paragraph spacing and bullet indentation; preserve exact wording.",
       "twoColumn": "Two content regions with equal optical top edges and a 0.38-inch gutter; images use contain behavior unless an intentional crop is approved.",
       "diagram": "One relationship-preserving group for nodes, connectors, and labels; edit the system rather than isolated shapes.",

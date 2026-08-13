@@ -87,6 +87,10 @@ test("OOXML audit inventories synthetic slides, fonts, and tables", async () => 
   const bulletTextBox = audit.textBoxes.find((textBox) => textBox.text.startsWith("This deliberately dense"));
   assert.ok(bulletTextBox);
   assert.equal(bulletTextBox.bulletParagraphCount, 1);
+  assert.ok(bulletTextBox.paragraphs.length >= 1);
+  assert.equal(bulletTextBox.paragraphs.map((paragraph) => paragraph.text).join(" "), bulletTextBox.text);
+  assert.equal(bulletTextBox.paragraphs.some((paragraph) => paragraph.bullet), true);
+  assert.equal(bulletTextBox.paragraphs.every((paragraph) => /^[0-9a-f]{64}$/.test(paragraph.textHash)), true);
   assert.equal(bulletTextBox.opticalAlignmentConfidence, "direct");
   assert.ok(bulletTextBox.paragraphLeftMarginsEmu.some((margin) => margin > 0));
   assert.equal(bulletTextBox.estimatedOpticalLeftEmu, bulletTextBox.geometry.x + bulletTextBox.textInsets.left + Math.min(...bulletTextBox.paragraphLeftMarginsEmu));

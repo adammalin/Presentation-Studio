@@ -213,6 +213,7 @@ export interface TextBoxInventoryItem {
   textHash: string;
   characterCount: number;
   paragraphCount: number;
+  paragraphs: TextParagraphInventoryItem[];
   geometry: { x: number; y: number; width: number; height: number };
   textInsets: { left: number; right: number; top: number; bottom: number };
   paragraphLeftMarginsEmu: number[];
@@ -233,6 +234,18 @@ export interface TextBoxInventoryItem {
   fitRatio: number;
   safeAreaStatus: "inside" | "near-edge" | "off-slide";
   warnings: string[];
+}
+
+export interface TextParagraphInventoryItem {
+  index: number;
+  text: string;
+  textHash: string;
+  characterCount: number;
+  bullet: boolean;
+  bulletConfidence: "direct" | "inherited-possible";
+  level: number;
+  fontFamilies: string[];
+  fontSizes: number[];
 }
 
 export interface LayoutReviewItem {
@@ -282,7 +295,7 @@ export const PRESENTATION_SCENE_VERSION = 3 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
 export const STUDIO_WEB_SCENE_SCHEMA = "presentation-studio/web-scene" as const;
-export const STUDIO_WEB_SCENE_VERSION = 2 as const;
+export const STUDIO_WEB_SCENE_VERSION = 3 as const;
 
 export type SceneFidelityState = "editable-native" | "preserved-native" | "conversion-required" | "unsupported-blocking";
 export type SceneSemanticRole = "title" | "body" | "caption" | "label" | "image" | "table" | "chart" | "connector" | "group" | "decoration" | "other";
@@ -465,6 +478,7 @@ export interface StudioWebNode {
   exactContent: boolean;
   text?: string;
   textHash?: string;
+  sourceParagraphs?: TextParagraphInventoryItem[];
   tableId?: string;
   table?: {
     rows: number;
@@ -503,6 +517,14 @@ export interface StudioWebSlide {
   slideNumber: number;
   sourceSlideId: string;
   sourceTextHash: string;
+  contentCoverage: {
+    exactTextMapped: boolean;
+    sourceCharacterCount: number;
+    mappedCharacterCount: number;
+    sourceTextBoxCount: number;
+    mappedTextNodeCount: number;
+    groupedOrUnsupportedTextPresent: boolean;
+  };
   sourceRevision: string;
   recipe: StudioLayoutRecipe;
   targetLayoutId?: string;

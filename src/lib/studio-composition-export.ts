@@ -87,6 +87,11 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
   let generatedComponentCount = 0;
 
   for (const sourceSlide of [...scene.slides].sort((left, right) => left.slideNumber - right.slideNumber)) {
+    if (!sourceSlide.contentCoverage.exactTextMapped) {
+      const message = `Slide ${sourceSlide.slideNumber} maps ${sourceSlide.contentCoverage.mappedCharacterCount} of ${sourceSlide.contentCoverage.sourceCharacterCount} normalized source characters into editable Studio nodes. Grouped, inherited, or unsupported text must be atomized before fresh composition.`;
+      if (strict) throw new Error(message);
+      warnings.push(message);
+    }
     const unsupported = sourceSlide.nodes.filter(unsupportedContentNode);
     if (unsupported.length > 0 && strict) throw new Error(`Slide ${sourceSlide.slideNumber} contains ${unsupported.length} preserved native object${unsupported.length === 1 ? "" : "s"} that the fresh-composition compiler cannot recreate without a disclosed conversion.`);
     if (unsupported.length > 0) warnings.push(`Slide ${sourceSlide.slideNumber}: omitted ${unsupported.length} preserved native object${unsupported.length === 1 ? "" : "s"}.`);

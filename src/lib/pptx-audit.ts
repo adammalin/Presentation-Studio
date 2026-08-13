@@ -12,10 +12,11 @@ import type {
   TableInventoryItem,
   TemplateClassification,
   TextBoxInventoryItem,
+  TextParagraphInventoryItem,
 } from "../types";
 import { normalizeCellFillToken, semanticColorRoleForToken } from "./semantic-visuals";
 
-export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 2;
+export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 3;
 import { sha256Text } from "./hash";
 
 const MAX_PACKAGE_FILES = 25_000;
@@ -451,6 +452,33 @@ function estimatedLineCount(block: string, availableWidthEmu: number, fontSizePt
   }, 0));
 }
 
+async function extractTextParagraphs(block: string): Promise<TextParagraphInventoryItem[]> {
+  const paragraphs = [...block.matchAll(/<a:p\b[\s\S]*?<\/a:p>/g)].map((match) => match[0]);
+  const inventory: TextParagraphInventoryItem[] = [];
+  for (const paragraph of paragraphs) {
+    const text = extractTextRuns(paragraph).join(" ").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    const properties = paragraph.match(/<a:pPr\b([^>]*)/)?.[1] ?? "";
+    const directBullet = /<a:(?:buChar|buAutoNum|buBlip)\b/i.test(paragraph);
+    const directNoBullet = /<a:buNone\b/i.test(paragraph);
+    const rawLevel = Number(attributeValue(properties, "lvl"));
+    const fontSizes = uniqueSorted([...paragraph.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)]
+      .map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
+    inventory.push({
+      index: inventory.length + 1,
+      text,
+      textHash: await sha256Text(text),
+      characterCount: text.length,
+      bullet: directBullet,
+      bulletConfidence: directBullet || directNoBullet ? "direct" : "inherited-possible",
+      level: Number.isFinite(rawLevel) && rawLevel >= 0 ? rawLevel : 0,
+      fontFamilies: uniqueSorted(extractFonts(paragraph)),
+      fontSizes,
+    });
+  }
+  return inventory;
+}
+
 async function extractTextBoxes(slideNumber: number, xml: string, slideWidth: number, slideHeight: number): Promise<{ shapes: ParsedTextShape[]; reviews: LayoutReviewItem[] }> {
   const shapes: ParsedTextShape[] = [];
   const reviews: LayoutReviewItem[] = [];
@@ -479,6 +507,7 @@ async function extractTextBoxes(slideNumber: number, xml: string, slideWidth: nu
     const offSlide = x < -OFF_SLIDE_TOLERANCE_EMU || y < -OFF_SLIDE_TOLERANCE_EMU || x + width > slideWidth + OFF_SLIDE_TOLERANCE_EMU || y + height > slideHeight + OFF_SLIDE_TOLERANCE_EMU;
     const nearEdge = !offSlide && (x < SAFE_MARGIN_EMU || y < SAFE_MARGIN_EMU || x + width > slideWidth - SAFE_MARGIN_EMU || y + height > slideHeight - SAFE_MARGIN_EMU);
     const autoFit = autoFitMode(block);
+    const paragraphs = await extractTextParagraphs(block);
     const warnings: string[] = [];
     if (offSlide) warnings.push("The editable text box extends beyond the physical slide boundary.");
     else if (nearEdge) warnings.push("The editable text box enters the 0.25-inch safe-margin review zone.");
@@ -495,6 +524,7 @@ async function extractTextBoxes(slideNumber: number, xml: string, slideWidth: nu
       textHash: await sha256Text(text),
       characterCount: text.length,
       paragraphCount: Math.max(1, xmlCount(block, /<a:p\b/g)),
+      paragraphs,
       geometry,
       textInsets: margins,
       ...opticalMetrics,

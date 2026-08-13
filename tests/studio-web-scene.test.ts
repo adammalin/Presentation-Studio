@@ -38,6 +38,8 @@ test("Studio Web Scene separates exact PowerPoint content from redesignable web 
   const sourceText = deck.audit?.textBoxes.map((item) => item.text).filter(Boolean).sort();
   const sceneText = scene.slides.flatMap((slide) => slide.nodes.map((node) => node.text).filter((value): value is string => Boolean(value))).sort();
   assert.deepEqual(sceneText, sourceText);
+  assert.equal(scene.slides.every((slide) => slide.contentCoverage.exactTextMapped), true);
+  assert.equal(scene.slides.flatMap((slide) => slide.nodes).filter((node) => node.kind === "text").every((node) => (node.sourceParagraphs?.length ?? 0) > 0), true);
   assert.equal(scene.slides.some((slide) => slide.nodes.some((node) => node.kind === "table" && node.table?.cells.some((cell) => cell.text))), true);
 });
 
@@ -136,6 +138,19 @@ test("fresh-composition mode builds a new editable native deck from the web scen
   assert.equal(after.fonts.some((font) => font.family === "Aptos"), true);
   assert.equal(after.textBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos")), true);
   assert.equal(after.tables.every((table) => table.cellFonts.every((family) => family === "Aptos")), true);
+});
+
+test("fresh composition stops before writing a slide whose grouped or unsupported text is not completely mapped", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const incomplete = {
+    ...scene,
+    slides: scene.slides.map((slide, index) => index === 0 ? {
+      ...slide,
+      contentCoverage: { ...slide.contentCoverage, exactTextMapped: false, mappedCharacterCount: Math.max(0, slide.contentCoverage.sourceCharacterCount - 12), groupedOrUnsupportedTextPresent: true },
+    } : slide),
+  };
+  await assert.rejects(() => buildStudioCompositionPptx(incomplete, { catalog }), /must be atomized before fresh composition/);
 });
 
 test("human canvas edits remain bounded and the self-contained project persists the web scene", async () => {
