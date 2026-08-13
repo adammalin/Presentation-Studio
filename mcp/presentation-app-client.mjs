@@ -4,6 +4,7 @@ import path from "node:path";
 
 const RUNTIME_FILE_NAME = "mcp-runtime.json";
 const REQUEST_TIMEOUT_MS = 18_000;
+const NATIVE_RENDER_TIMEOUT_MS = 200_000;
 
 export class PresentationAppUnavailableError extends Error {
   constructor(message = "Open Presentation Studio, then try this tool again.") {
@@ -51,7 +52,7 @@ export class PresentationAppClient {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json", "x-presentation-studio-token": descriptor.token },
         body: JSON.stringify({ operation, input }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(["get_slide_render", "get_slide_render_comparison", "get_template_layout_render"].includes(operation) ? NATIVE_RENDER_TIMEOUT_MS : REQUEST_TIMEOUT_MS),
       });
     } catch { throw new PresentationAppUnavailableError(); }
     const body = response.headers.get("content-type")?.includes("application/json") ? await response.json() : { error: await response.text() };

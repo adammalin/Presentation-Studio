@@ -29,6 +29,7 @@ import {
   Sparkle,
   SquaresFour,
   Table,
+  Trash,
   UploadSimple,
   Warning,
   X,
@@ -46,11 +47,12 @@ import type {
   SlideEditableObject,
   TemplateClassification,
 } from "./types";
-import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createNativeLayoutProposal, createNativeLayoutRecompositionProposal, createVisualDesignProposal } from "./lib/cleanup";
+import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createNativeLayoutProposal, createNativeLayoutRecompositionProposal, createTableStyleProposal, createVisualDesignProposal } from "./lib/cleanup";
 import type { LocalPresentationFont, NativeRenderResult, PickedBinaryFile } from "./lib/desktop";
 import { decryptProjectPackage, encryptProjectPackage, isEncryptedProject } from "./lib/encryption";
 import { auditPptx } from "./lib/pptx-audit";
 import { createProject, touchProject } from "./lib/project";
+import { removeAddressedDesignThreads, removeCompletedDesignThreads, removeDesignThread } from "./lib/design-threads";
 import { compilePresentationScene, sceneNeedsRebuild } from "./lib/scene-graph";
 import { semanticRecompositionRequests, type SemanticSlotBinding } from "./lib/recomposition";
 import { compareNativeSlideRenders, type PixelComparisonMetrics } from "./lib/render-comparison";
@@ -77,6 +79,10 @@ import {
 
 type ViewId = "batch" | "decks" | "slides" | "designs" | "rules" | "review" | "resources";
 type SlideWorkspaceRequest = { id: string; deckId: string; slideNumber: number; mode: "review" | "edit" | "comment"; representation: "current" | "proposal" };
+
+function requestedAddressedThreadIds(input: { addressedThreadIds?: unknown }): string[] {
+  return Array.isArray(input.addressedThreadIds) ? [...new Set(input.addressedThreadIds.map(String))] : [];
+}
 
 const navItems: Array<{ id: ViewId; label: string; icon: Icon }> = [
   { id: "batch", label: "Batch", icon: Files },
@@ -276,14 +282,14 @@ function DeckAuditView({ deck, onConfirm, onStage, onStartOrnlCleanup, onMarkExe
       <section className="panel">
         <div className="panel-heading"><div><h2>Findings</h2><p>Evidence first; ambiguous differences remain review items.</p></div><span className="quiet-label">{audit.findings.length} findings</span></div>
         <div className="finding-list">
-          {audit.findings.map((item) => <div className="finding-row" key={item.id}><span className={`finding-icon ${item.severity}`}>{item.severity === "error" || item.severity === "warning" ? <Warning size={17} /> : <Info size={17} />}</span><div><span className="finding-category">{item.category}</span><strong>{item.message}</strong><p>{item.evidence}</p></div><span className="confidence">{item.confidence}</span></div>)}
+          {audit.findings.map((item, index) => <div className="finding-row" key={`${item.id}-${item.slideNumber ?? "deck"}-${index}`}><span className={`finding-icon ${item.severity}`}>{item.severity === "error" || item.severity === "warning" ? <Warning size={17} /> : <Info size={17} />}</span><div><span className="finding-category">{item.category}</span><strong>{item.message}</strong><p>{item.evidence}</p></div><span className="confidence">{item.confidence}</span></div>)}
         </div>
       </section>
     </div>
   );
 }
 
-function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, openRequest, onSaveThread, onStageGeometry }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; loading: boolean; revision: string; threads: DesignThread[]; openRequest?: SlideWorkspaceRequest; onSaveThread: (slide: SlideRenderPreview, anchor: DesignThread["anchor"], comment: string, submit: boolean) => void; onStageGeometry: (object: SlideEditableObject, target: { x: number; y: number; width: number; height: number }, rationale: string) => void }) {
+function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, openRequest, onSaveThread, onDeleteThread, onStageGeometry }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; loading: boolean; revision: string; threads: DesignThread[]; openRequest?: SlideWorkspaceRequest; onSaveThread: (slide: SlideRenderPreview, anchor: DesignThread["anchor"], comment: string, submit: boolean) => void; onDeleteThread: (threadId: string) => void; onStageGeometry: (object: SlideEditableObject, target: { x: number; y: number; width: number; height: number }, rationale: string) => void }) {
   const [selectedNumber, setSelectedNumber] = useState<number>();
   const [mode, setMode] = useState<"review" | "edit" | "comment">("review");
   const [draftAnchor, setDraftAnchor] = useState<DesignThread["anchor"]>();
@@ -294,6 +300,7 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
   const dragStart = useRef<{ x: number; y: number } | undefined>(undefined);
   const objectDrag = useRef<{ point: { x: number; y: number }; geometry: { x: number; y: number; width: number; height: number } } | undefined>(undefined);
   const editorCanvas = useRef<HTMLDivElement>(null);
+  const commentInput = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { setSelectedNumber(undefined); setMode("review"); setDraftAnchor(undefined); setDraftComment(""); setSelectedObjectId(undefined); setDraftGeometry(undefined); setEditRationale(""); }, [deck?.id]);
   useEffect(() => {
     if (!deck || !openRequest || openRequest.deckId !== deck.id) return;
@@ -301,7 +308,12 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
     setMode(openRequest.mode);
     setDraftAnchor(undefined);
     setDraftComment("");
-  }, [deck, openRequest]);
+  }, [deck?.id, openRequest?.id]);
+  useEffect(() => {
+    if (mode !== "comment") return;
+    const frame = window.requestAnimationFrame(() => commentInput.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [mode, selectedNumber, threads.length]);
   useEffect(() => { setSelectedObjectId(undefined); setDraftGeometry(undefined); setEditRationale(""); objectDrag.current = undefined; }, [selectedNumber]);
   if (!deck?.audit) return <NoSelection message="Select a deck to inspect its current slide designs." />;
 
@@ -395,7 +407,7 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
     onSaveThread(selected, draftAnchor, draftComment.trim(), submit);
     setDraftAnchor(undefined);
     setDraftComment("");
-    setMode("review");
+    setMode("comment");
   }
 
   return <div className="view-stack slides-view">
@@ -411,8 +423,8 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
           <div className={`slide-representation-note ${nativeReady ? "native" : "fallback"}`}><ShieldCheck size={15} /><span><strong>{editMode ? "Non-destructive object editor" : nativeReady ? "PowerPoint-native representation" : "Approximate OOXML fallback"}</strong> {editMode ? "Drag a highlighted object, use measured controls, then stage it into Current/Proposal review. Imported slide bytes stay untouched." : nativeReady ? "These pixels came from Microsoft PowerPoint. Structured editable-object overlays remain bound to the same source revision." : nativeRender?.warnings[0] ?? "This diagnostic reconstruction is not authoritative for wrapping, masters, tables, equations, or crop behavior."}</span></div>
         </div>
         <aside className="slide-thread-panel">{editMode ? <><div className="thread-panel-heading"><Crosshair size={19} /><div><strong>Object editor</strong><small>{slideObjects.length} source-bound objects{slideScene?.preservationRequired ? " · preservation active" : ""}</small></div></div>{!selectedObject || !draftGeometry ? <div className="thread-empty"><Crosshair size={24} /><strong>Select an object</strong><span>Every source-bound slide object is outlined with its fidelity state.</span></div> : (() => { const sceneObject = sceneObjectById.get(selectedObject.id); return <div className="object-editor-panel"><div className="object-editor-identity"><span>{sceneObject?.semanticRole ?? selectedObject.kind}</span><strong>{selectedObject.name}</strong><small>ID {selectedObject.id}</small>{sceneObject && <em className={`fidelity-badge ${sceneObject.fidelityState}`}>{fidelityLabels[sceneObject.fidelityState]}</em>}</div>{sceneObject && <p className="fidelity-reason">{sceneObject.fidelityReason}</p>}<div className="geometry-grid">{(["x", "y", "width", "height"] as const).map((field) => <label key={field}><span>{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()} (in)</span><input type="number" min="0" step="0.05" value={(draftGeometry[field] / 914_400).toFixed(2)} disabled={(field === "width" || field === "height") ? !(sceneObject?.operations.resize ?? selectedObject.canResize) : !(sceneObject?.operations.move ?? selectedObject.canMove)} onChange={(event) => setInches(field, event.target.value)} /></label>)}</div><div className="nudge-grid"><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: value.y - 45_720 }))}>↑</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: value.x - 45_720 }))}>←</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: value.x + 45_720 }))}>→</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: value.y + 45_720 }))}>↓</button></div><span className="field-label">Align to 0.5-inch safe area</span><div className="align-grid"><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: 457_200 }))}>Left</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: Math.round((slideSize.width - value.width) / 2) }))}>Center</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: slideSize.width - 457_200 - value.width }))}>Right</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: 457_200 }))}>Top</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: Math.round((slideSize.height - value.height) / 2) }))}>Middle</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: slideSize.height - 457_200 - value.height }))}>Bottom</button></div><label className="edit-rationale"><span className="field-label">Design intent</span><textarea value={editRationale} maxLength={700} onChange={(event) => setEditRationale(event.target.value)} placeholder="Example: Align the caption to the figure edge and establish a consistent lower margin." /></label><button className="button primary object-stage-button" disabled={!(sceneObject?.operations.move || sceneObject?.operations.resize || !sceneObject) || JSON.stringify(draftGeometry) === JSON.stringify(baseGeometry(selectedObject))} onClick={() => onStageGeometry(selectedObject, draftGeometry, editRationale)}><Sparkle size={16} />Stage in Current / Proposal</button><small className="object-editor-note">Text, table content, slide count, unsupported native internals, and source bytes are validation-locked.</small></div>; })()}</> : <><div className="thread-panel-heading"><ChatCircleDots size={19} /><div><strong>Design comments</strong><small>{selectedThreads.length} on this slide</small></div></div>
-          {commentMode && <div className="thread-composer"><span className="field-label">1. Drag or click the exact area</span><div className={`anchor-readout ${draftAnchor ? "ready" : ""}`}>{draftAnchor ? <><Check size={14} />Region selected</> : <><Crosshair size={14} />Waiting for a region</>}</div><label><span className="field-label">2. Describe the adjustment</span><textarea value={draftComment} maxLength={4000} onChange={(event) => setDraftComment(event.target.value)} placeholder="Example: Align this caption with the image edge and give it more breathing room." /></label><div className="thread-composer-actions"><button className="button ghost small" disabled={!draftAnchor || !draftComment.trim()} onClick={() => saveThread(false)}>Save note</button><button className="button primary small" disabled={!draftAnchor || !draftComment.trim()} onClick={() => saveThread(true)}><PaperPlaneTilt size={15} />Submit to AI</button></div><small>Submitting creates a scoped thread for MCP. It does not apply or export a change.</small></div>}
-          <div className="thread-list">{selectedThreads.length === 0 && <div className="thread-empty"><ChatCircleDots size={24} /><strong>No comments yet</strong><span>Select Comment on slide, then point to the exact area.</span></div>}{selectedThreads.map((thread, index) => <article key={thread.id} className="thread-item"><span>{index + 1}</span><div><strong>{thread.status === "submitted" ? "Ready for AI" : thread.status.replaceAll("-", " ")}</strong><p>{thread.comment}</p><small>Region {Math.round(thread.anchor.x * 100)}%, {Math.round(thread.anchor.y * 100)}% · {new Date(thread.createdAt).toLocaleString()}</small></div></article>)}</div>
+          {commentMode && <div className="thread-composer"><span className="field-label">1. Drag or click the exact area</span><div className={`anchor-readout ${draftAnchor ? "ready" : ""}`}>{draftAnchor ? <><Check size={14} />Region selected</> : <><Crosshair size={14} />Waiting for a region</>}</div><label><span className="field-label">2. Describe the adjustment</span><textarea ref={commentInput} autoFocus value={draftComment} maxLength={4000} onChange={(event) => setDraftComment(event.target.value)} placeholder="Example: Align this caption with the image edge and give it more breathing room." /></label><div className="thread-composer-actions"><button className="button ghost small" disabled={!draftAnchor || !draftComment.trim()} onClick={() => saveThread(false)}>Save note</button><button className="button primary small" disabled={!draftAnchor || !draftComment.trim()} onClick={() => saveThread(true)}><PaperPlaneTilt size={15} />Submit to AI</button></div><small>Submitting keeps this slide open for additional comments and creates a scoped thread for MCP. It does not apply or export a change.</small></div>}
+          <div className="thread-list">{selectedThreads.length === 0 && <div className="thread-empty"><ChatCircleDots size={24} /><strong>No comments yet</strong><span>Select Comment on slide, then point to the exact area.</span></div>}{selectedThreads.map((thread, index) => <article key={thread.id} className="thread-item"><span>{index + 1}</span><div><strong>{thread.status === "submitted" ? "Ready for AI" : thread.status.replaceAll("-", " ")}</strong><p>{thread.comment}</p><small>Region {Math.round(thread.anchor.x * 100)}%, {Math.round(thread.anchor.y * 100)}% · {new Date(thread.createdAt).toLocaleString()}</small></div><button className="thread-delete" type="button" onClick={() => onDeleteThread(thread.id)} aria-label={`Delete comment ${index + 1}`} title="Delete comment"><Trash size={15} /></button></article>)}</div>
         </>}</aside>
       </div>
     </section>}
@@ -601,7 +613,7 @@ function ReviewView({ deck, projectUpdatedAt, currentCatalog, proposalCatalog, c
   const selectedHasChanges = Boolean(disposition?.changeIds.some((id) => selectedChangeIds.has(id)));
   const unresolvedRequestCount = (proposal.slideReviews ?? []).filter((review) => review.decision === "changes-requested").length;
   const canApprovePlan = !stale && proposal.changes.some((change) => change.selected) && unresolvedRequestCount === 0;
-  const selectedSubmittedThreads = threads.filter((thread) => thread.deckId === deck.id && thread.slideNumber === selectedNumber && ["submitted", "proposal-ready", "needs-reanchor"].includes(thread.status));
+  const selectedSubmittedThreads = threads.filter((thread) => thread.deckId === deck.id && thread.slideNumber === selectedNumber && ["submitted", "needs-reanchor"].includes(thread.status));
   const reviewSlideNumbers = proposal.slideDispositions.map((item) => item.slideNumber);
   function nextUnapprovedSlide() {
     return reviewSlideNumbers.find((number) => number > selectedNumber && !approvedSlideNumbers.has(number)) ?? reviewSlideNumbers.find((number) => !approvedSlideNumbers.has(number));
@@ -632,7 +644,7 @@ function ReviewView({ deck, projectUpdatedAt, currentCatalog, proposalCatalog, c
     </section>
     {proposal.tableExceptions.length > 0 && <section className="panel proposal-exceptions"><div className="panel-heading"><div><h2>Table design exceptions</h2><p>These tables were preserved rather than forced into a generic treatment.</p></div><span className="quiet-label">{proposal.tableExceptions.length} designer check{proposal.tableExceptions.length === 1 ? "" : "s"}</span></div><div>{proposal.tableExceptions.map((exception) => <article key={exception.tableId}><Warning size={17} /><span><strong>Slide {exception.slideNumber} · {exception.rule.replaceAll("-", " ")}</strong><small>{exception.reason}</small></span></article>)}</div></section>}
     <section className="panel proposal-exceptions geometry-exceptions"><div className="panel-heading"><div><h2>Geometry and fit checks</h2><p>Slide {selectedNumber} · uncertain cases stay visible instead of triggering hidden shrinking, clipping, or speculative movement.</p></div><span className="quiet-label">{layoutExceptions.length} across deck</span></div><div>{selectedLayoutExceptions.length === 0 ? <article className="geometry-clear"><CheckCircle size={17} /><span><strong>No geometry exception on this slide</strong><small>Supported high-confidence alignment repairs are shown in the proposal comparison above.</small></span></article> : selectedLayoutExceptions.map((exception) => <article key={exception.id} className={`severity-${exception.severity}`}><Warning size={17} /><span><strong>{exception.rule.replaceAll("-", " ")} · shape {exception.shapeId}</strong><small>{exception.reason}</small></span></article>)}</div></section>
-    <details className="panel review-change-details"><summary><span><ListChecks size={18} /><span><strong>Advanced change selection</strong><small>{proposal.changes.filter((change) => change.selected).length} of {proposal.changes.length} change groups selected</small></span></span><CaretRight size={17} /></summary><div className="panel-heading"><div><h2>Proposed changes</h2><p>Use this only when excluding a specific technical change group. The fast slide-review controls above are the normal workflow.</p></div><span className="quiet-label">Text and table structure: locked</span></div><div className="proposal-list">{proposal.changes.length === 0 && <div className="resource-empty"><CheckCircle size={25} /><span><strong>No deterministic changes needed</strong><small>Every slide still received an explicit disposition above.</small></span></div>}{proposal.changes.map((change) => <label className="proposal-change" key={change.id}><input type="checkbox" checked={change.selected} disabled={proposal.status !== "pending"} onChange={() => onToggle(change.id)} /><span className="change-route"><b>{change.from}</b><CaretRight size={17} /><b>{change.to}</b></span><span>{change.kind === "table-style" ? `${change.tableIds?.length ?? 0} native tables` : change.kind === "alignment" ? `${change.alignmentRepairs?.length ?? 0} text boxes` : change.kind === "geometry" ? `${change.geometryCommands?.length ?? 0} editable objects` : change.kind === "layout-remap" ? `${change.layoutCommands?.length ?? 0} native layout relationships` : change.kind === "text-style" ? `${change.textStyleCommands?.length ?? 0} text objects` : change.kind === "decoration" ? `${change.decorationCommands?.length ?? 0} native vector shapes` : `${change.affectedRunCount} markup references`} · {change.affectedSlideNumbers.length} slide locations</span><small>{change.rationale}</small>{change.geometryCommands?.flatMap((command) => command.validation?.warnings ?? []).map((warning) => <em className="proposal-validation-warning" key={warning}><Warning size={13} />{warning}</em>)}</label>)}</div></details>
+    <details className="panel review-change-details"><summary><span><ListChecks size={18} /><span><strong>Advanced change selection</strong><small>{proposal.changes.filter((change) => change.selected).length} of {proposal.changes.length} change groups selected</small></span></span><CaretRight size={17} /></summary><div className="panel-heading"><div><h2>Proposed changes</h2><p>Use this only when excluding a specific technical change group. The fast slide-review controls above are the normal workflow.</p></div><span className="quiet-label">Text and table structure: locked</span></div><div className="proposal-list">{proposal.changes.length === 0 && <div className="resource-empty"><CheckCircle size={25} /><span><strong>No deterministic changes needed</strong><small>Every slide still received an explicit disposition above.</small></span></div>}{proposal.changes.map((change, index) => <label className="proposal-change" key={`${change.kind}-${change.id}-${index}`}><input type="checkbox" checked={change.selected} disabled={proposal.status !== "pending"} onChange={() => onToggle(change.id)} /><span className="change-route"><b>{change.from}</b><CaretRight size={17} /><b>{change.to}</b></span><span>{change.kind === "table-style" ? `${change.tableIds?.length ?? 0} native tables` : change.kind === "alignment" ? `${change.alignmentRepairs?.length ?? 0} text boxes` : change.kind === "geometry" ? `${change.geometryCommands?.length ?? 0} editable objects` : change.kind === "layout-remap" ? `${change.layoutCommands?.length ?? 0} native layout relationships` : change.kind === "text-style" ? `${change.textStyleCommands?.length ?? 0} text objects` : change.kind === "decoration" ? `${change.decorationCommands?.length ?? 0} native vector shapes` : `${change.affectedRunCount} markup references`} · {change.affectedSlideNumbers.length} slide locations</span><small>{change.rationale}</small>{change.geometryCommands?.flatMap((command) => command.validation?.warnings ?? []).map((warning, warningIndex) => <em className="proposal-validation-warning" key={`${warning}-${warningIndex}`}><Warning size={13} />{warning}</em>)}</label>)}</div></details>
     <section className="panel review-completion"><div className="lock-copy"><LockKey size={20} /><span><strong>Exact-content guard</strong><small>Approving applies the selected design plan to the project only. Export remains a separate new-copy action.</small></span></div><div className="review-actions">{proposal.status === "pending" ? <><button className="button ghost" onClick={onReject}><X size={17} />Reject proposal</button><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "edit")}><Crosshair size={17} />Edit this slide</button><button className="button primary" disabled={!canApprovePlan} title={unresolvedRequestCount ? "Resolve requested changes before approving the plan." : undefined} onClick={() => onApply(selectedNumber)}><CheckCircle size={18} />Approve all &amp; continue</button></> : proposal.status === "applied" ? <><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "comment")}><ChatCircleDots size={17} />Comment for AI</button><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "edit")}><Crosshair size={17} />Continue editing</button><button className="button primary" onClick={onExport}><FileArrowDown size={17} />Export review copy</button></> : <span className="muted">Proposal rejected; the source is unchanged.</span>}</div></section></div>;
 }
 
@@ -728,6 +740,13 @@ export default function App() {
   const selectedDeck = project.decks.find((deck) => deck.id === selectedDeckId) ?? project.decks[0];
 
   useEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => {
+    if (!project.designThreads.some((thread) => ["proposal-ready", "resolved"].includes(thread.status))) return;
+    setProject((current) => {
+      const designThreads = removeCompletedDesignThreads(current.designThreads);
+      return designThreads.length === current.designThreads.length ? current : { ...current, designThreads };
+    });
+  }, [project.designThreads]);
   useEffect(() => { if (!selectedDeckId && project.decks[0]) setSelectedDeckId(project.decks[0].id); }, [project.decks, selectedDeckId]);
   useEffect(() => { void desktop?.getMcpStatus().then(setMcpStatus).catch(() => undefined); }, [desktop]);
 
@@ -1233,12 +1252,12 @@ export default function App() {
       }
       if (request.operation === "list_design_threads") {
         const deckId = typeof request.input.deckId === "string" ? request.input.deckId : undefined;
-        const threads = current.designThreads.filter((thread) => (!deckId || thread.deckId === deckId) && ["submitted", "proposal-ready", "needs-reanchor"].includes(thread.status));
+        const threads = current.designThreads.filter((thread) => (!deckId || thread.deckId === deckId) && ["submitted", "needs-reanchor"].includes(thread.status));
         return { updatedAt: current.project.updatedAt, threads: threads.map((thread) => ({ id: thread.id, deckId: thread.deckId, slideId: thread.slideId, slideNumber: thread.slideNumber, baseRevision: thread.baseRevision, anchor: thread.anchor, comment: thread.comment, status: thread.status, createdAt: thread.createdAt, submittedAt: thread.submittedAt })) };
       }
       if (request.operation === "get_design_thread") {
         const thread = current.designThreads.find((item) => item.id === request.input.threadId);
-        if (!thread || thread.status === "note") throw new Error("The requested design thread is not submitted to AI in this project.");
+        if (!thread || !["submitted", "needs-reanchor"].includes(thread.status)) throw new Error("The requested design thread is no longer active or was not submitted to AI in this project.");
         const deck = current.decks.find((item) => item.id === thread.deckId);
         const slide = deck?.audit?.slides.find((item) => item.id === thread.slideId || item.number === thread.slideNumber);
         return { updatedAt: current.project.updatedAt, thread, deck: deck ? { id: deck.id, name: deck.name, targetTemplateId: deck.targetTemplateId } : null, slide: slide ? { id: slide.id, number: slide.number, title: slide.title, textHash: slide.textHash, objects: { tables: slide.tableCount, pictures: slide.pictureCount, charts: slide.chartCount } } : null, instruction: "Read the current revision and get_slide_render before staging a bounded fix. Do not guess if the anchor no longer maps unambiguously." };
@@ -1273,6 +1292,20 @@ export default function App() {
         setActiveView("review");
         return { proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, mode: proposal.mode, changes: proposal.changes, slideDispositions: proposal.slideDispositions, tableExceptions: proposal.tableExceptions, layoutExceptions: proposal.layoutExceptions }, projectUpdatedAt: next.project.updatedAt, applied: false, saved: false };
       }
+      if (request.operation === "stage_table_design_update") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the deck list again before staging table design.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit) throw new Error("The requested deck is not open or audited.");
+        const tableIds = Array.isArray(request.input.tableIds) ? request.input.tableIds.map(String) : [];
+        const variant = request.input.variant === "dense-technical" ? "dense-technical" as const : "standard" as const;
+        const proposal = createTableStyleProposal(deck, current.project.updatedAt, { tableIds, variant });
+        const next = touchProject({ ...current, designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)), decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item) }, "mcp-table-design-staged", `AI staged the shared ${variant} ORNL table component for ${tableIds.length} table${tableIds.length === 1 ? "" : "s"} in ${deck.name}; explicitly addressed comments were cleared and source bytes remain unchanged.`);
+        proposal.baseUpdatedAt = next.project.updatedAt;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setActiveView("review");
+        return { proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, mode: proposal.mode }, tableCount: tableIds.length, tableIds, variant, projectUpdatedAt: next.project.updatedAt, applied: false, saved: false };
+      }
       if (request.operation === "stage_slide_geometry_update") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the deck list again before staging a proposal.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
@@ -1298,6 +1331,7 @@ export default function App() {
         });
         const next = touchProject({
           ...current,
+          designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)),
           decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item),
         }, "mcp-slide-geometry-staged", `AI staged a measured ${object.kind} geometry edit on slide ${object.slideNumber} of ${deck.name}; source bytes remain unchanged.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
@@ -1313,8 +1347,13 @@ export default function App() {
         if (!deck?.audit) throw new Error("The requested deck is not open or audited.");
         const slideNumber = Number(request.input.slideNumber);
         const rawCommands = Array.isArray(request.input.commands) ? request.input.commands as Array<Record<string, unknown>> : [];
+        const resetObjectIds = Array.isArray(request.input.resetObjectIds) ? [...new Set(request.input.resetObjectIds.map(String))] : [];
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-        if (rawCommands.length === 0 || rawCommands.length > 20) throw new Error("Stage between 1 and 20 object edits for one slide.");
+        if (rawCommands.length + resetObjectIds.length === 0 || rawCommands.length + resetObjectIds.length > 20) throw new Error("Stage between 1 and 20 object edits or source-geometry resets for one slide.");
+        for (const objectId of resetObjectIds) {
+          const object = (deck.audit.editableObjects ?? []).find((item) => item.id === objectId);
+          if (!object || object.slideNumber !== slideNumber) throw new Error(`Reset object ${objectId || "(missing ID)"} does not belong to slide ${slideNumber} in the current revision.`);
+        }
         const requests = rawCommands.map((command) => {
           const objectId = String(command.objectId ?? "");
           const object = (deck.audit?.editableObjects ?? []).find((item) => item.id === objectId);
@@ -1332,9 +1371,10 @@ export default function App() {
             },
           };
         });
-        const proposal = createGeometryBatchProposal(deck, current.project.updatedAt, requests);
+        const proposal = createGeometryBatchProposal(deck, current.project.updatedAt, requests, { resetObjectIds });
         const next = touchProject({
           ...current,
+          designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)),
           decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item),
         }, "mcp-slide-layout-staged", `AI staged ${requests.length} measured object edits on slide ${slideNumber} of ${deck.name}; source bytes remain unchanged.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
@@ -1342,7 +1382,7 @@ export default function App() {
         setSelectedDeckId(deck.id);
         setActiveView("review");
         const geometry = proposal.changes.flatMap((change) => change.kind === "geometry" ? change.geometryCommands ?? [] : []).filter((command) => command.slideNumber === slideNumber);
-        return { proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, mode: proposal.mode }, slideNumber, commands: geometry, projectUpdatedAt: next.project.updatedAt, applied: false, saved: false };
+        return { proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, mode: proposal.mode }, slideNumber, commands: geometry, resetObjectIds, projectUpdatedAt: next.project.updatedAt, applied: false, saved: false };
       }
       if (request.operation === "stage_slide_visual_design") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the deck list again before staging visual design.");
@@ -1363,6 +1403,12 @@ export default function App() {
           insetsInches: style.insetsInches && typeof style.insetsInches === "object" ? {
             top: Number((style.insetsInches as Record<string, unknown>).top), right: Number((style.insetsInches as Record<string, unknown>).right), bottom: Number((style.insetsInches as Record<string, unknown>).bottom), left: Number((style.insetsInches as Record<string, unknown>).left),
           } : undefined,
+          paragraphStyle: style.paragraphStyle && typeof style.paragraphStyle === "object" ? {
+            lineSpacingMultiple: (style.paragraphStyle as Record<string, unknown>).lineSpacingMultiple === undefined ? undefined : Number((style.paragraphStyle as Record<string, unknown>).lineSpacingMultiple),
+            spaceAfterPt: (style.paragraphStyle as Record<string, unknown>).spaceAfterPt === undefined ? undefined : Number((style.paragraphStyle as Record<string, unknown>).spaceAfterPt),
+            bulletLeftMarginInches: (style.paragraphStyle as Record<string, unknown>).bulletLeftMarginInches === undefined ? undefined : Number((style.paragraphStyle as Record<string, unknown>).bulletLeftMarginInches),
+            bulletHangingInches: (style.paragraphStyle as Record<string, unknown>).bulletHangingInches === undefined ? undefined : Number((style.paragraphStyle as Record<string, unknown>).bulletHangingInches),
+          } : undefined,
           rationale: String(style.rationale ?? ""),
           author: "ai" as const,
         }));
@@ -1378,13 +1424,14 @@ export default function App() {
           author: "ai" as const,
         }));
         const clearPendingLayoutRemap = request.input.clearPendingLayoutRemap === true;
-        const proposal = createVisualDesignProposal(deck, current.project.updatedAt, { slideNumber, clearPendingLayoutRemap, textStyles, decorations });
-        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item) }, "mcp-slide-visual-design-staged", `AI staged editable ORNL visual hierarchy and brand geometry on slide ${slideNumber} of ${deck.name}; source bytes remain unchanged.`);
+        const removeDecorationIds = Array.isArray(request.input.removeDecorationIds) ? request.input.removeDecorationIds.map(String) : [];
+        const proposal = createVisualDesignProposal(deck, current.project.updatedAt, { slideNumber, clearPendingLayoutRemap, removeDecorationIds, textStyles, decorations });
+        const next = touchProject({ ...current, designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)), decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item) }, "mcp-slide-visual-design-staged", `AI staged editable ORNL visual hierarchy and brand geometry on slide ${slideNumber} of ${deck.name}; explicitly addressed comments were cleared and source bytes remain unchanged.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
         setProject(next);
         setSelectedDeckId(deck.id);
         setActiveView("review");
-        return { proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, mode: proposal.mode }, slideNumber, textStyleCount: textStyles.length, decorationCount: decorations.length, clearedLayoutRemap: clearPendingLayoutRemap, projectUpdatedAt: next.project.updatedAt, applied: false, saved: false };
+        return { proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, mode: proposal.mode }, slideNumber, textStyleCount: textStyles.length, decorationCount: decorations.length, removedDecorationCount: removeDecorationIds.length, clearedLayoutRemap: clearPendingLayoutRemap, projectUpdatedAt: next.project.updatedAt, applied: false, saved: false };
       }
       if (request.operation === "stage_slide_native_layout") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read a fresh design work order before staging a native layout.");
@@ -1430,8 +1477,9 @@ export default function App() {
         };
         const next = touchProject({
           ...current,
+          designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)),
           decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item),
-        }, "mcp-native-layout-staged", `AI staged an approved native ${layout.name} layout remap for slide ${slideNumber} of ${deck.name}; source bytes remain unchanged.`);
+        }, "mcp-native-layout-staged", `AI staged an approved native ${layout.name} layout remap for slide ${slideNumber} of ${deck.name}; explicitly addressed comments were cleared and source bytes remain unchanged.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
         setProject(next);
         setSelectedDeckId(deck.id);
@@ -1496,8 +1544,9 @@ export default function App() {
         };
         const next = touchProject({
           ...current,
+          designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)),
           decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item),
-        }, "mcp-slide-recomposition-staged", `AI staged native ${layout.name} remapping plus ${bindings.length} semantic bindings on slide ${slideNumber} of ${deck.name}; source bytes remain unchanged.`);
+        }, "mcp-slide-recomposition-staged", `AI staged native ${layout.name} remapping plus ${bindings.length} semantic bindings on slide ${slideNumber} of ${deck.name}; explicitly addressed comments were cleared and source bytes remain unchanged.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
         setProject(next);
         setSelectedDeckId(deck.id);
@@ -1764,6 +1813,29 @@ export default function App() {
     setNotice(submit ? `Design comment submitted for AI on slide ${slide.number}. It is anchored to the selected region and no change was applied.` : `Private design note saved on slide ${slide.number}. It is not available through MCP.`);
   }
 
+  function deleteDesignThread(threadId: string) {
+    const thread = projectRef.current.designThreads.find((item) => item.id === threadId);
+    if (!thread) return;
+    const deckName = projectRef.current.decks.find((deck) => deck.id === thread.deckId)?.name ?? "the deck";
+    setProject((current) => {
+      const designThreads = removeDesignThread(current.designThreads, threadId);
+      const hasOtherSlideComment = designThreads.some((item) => item.deckId === thread.deckId && item.slideNumber === thread.slideNumber);
+      const updated = touchProject({
+        ...current,
+        designThreads,
+        decks: current.decks.map((deck) => deck.id === thread.deckId && deck.proposal && !hasOtherSlideComment ? {
+          ...deck,
+          proposal: { ...deck.proposal, slideReviews: (deck.proposal.slideReviews ?? []).filter((review) => !(review.slideNumber === thread.slideNumber && review.decision === "changes-requested")) },
+        } : deck),
+      }, "design-thread-deleted", `Deleted a design comment from slide ${thread.slideNumber} of ${deckName}.`);
+      return {
+        ...updated,
+        decks: updated.decks.map((deck) => deck.id === thread.deckId && deck.proposal ? { ...deck, proposal: { ...deck.proposal, baseUpdatedAt: updated.project.updatedAt } } : deck),
+      };
+    });
+    setNotice(`Comment deleted from slide ${thread.slideNumber}. The clean slide is ready for new feedback.`);
+  }
+
   function reviewSlide(slideNumber: number, decision: "approved" | "changes-requested") {
     if (!selectedDeck?.proposal || selectedDeck.proposal.status !== "pending") return;
     const now = new Date().toISOString();
@@ -1906,7 +1978,7 @@ export default function App() {
   const mainContent = useMemo(() => {
     if (activeView === "batch") return <BatchView project={project} selectedId={selectedDeck?.id} onSelect={(id) => { setSelectedDeckId(id); setActiveView("decks"); }} onAdd={() => void addDecks()} />;
     if (activeView === "decks") return <DeckAuditView deck={selectedDeck} onConfirm={confirmTemplate} onStage={stageCleanup} onStartOrnlCleanup={startOrnlCleanup} onMarkExemplar={markTableExemplar} onExportReport={() => void exportAuditReport()} isExemplar={Boolean(selectedDeck && project.styleExemplars.some((item) => item.deckId === selectedDeck.id && item.kind === "table"))} />;
-    if (activeView === "slides") { const proposalWorkspace = selectedDeck?.proposal?.status === "applied" || (slideWorkspaceRequest?.deckId === selectedDeck?.id && slideWorkspaceRequest.representation === "proposal"); return <SlidesView deck={selectedDeck} catalog={selectedDeck ? proposalWorkspace ? proposalCatalogs[selectedDeck.id] : slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? proposalWorkspace ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} loading={Boolean(selectedDeck && (proposalWorkspace ? proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal` : slideCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:current`))} revision={project.project.updatedAt} threads={project.designThreads} openRequest={slideWorkspaceRequest} onSaveThread={saveDesignThread} onStageGeometry={stageGeometryEdit} />; }
+    if (activeView === "slides") { const proposalWorkspace = selectedDeck?.proposal?.status === "applied" || (slideWorkspaceRequest?.deckId === selectedDeck?.id && slideWorkspaceRequest.representation === "proposal"); return <SlidesView deck={selectedDeck} catalog={selectedDeck ? proposalWorkspace ? proposalCatalogs[selectedDeck.id] : slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? proposalWorkspace ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} loading={Boolean(selectedDeck && (proposalWorkspace ? proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal` : slideCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:current`))} revision={project.project.updatedAt} threads={project.designThreads} openRequest={slideWorkspaceRequest} onSaveThread={saveDesignThread} onDeleteThread={deleteDesignThread} onStageGeometry={stageGeometryEdit} />; }
     if (activeView === "designs") return <DesignsView catalog={templateCatalog} installedAt={templateInstalledAt} loading={templateLoading} nativeRender={templateNativeRender} nativeLoading={templateNativeLoading} onInstall={() => void installTemplate()} />;
     if (activeView === "rules") return <RulesView deck={selectedDeck} exemplarCount={project.styleExemplars.filter((item) => item.kind === "table").length} />;
     if (activeView === "review") return <ReviewView deck={selectedDeck} projectUpdatedAt={project.project.updatedAt} currentCatalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} proposalCatalog={selectedDeck ? proposalCatalogs[selectedDeck.id] : undefined} currentNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} proposalNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : undefined} previewLoading={Boolean(selectedDeck && (proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal`))} threads={project.designThreads} onToggle={toggleChange} onReviewSlide={reviewSlide} onRequestChanges={requestSlideChanges} onOpenSlide={openSlideWorkspace} onReject={rejectProposal} onApply={acceptProposal} onExport={() => void exportCleaned()} />;

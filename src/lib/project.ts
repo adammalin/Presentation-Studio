@@ -339,6 +339,12 @@ const changeSchema = z.object({
     alignment: z.enum(["left", "center", "right"]).optional(),
     verticalAlignment: z.enum(["top", "middle", "bottom"]).optional(),
     insetsInches: z.object({ top: z.number().min(0).max(.25), right: z.number().min(0).max(.25), bottom: z.number().min(0).max(.25), left: z.number().min(0).max(.25) }).optional(),
+    paragraphStyle: z.object({
+      lineSpacingMultiple: z.number().min(.8).max(1.6).optional(),
+      spaceAfterPt: z.number().min(0).max(30).optional(),
+      bulletLeftMarginInches: z.number().min(0).max(1).optional(),
+      bulletHangingInches: z.number().min(0).max(.5).optional(),
+    }).optional(),
     rationale: z.string().min(1).max(700),
     author: z.enum(["ai", "human"]),
   })).optional(),

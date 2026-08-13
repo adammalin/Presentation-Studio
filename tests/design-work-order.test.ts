@@ -55,6 +55,10 @@ test("slide design work order closes content and binds evidence to scene, templa
   assert.equal(workOrder.closedContentInventory.lockedTextHash, deck.audit?.slides[0].textHash);
   assert.equal(workOrder.objects.length, deck.scene?.objects.filter((object) => object.slideNumber === 1).length);
   assert.equal(workOrder.layoutCandidates[0].layout.semantic?.intent, "cover");
+  assert.ok(workOrder.designRules.componentSystem.layoutRecipes["title-table"]);
+  assert.equal(workOrder.designRules.tableVariants.denseTechnical.bodyFontSizePt, 10);
+  assert.match(workOrder.requiredSequence.join(" "), /shared layout recipe/i);
+  assert.match(workOrder.requiredSequence.join(" "), /addressedThreadIds/);
   assert.match(workOrder.requiredSequence.join(" "), /PowerPoint/i);
   assert.match(workOrder.definitionOfDone, /visibly stronger/i);
 });

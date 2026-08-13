@@ -3,7 +3,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal } from "../src/lib/cleanup";
+import JSZip from "jszip";
+import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createTableStyleProposal } from "../src/lib/cleanup";
+import { PRESENTATION_DESIGN_STANDARD } from "../src/lib/design-standard";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { buildAuditReport } from "../src/lib/report";
 import { createProject, projectSchema } from "../src/lib/project";
@@ -124,6 +126,30 @@ test("designer cleanup reviews every slide and normalizes compatible native tabl
   assert.equal(after.alignmentRepairs.length, 0);
   assert.deepEqual(after.slides.map((slide) => slide.textHash), audit.slides.map((slide) => slide.textHash));
   assert.deepEqual(after.textBoxes.map((textBox) => textBox.textHash), audit.textBoxes.map((textBox) => textBox.textHash));
+});
+
+test("dense technical tables use one compact ORNL component without changing table content or structure", async () => {
+  const bytes = await fixtureBytes();
+  const audit = await auditPptx(bytes);
+  const revision = "2026-08-12T20:00:00.000Z";
+  const deck: DeckJob = { id: "deck-dense-table", name: "synthetic.pptx", sourceResourceId: "resource-dense-table", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: audit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateConfirmedAt: revision, status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  const sourceTable = audit.tables[0];
+  assert.ok(sourceTable);
+  const proposal = createTableStyleProposal(deck, revision, { tableIds: [sourceTable.id], variant: "dense-technical" });
+  const preview = await buildCleanupProposalPptx(bytes, proposal);
+  const after = await auditPptx(preview.bytes);
+  assert.equal(preview.tableCount, 1);
+  assert.equal(after.tables[0].contentHash, sourceTable.contentHash);
+  assert.equal(after.tables[0].structureHash, sourceTable.structureHash);
+  const denseTokens = PRESENTATION_DESIGN_STANDARD.tableVariants.denseTechnical;
+  const horizontalMargin = Math.round(denseTokens.horizontalPaddingPt * 12_700);
+  const verticalMargin = Math.round(denseTokens.verticalPaddingPt * 12_700);
+  assert.equal(after.tables[0].marginSignatures.includes(`marL:${horizontalMargin}|marR:${horizontalMargin}|marT:${verticalMargin}|marB:${verticalMargin}|anchor:ctr`), true);
+  const zip = await JSZip.loadAsync(preview.bytes);
+  const xml = await zip.file("ppt/slides/slide2.xml")?.async("text");
+  assert.match(xml ?? "", /sz="1000"/);
+  assert.match(xml ?? "", /sz="1050"/);
+  assert.doesNotMatch(xml ?? "", /<a:tableStyleId\b/);
 });
 
 test("designer cleanup preserves semantic table colors as explicit review exceptions", async () => {

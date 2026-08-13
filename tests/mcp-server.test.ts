@@ -12,7 +12,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
   try {
     await client.connect(transport);
     const result = await client.listTools();
-    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_design_work_order", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_slide_design_context", "get_slide_design_work_order", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_template_layout_catalog", "get_template_layout_render", "list_decks", "list_design_threads", "list_resources", "recommend_slide_layouts", "reject_design_proposal", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design"]);
+    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_design_work_order", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_slide_design_context", "get_slide_design_work_order", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_template_layout_catalog", "get_template_layout_render", "list_decks", "list_design_threads", "list_resources", "recommend_slide_layouts", "reject_design_proposal", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_table_design_update"]);
     const contractTool = result.tools.find((tool) => tool.name === "get_design_contract");
     assert.match(contractTool?.description ?? "", /improving every slide/i);
     const contract = await client.callTool({ name: "get_design_contract", arguments: {} });
@@ -27,6 +27,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.equal((contract.structuredContent as { defaults?: { slide?: { aspectRatio?: string }; typography?: { family?: string } } })?.defaults?.slide?.aspectRatio, "16:9");
     assert.equal((contract.structuredContent as { defaults?: { typography?: { family?: string } } })?.defaults?.typography?.family, "Aptos");
     assert.equal((contract.structuredContent as { tableProfile?: { cellPaddingPt?: { left?: number } } })?.tableProfile?.cellPaddingPt?.left, 6);
+    assert.match(JSON.stringify(contract.structuredContent), /Do not redraw each slide as an unrelated one-off canvas/i);
     const stageTool = result.tools.find((tool) => tool.name === "stage_font_cleanup");
     assert.equal(stageTool?.annotations?.destructiveHint, false);
     assert.equal(stageTool?.annotations?.readOnlyHint, false);
@@ -49,6 +50,11 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(visualDesignTool?.description ?? "", /cannot add or rewrite claims/i);
     assert.match(visualDesignTool?.description ?? "", /accumulate/i);
     assert.equal(visualDesignTool?.annotations?.destructiveHint, false);
+    const tableDesignTool = result.tools.find((tool) => tool.name === "stage_table_design_update");
+    assert.match(tableDesignTool?.description ?? "", /dense-technical/i);
+    assert.match(tableDesignTool?.description ?? "", /shared/i);
+    assert.match(tableDesignTool?.description ?? "", /unrelated comments remain active/i);
+    assert.match(JSON.stringify(tableDesignTool?.inputSchema), /addressedThreadIds/);
     const proposalManifestTool = result.tools.find((tool) => tool.name === "get_pending_proposal_manifest");
     assert.match(proposalManifestTool?.description ?? "", /selected command kinds/i);
     assert.match(proposalManifestTool?.description ?? "", /without returning slide text or presentation bytes/i);

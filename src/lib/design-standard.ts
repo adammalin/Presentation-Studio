@@ -20,6 +20,16 @@ export interface PresentationDesignStandard {
     palette: Record<string, string>;
   };
   autonomy: { routineDecisions: string[]; approvalPolicy: string };
+  componentSystem: {
+    version: number;
+    principle: string;
+    page: Record<string, number>;
+    title: Record<string, number>;
+    patterns: Record<string, string>;
+    paragraph: Record<string, number>;
+    components: Record<string, string>;
+    layoutRecipes: Record<string, { useWhen: string; regions: string }>;
+  };
   tableProfile: {
     id: string;
     version: number;
@@ -35,6 +45,10 @@ export interface PresentationDesignStandard {
     alignment: Record<string, string>;
     overflowPolicy: string;
     preserve: string[];
+  };
+  tableVariants: {
+    standard: { headerFontSizePt: number; bodyFontSizePt: number; horizontalPaddingPt: number; verticalPaddingPt: number };
+    denseTechnical: { headerFontSizePt: number; bodyFontSizePt: number; horizontalPaddingPt: number; verticalPaddingPt: number; useWhen: string };
   };
   preservationRules: string[];
   everySlideChecklist: string[];

@@ -394,9 +394,17 @@ export interface TextStyleCommand {
   alignment?: "left" | "center" | "right";
   verticalAlignment?: "top" | "middle" | "bottom";
   insetsInches?: { top: number; right: number; bottom: number; left: number };
+  paragraphStyle?: {
+    lineSpacingMultiple?: number;
+    spaceAfterPt?: number;
+    bulletLeftMarginInches?: number;
+    bulletHangingInches?: number;
+  };
   rationale: string;
   author: "human" | "ai";
 }
+
+export type TableStyleVariant = "standard" | "dense-technical";
 
 export interface DecorativeShapeCommand {
   id: string;

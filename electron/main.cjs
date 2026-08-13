@@ -1,10 +1,11 @@
-const { app, BrowserWindow, dialog, ipcMain, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require("electron");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 const { nativeRenderCapabilities, renderPowerPointNative } = require("./native-render.cjs");
+const { installEditorContextMenu } = require("./editor-context-menu.cjs");
 
 app.setName("Presentation Studio");
 const projectRoot = path.resolve(__dirname, "..");
@@ -141,10 +142,11 @@ function dispatchMcpCommand(operation, input) {
   }
   const id = randomUUID();
   return new Promise((resolve, reject) => {
+    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render"].includes(operation);
     const timer = setTimeout(() => {
       pendingMcpCommands.delete(id);
       reject(new Error("Presentation Studio did not answer the MCP request in time."));
-    }, 15_000);
+    }, nativeRenderOperation ? 195_000 : 15_000);
     pendingMcpCommands.set(id, { resolve, reject, timer });
     mainWindow.webContents.send("mcp:command", { id, operation, input });
   });
@@ -470,9 +472,11 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: true,
       backgroundThrottling: !smokeTest,
     },
   });
+  installEditorContextMenu(mainWindow, Menu);
   const devUrl = process.env.PRESENTATION_STUDIO_DEV_URL;
   if (devUrl) await mainWindow.loadURL(devUrl);
   else await mainWindow.loadFile(path.join(projectRoot, "dist", "index.html"));

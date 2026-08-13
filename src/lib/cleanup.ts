@@ -11,6 +11,7 @@ import type {
   SlideDesignDisposition,
   TableInventoryItem,
   TableNormalizationException,
+  TableStyleVariant,
   TextStyleCommand,
 } from "../types";
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
@@ -18,13 +19,61 @@ import { auditPptx } from "./pptx-audit";
 import { cloneTemplateLayoutForSlide, type NativeLayoutCloneReceipt } from "./native-layout-remap";
 
 const TABLE_PROFILE = PRESENTATION_DESIGN_STANDARD.tableProfile;
-const TABLE_MARGIN_HORIZONTAL_EMU = Math.round(TABLE_PROFILE.cellPaddingPt.left * 12_700);
-const TABLE_MARGIN_VERTICAL_EMU = Math.round(TABLE_PROFILE.cellPaddingPt.top * 12_700);
-const TABLE_RULE_WIDTH_EMU = Math.round(TABLE_PROFILE.strokes.horizontal.widthPt * 12_700);
-const TABLE_FONT_SIZE = Math.round(TABLE_PROFILE.body.fontSizePt * 100);
+
+interface MaterializedTableProfile {
+  id: string;
+  fontFamily: string;
+  header: { fontSizePt: number; fill: string; textColor: string };
+  body: { fontSizePt: number; textColor: string; fill: string; alternateFill: string };
+  cellPaddingPt: { left: number; right: number; top: number; bottom: number };
+  horizontalRule: { color: string; widthPt: number };
+}
+
+function materializedTableProfile(variant: TableStyleVariant): MaterializedTableProfile {
+  const settings = variant === "dense-technical" ? PRESENTATION_DESIGN_STANDARD.tableVariants.denseTechnical : PRESENTATION_DESIGN_STANDARD.tableVariants.standard;
+  return {
+    id: `${TABLE_PROFILE.id}-${variant}`,
+    fontFamily: TABLE_PROFILE.fontFamily,
+    header: { fontSizePt: settings.headerFontSizePt, fill: TABLE_PROFILE.header.fill, textColor: TABLE_PROFILE.header.textColor },
+    body: { fontSizePt: settings.bodyFontSizePt, textColor: TABLE_PROFILE.body.textColor, fill: TABLE_PROFILE.body.fill, alternateFill: variant === "dense-technical" ? "#F4F5F4" : TABLE_PROFILE.body.alternateFill },
+    cellPaddingPt: { left: settings.horizontalPaddingPt, right: settings.horizontalPaddingPt, top: settings.verticalPaddingPt, bottom: settings.verticalPaddingPt },
+    horizontalRule: { color: TABLE_PROFILE.strokes.horizontal.color, widthPt: variant === "dense-technical" ? .5 : TABLE_PROFILE.strokes.horizontal.widthPt },
+  };
+}
 
 function stableChangeId(from: string, to: string): string {
   return `font-${from.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${to.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function consolidatedChanges(changes: CleanupChange[]): CleanupChange[] {
+  const result: CleanupChange[] = [];
+  const indexByKey = new Map<string, number>();
+  for (const change of changes) {
+    const key = `${change.kind}:${change.id}`;
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, result.length);
+      result.push(change);
+      continue;
+    }
+    const existing = result[existingIndex];
+    if (change.kind === "text-style") {
+      const byObject = new Map((existing.textStyleCommands ?? []).map((command) => [command.objectId, command]));
+      for (const command of change.textStyleCommands ?? []) byObject.set(command.objectId, command);
+      const commands = [...byObject.values()];
+      result[existingIndex] = { ...existing, ...change, affectedSlideNumbers: [...new Set([...existing.affectedSlideNumbers, ...change.affectedSlideNumbers])].sort((left, right) => left - right), affectedRunCount: commands.length, textStyleCommands: commands, selected: existing.selected || change.selected };
+      continue;
+    }
+    if (change.kind === "decoration") {
+      const byId = new Map((existing.decorationCommands ?? []).map((command) => [command.id, command]));
+      for (const command of change.decorationCommands ?? []) byId.set(command.id, command);
+      const commands = [...byId.values()];
+      result[existingIndex] = { ...existing, ...change, affectedSlideNumbers: [...new Set([...existing.affectedSlideNumbers, ...change.affectedSlideNumbers])].sort((left, right) => left - right), affectedRunCount: commands.length, decorationCommands: commands, selected: existing.selected || change.selected };
+      continue;
+    }
+    result[existingIndex] = change;
+  }
+  return result;
 }
 
 function assertDeckReady(deck: DeckJob) {
@@ -174,6 +223,51 @@ export function createDesignerCleanupProposal(deck: DeckJob, updatedAt: string):
   };
 }
 
+export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input: { tableIds: string[]; variant: TableStyleVariant }): CleanupProposal {
+  assertDeckReady(deck);
+  if (!deck.audit) throw new Error("Audit the deck before staging native table design.");
+  if (deck.operationScope !== "reflow") throw new Error("Native table design requires Designer Cleanup reflow scope.");
+  if (input.tableIds.length === 0 || input.tableIds.length > 40) throw new Error("Stage between 1 and 40 native tables in one design-system transaction.");
+  const requestedIds = new Set(input.tableIds);
+  if (requestedIds.size !== input.tableIds.length) throw new Error("Each native table may be selected only once per transaction.");
+  const tables = input.tableIds.map((id) => {
+    const table = deck.audit?.tables.find((item) => item.id === id);
+    if (!table) throw new Error(`Native table ${id} is not present in the current deck revision.`);
+    return table;
+  });
+  const base: CleanupProposal = deck.proposal && ["pending", "applied"].includes(deck.proposal.status) && deck.proposal.baseUpdatedAt === updatedAt ? deck.proposal : {
+    id: crypto.randomUUID(), deckId: deck.id, baseUpdatedAt: updatedAt, createdAt: new Date().toISOString(), summary: "Stage a shared native table component", status: "pending", mode: "slide-reflow", standardVersion: PRESENTATION_DESIGN_STANDARD.version, changes: [], slideDispositions: [], tableExceptions: [], layoutExceptions: deck.audit.layoutReviews ?? [],
+  };
+  const changes = base.changes.map((change) => change.kind === "table-style" ? { ...change, tableIds: (change.tableIds ?? []).filter((id) => !requestedIds.has(id)) } : change).filter((change) => change.kind !== "table-style" || (change.tableIds?.length ?? 0) > 0);
+  const affectedSlideNumbers = [...new Set(tables.map((table) => table.slideNumber))].sort((left, right) => left - right);
+  changes.push({
+    id: `table-${TABLE_PROFILE.id}-${input.variant}-${crypto.randomUUID()}`,
+    kind: "table-style",
+    from: "individually formatted native tables",
+    to: `${input.variant} ORNL native table component`,
+    affectedSlideNumbers,
+    affectedRunCount: tables.reduce((sum, table) => sum + table.rowCount * table.columnCount, 0),
+    tableIds: input.tableIds,
+    profileId: `${TABLE_PROFILE.id}-${input.variant}`,
+    rationale: `Apply one ${input.variant} ORNL table component with shared Aptos hierarchy, padding, restrained rules, and brand colors while preserving exact cell content and merged-cell structure.`,
+    selected: true,
+  });
+  const exceptions = (base.tableExceptions ?? []).filter((exception) => !requestedIds.has(exception.tableId));
+  return {
+    ...base,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    summary: `Apply the shared ${input.variant} ORNL table component to ${tables.length} native table${tables.length === 1 ? "" : "s"}`,
+    status: "pending",
+    mode: "slide-reflow",
+    standardVersion: PRESENTATION_DESIGN_STANDARD.version,
+    changes,
+    tableExceptions: exceptions,
+    slideDispositions: slideDispositions(deck, changes, exceptions, base.layoutExceptions),
+    slideReviews: (base.slideReviews ?? []).filter((review) => !affectedSlideNumbers.includes(review.slideNumber)),
+  };
+}
+
 function objectGeometry(object: SlideEditableObject) {
   const { x, y, width, height } = object.geometry;
   return { x, y, width, height };
@@ -192,6 +286,7 @@ export interface GeometryEditRequest {
 export interface VisualDesignRequest {
   slideNumber: number;
   clearPendingLayoutRemap?: boolean;
+  removeDecorationIds?: string[];
   textStyles: Array<Omit<TextStyleCommand, "id" | "slideNumber" | "shapeId" | "typeface">>;
   decorations: Array<Omit<DecorativeShapeCommand, "slideNumber">>;
 }
@@ -298,7 +393,7 @@ function validateGeometryCommands(deck: DeckJob, requests: GeometryEditRequest[]
   return commands;
 }
 
-export function createGeometryBatchProposal(deck: DeckJob, updatedAt: string, inputs: GeometryEditRequest[]): CleanupProposal {
+export function createGeometryBatchProposal(deck: DeckJob, updatedAt: string, inputs: GeometryEditRequest[], options?: { resetObjectIds?: string[] }): CleanupProposal {
   assertDeckReady(deck);
   if (!deck.audit) throw new Error("Audit the deck before editing slide geometry.");
   const base: CleanupProposal = deck.proposal && ["pending", "applied"].includes(deck.proposal.status) && deck.proposal.baseUpdatedAt === updatedAt ? deck.proposal : {
@@ -315,16 +410,23 @@ export function createGeometryBatchProposal(deck: DeckJob, updatedAt: string, in
     tableExceptions: [],
     layoutExceptions: [],
   };
+  const resetObjectIds = new Set(options?.resetObjectIds ?? []);
+  for (const objectId of resetObjectIds) {
+    if (!(deck.audit.editableObjects ?? []).some((object) => object.id === objectId)) throw new Error(`Editable object ${objectId} is not present in the current deck revision.`);
+  }
   const existingGeometry = base.changes.flatMap((change) => change.kind === "geometry" ? (change.geometryCommands ?? []).map((command) => ({ command, selected: change.selected })) : []);
-  const incomingIds = new Set(inputs.map((input) => input.objectId));
+  const incomingIds = new Set([...inputs.map((input) => input.objectId), ...resetObjectIds]);
   const combinedInputs: GeometryEditRequest[] = [
     ...existingGeometry.filter(({ command }) => !incomingIds.has(command.objectId)).map(({ command }) => ({ objectId: command.objectId, target: command.target, rationale: command.rationale, author: command.author, constraints: command.constraints ?? GEOMETRY_DEFAULTS })),
     ...inputs,
   ];
-  const commands = validateGeometryCommands(deck, combinedInputs);
+  const commands = combinedInputs.length > 0 ? validateGeometryCommands(deck, combinedInputs) : [];
   const selectedByObject = new Map(existingGeometry.map(({ command, selected }) => [command.objectId, selected]));
   for (const input of inputs) selectedByObject.set(input.objectId, true);
-  const targetedShapes = new Set(commands.map((command) => `${command.slideNumber}:${command.shapeId}`));
+  const targetedShapes = new Set([
+    ...commands.map((command) => `${command.slideNumber}:${command.shapeId}`),
+    ...(deck.audit.editableObjects ?? []).filter((object) => resetObjectIds.has(object.id)).map((object) => `${object.slideNumber}:${object.shapeId}`),
+  ]);
   const changes = base.changes
     .filter((change) => change.kind !== "geometry")
     .map((change) => change.kind === "alignment" ? { ...change, alignmentRepairs: (change.alignmentRepairs ?? []).filter((repair) => !targetedShapes.has(`${repair.slideNumber}:${repair.shapeId}`)) } : change)
@@ -341,7 +443,10 @@ export function createGeometryBatchProposal(deck: DeckJob, updatedAt: string, in
       selected: selectedByObject.get(command.objectId) ?? true,
     });
   const geometryCount = commands.length;
-  const revisedSlideNumbers = new Set(commands.filter((command) => incomingIds.has(command.objectId)).map((command) => command.slideNumber));
+  const revisedSlideNumbers = new Set([
+    ...commands.filter((command) => incomingIds.has(command.objectId)).map((command) => command.slideNumber),
+    ...(deck.audit.editableObjects ?? []).filter((object) => resetObjectIds.has(object.id)).map((object) => object.slideNumber),
+  ]);
   return {
     ...base,
     id: crypto.randomUUID(),
@@ -424,8 +529,10 @@ export function createVisualDesignProposal(deck: DeckJob, updatedAt: string, inp
   if (!deck.audit) throw new Error("Audit the deck before staging visual design.");
   if (deck.operationScope !== "reflow") throw new Error("Visual styling and brand geometry require Designer Cleanup reflow scope.");
   if (!Number.isInteger(input.slideNumber) || input.slideNumber < 1 || input.slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-  if (input.textStyles.length + input.decorations.length === 0) throw new Error("Stage at least one text style or decoration.");
+  const removeDecorationIds = [...new Set(input.removeDecorationIds ?? [])];
+  if (input.textStyles.length + input.decorations.length + removeDecorationIds.length === 0) throw new Error("Stage at least one text style, decoration, or decoration removal.");
   if (input.textStyles.length > 20 || input.decorations.length > 30) throw new Error("Stage no more than 20 text styles and 30 decorations for one slide.");
+  if (removeDecorationIds.length > 30 || removeDecorationIds.some((id) => !id.trim())) throw new Error("Remove no more than 30 valid decoration IDs in one slide transaction.");
   const objects = deck.audit.editableObjects ?? [];
   const slideSize = deck.audit.slideSize ?? { width: 12_192_000, height: 6_858_000 };
   const textStyles: TextStyleCommand[] = input.textStyles.map((style) => {
@@ -434,6 +541,11 @@ export function createVisualDesignProposal(deck: DeckJob, updatedAt: string, inp
     if (style.fontSizePt !== undefined && (style.fontSizePt < 10 || style.fontSizePt > 60)) throw new Error("Text size must be between 10 and 60 pt.");
     const insets = style.insetsInches;
     if (insets && Object.values(insets).some((value) => !Number.isFinite(value) || value < 0 || value > .25)) throw new Error("Text insets must be between 0 and 0.25 inches.");
+    const paragraph = style.paragraphStyle;
+    if (paragraph?.lineSpacingMultiple !== undefined && (paragraph.lineSpacingMultiple < .8 || paragraph.lineSpacingMultiple > 1.6)) throw new Error("Paragraph line spacing must be between 0.8 and 1.6.");
+    if (paragraph?.spaceAfterPt !== undefined && (paragraph.spaceAfterPt < 0 || paragraph.spaceAfterPt > 30)) throw new Error("Paragraph spacing after must be between 0 and 30 pt.");
+    if (paragraph?.bulletLeftMarginInches !== undefined && (paragraph.bulletLeftMarginInches < 0 || paragraph.bulletLeftMarginInches > 1)) throw new Error("Bullet left margin must be between 0 and 1 inch.");
+    if (paragraph?.bulletHangingInches !== undefined && (paragraph.bulletHangingInches < 0 || paragraph.bulletHangingInches > .5)) throw new Error("Bullet hanging indent must be between 0 and 0.5 inches.");
     return {
       ...style,
       id: `text-style-${object.id}`,
@@ -459,12 +571,13 @@ export function createVisualDesignProposal(deck: DeckJob, updatedAt: string, inp
     id: crypto.randomUUID(), deckId: deck.id, baseUpdatedAt: updatedAt, createdAt: new Date().toISOString(), summary: "Stage a bounded visual design transaction", status: "pending", mode: "slide-reflow", standardVersion: PRESENTATION_DESIGN_STANDARD.version, changes: [], slideDispositions: [], tableExceptions: [], layoutExceptions: deck.audit.layoutReviews ?? [],
   };
   const styleObjectIds = new Set(textStyles.map((style) => style.objectId));
-  const decorationIds = new Set(decorations.map((decoration) => decoration.id));
+  const decorationIds = new Set([...decorations.map((decoration) => decoration.id), ...removeDecorationIds]);
   const retained = base.changes.filter((change) => !input.clearPendingLayoutRemap || change.kind !== "layout-remap" || !change.affectedSlideNumbers.includes(input.slideNumber)).map((change) => change.kind === "text-style" ? { ...change, textStyleCommands: (change.textStyleCommands ?? []).filter((style) => !styleObjectIds.has(style.objectId)) } : change.kind === "decoration" ? { ...change, decorationCommands: (change.decorationCommands ?? []).filter((decoration) => !decorationIds.has(decoration.id)) } : change).filter((change) => change.kind !== "text-style" || (change.textStyleCommands?.length ?? 0) > 0).filter((change) => change.kind !== "decoration" || (change.decorationCommands?.length ?? 0) > 0);
   const changes: CleanupChange[] = [...retained];
   if (textStyles.length > 0) changes.push({ id: `text-style-slide-${input.slideNumber}`, kind: "text-style", from: "mixed source text hierarchy", to: "measured Aptos hierarchy", affectedSlideNumbers: [input.slideNumber], affectedRunCount: textStyles.length, textStyleCommands: textStyles, rationale: "Apply deliberate ORNL-aligned hierarchy, readable sizing, optical alignment, and text-frame spacing without changing any wording.", selected: true });
   if (decorations.length > 0) changes.push({ id: `decoration-slide-${input.slideNumber}`, kind: "decoration", from: "unstructured open canvas", to: "restrained ORNL visual grouping", affectedSlideNumbers: [input.slideNumber], affectedRunCount: decorations.length, decorationCommands: decorations, rationale: "Add native editable vector rules, panels, and grouping cues that clarify the existing content without adding claims or decorative clutter.", selected: true });
-  return { ...base, id: crypto.randomUUID(), createdAt: new Date().toISOString(), summary: `Polish slide ${input.slideNumber} with native editable hierarchy and brand geometry`, status: "pending", mode: "slide-reflow", changes, slideDispositions: slideDispositions(deck, changes, base.tableExceptions, base.layoutExceptions), slideReviews: (base.slideReviews ?? []).filter((review) => review.slideNumber !== input.slideNumber) };
+  const consolidated = consolidatedChanges(changes);
+  return { ...base, id: crypto.randomUUID(), createdAt: new Date().toISOString(), summary: `Polish slide ${input.slideNumber} with native editable hierarchy and brand geometry`, status: "pending", mode: "slide-reflow", changes: consolidated, slideDispositions: slideDispositions(deck, consolidated, base.tableExceptions, base.layoutExceptions), slideReviews: (base.slideReviews ?? []).filter((review) => review.slideNumber !== input.slideNumber) };
 }
 
 function escapeXmlAttribute(value: string): string {
@@ -493,85 +606,101 @@ function directSolidFill(color: string) {
   return `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>`;
 }
 
-function normalizeRunPropertyTag(tag: string, header: boolean): string {
+function normalizeRunPropertyTag(tag: string, header: boolean, profile: MaterializedTableProfile): string {
   const match = tag.match(/^<a:(rPr|defRPr|endParaRPr)\b([^>]*?)(\/?)>([\s\S]*?)(?:<\/a:\1>)?$/);
   if (!match) return tag;
   const name = match[1];
-  let attributes = setAttribute(match[2] ?? "", "sz", String(TABLE_FONT_SIZE));
+  let attributes = setAttribute(match[2] ?? "", "sz", String(Math.round((header ? profile.header.fontSizePt : profile.body.fontSizePt) * 100)));
   if (header) attributes = setAttribute(attributes, "b", "1");
   let children = match[4] ?? "";
   children = children.replace(/<a:solidFill\b[\s\S]*?<\/a:solidFill>|<a:solidFill\b[^>]*\/>/g, "");
   children = children.replace(/<a:latin\b[^>]*\/>/g, "");
-  const color = header ? TABLE_PROFILE.header.textColor.slice(1) : TABLE_PROFILE.body.textColor.slice(1);
-  return `<a:${name}${attributes}>${directSolidFill(color)}<a:latin typeface="${escapeXmlAttribute(TABLE_PROFILE.fontFamily)}"/>${children}</a:${name}>`;
+  const color = header ? profile.header.textColor.slice(1) : profile.body.textColor.slice(1);
+  return `<a:${name}${attributes}>${directSolidFill(color)}<a:latin typeface="${escapeXmlAttribute(profile.fontFamily)}"/>${children}</a:${name}>`;
 }
 
-function normalizeTextProperties(cell: string, header: boolean): string {
-  let result = cell.replace(/<a:(rPr|defRPr|endParaRPr)\b[^>]*\/>|<a:(rPr|defRPr|endParaRPr)\b[^>]*>[\s\S]*?<\/a:\2>/g, (tag) => normalizeRunPropertyTag(tag, header));
-  result = result.replace(/<a:r>(?!\s*<a:rPr\b)/g, `<a:r><a:rPr sz="${TABLE_FONT_SIZE}"${header ? ' b="1"' : ""}>${directSolidFill(header ? TABLE_PROFILE.header.textColor.slice(1) : TABLE_PROFILE.body.textColor.slice(1))}<a:latin typeface="${escapeXmlAttribute(TABLE_PROFILE.fontFamily)}"/></a:rPr>`);
+function normalizeTextProperties(cell: string, header: boolean, profile: MaterializedTableProfile): string {
+  const fontSize = Math.round((header ? profile.header.fontSizePt : profile.body.fontSizePt) * 100);
+  let result = cell.replace(/<a:(rPr|defRPr|endParaRPr)\b[^>]*\/>|<a:(rPr|defRPr|endParaRPr)\b[^>]*>[\s\S]*?<\/a:\2>/g, (tag) => normalizeRunPropertyTag(tag, header, profile));
+  result = result.replace(/<a:r>(?!\s*<a:rPr\b)/g, `<a:r><a:rPr sz="${fontSize}"${header ? ' b="1"' : ""}>${directSolidFill(header ? profile.header.textColor.slice(1) : profile.body.textColor.slice(1))}<a:latin typeface="${escapeXmlAttribute(profile.fontFamily)}"/></a:rPr>`);
   return result;
 }
 
-function normalizeBodyProperties(cell: string): string {
+function normalizeBodyProperties(cell: string, profile: MaterializedTableProfile): string {
+  const horizontal = Math.round(profile.cellPaddingPt.left * 12_700);
+  const vertical = Math.round(profile.cellPaddingPt.top * 12_700);
   return cell.replace(/<a:bodyPr\b([^>]*?)(?:\/?>)/, (_tag, initial: string) => {
     let attributes = initial ?? "";
-    attributes = setAttribute(attributes, "lIns", String(TABLE_MARGIN_HORIZONTAL_EMU));
-    attributes = setAttribute(attributes, "rIns", String(TABLE_MARGIN_HORIZONTAL_EMU));
-    attributes = setAttribute(attributes, "tIns", String(TABLE_MARGIN_VERTICAL_EMU));
-    attributes = setAttribute(attributes, "bIns", String(TABLE_MARGIN_VERTICAL_EMU));
+    attributes = setAttribute(attributes, "lIns", String(horizontal));
+    attributes = setAttribute(attributes, "rIns", String(horizontal));
+    attributes = setAttribute(attributes, "tIns", String(vertical));
+    attributes = setAttribute(attributes, "bIns", String(vertical));
     attributes = setAttribute(attributes, "anchor", "ctr");
     return `<a:bodyPr${attributes}/>`;
   });
 }
 
-function normalizeCellProperties(cell: string, fill: string, lastRow: boolean): string {
-  const rules = `<a:lnL><a:noFill/></a:lnL><a:lnR><a:noFill/></a:lnR><a:lnT><a:noFill/></a:lnT><a:lnB${lastRow ? "" : ` w="${TABLE_RULE_WIDTH_EMU}"`}>${lastRow ? "<a:noFill/>" : directSolidFill(TABLE_PROFILE.strokes.horizontal.color.slice(1))}</a:lnB>`;
+function normalizeCellProperties(cell: string, fill: string, lastRow: boolean, profile: MaterializedTableProfile): string {
+  const horizontal = Math.round(profile.cellPaddingPt.left * 12_700);
+  const vertical = Math.round(profile.cellPaddingPt.top * 12_700);
+  const ruleWidth = Math.round(profile.horizontalRule.widthPt * 12_700);
+  const rules = `<a:lnL><a:noFill/></a:lnL><a:lnR><a:noFill/></a:lnR><a:lnT><a:noFill/></a:lnT><a:lnB${lastRow ? "" : ` w="${ruleWidth}"`}>${lastRow ? "<a:noFill/>" : directSolidFill(profile.horizontalRule.color.slice(1))}</a:lnB>`;
   const replacement = (attributes: string, children: string) => {
     let nextAttributes = attributes;
-    nextAttributes = setAttribute(nextAttributes, "marL", String(TABLE_MARGIN_HORIZONTAL_EMU));
-    nextAttributes = setAttribute(nextAttributes, "marR", String(TABLE_MARGIN_HORIZONTAL_EMU));
-    nextAttributes = setAttribute(nextAttributes, "marT", String(TABLE_MARGIN_VERTICAL_EMU));
-    nextAttributes = setAttribute(nextAttributes, "marB", String(TABLE_MARGIN_VERTICAL_EMU));
+    nextAttributes = setAttribute(nextAttributes, "marL", String(horizontal));
+    nextAttributes = setAttribute(nextAttributes, "marR", String(horizontal));
+    nextAttributes = setAttribute(nextAttributes, "marT", String(vertical));
+    nextAttributes = setAttribute(nextAttributes, "marB", String(vertical));
     nextAttributes = setAttribute(nextAttributes, "anchor", "ctr");
     const cleaned = children
       .replace(/<a:solidFill\b[\s\S]*?<\/a:solidFill>|<a:solidFill\b[^>]*\/>/g, "")
       .replace(/<a:ln(?:L|R|T|B|TlToBr|BlToTr)\b[\s\S]*?<\/a:ln(?:L|R|T|B|TlToBr|BlToTr)>/g, "");
-    return `<a:tcPr${nextAttributes}>${directSolidFill(fill)}${rules}${cleaned}</a:tcPr>`;
+    // DrawingML table-cell properties are order-sensitive: border elements
+    // precede the fill. Keeping that schema order makes PowerPoint honor the
+    // component's explicit border treatment instead of falling back to a
+    // legacy table style or the default black grid.
+    return `<a:tcPr${nextAttributes}>${rules}${directSolidFill(fill)}${cleaned}</a:tcPr>`;
   };
   if (/<a:tcPr\b[^>]*\/>/.test(cell)) return cell.replace(/<a:tcPr\b([^>]*)\/>/, (_tag, attributes) => replacement(attributes, ""));
   if (/<a:tcPr\b/.test(cell)) return cell.replace(/<a:tcPr\b([^>]*)>([\s\S]*?)<\/a:tcPr>/, (_tag, attributes, children) => replacement(attributes, children));
   return cell.replace(/<\/a:tc>/, `${replacement("", "")}</a:tc>`);
 }
 
-function normalizeTableBlock(table: string): string {
+function normalizeTableBlock(table: string, variant: TableStyleVariant): string {
+  const profile = materializedTableProfile(variant);
   let result = table.replace(/<a:tblPr\b([^>]*)>/, (_tag, initial: string) => {
     let attributes = setAttribute(initial ?? "", "firstRow", "1");
     attributes = setAttribute(attributes, "bandRow", "0");
     attributes = setAttribute(attributes, "bandCol", "0");
     return `<a:tblPr${attributes}>`;
   });
+  // A source deck's tableStyleId can silently re-introduce its own borders,
+  // fills, and banding after our direct cell formatting. Shared components
+  // must be visually identical regardless of which legacy table they replace.
+  result = result.replace(/<a:tableStyleId\b[^>]*>[\s\S]*?<\/a:tableStyleId>/g, "");
   const rows = [...result.matchAll(/<a:tr\b[^>]*>[\s\S]*?<\/a:tr>/g)];
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index][0];
     const header = index === 0;
     const lastRow = index === rows.length - 1;
-    const fill = header ? TABLE_PROFILE.header.fill.slice(1) : (index % 2 === 0 ? TABLE_PROFILE.body.alternateFill : TABLE_PROFILE.body.fill).slice(1);
-    const normalized = row.replace(/<a:tc\b[\s\S]*?<\/a:tc>/g, (cell) => normalizeCellProperties(normalizeBodyProperties(normalizeTextProperties(cell, header)), fill, lastRow));
+    const fill = header ? profile.header.fill.slice(1) : (index % 2 === 0 ? profile.body.alternateFill : profile.body.fill).slice(1);
+    const normalized = row.replace(/<a:tc\b[\s\S]*?<\/a:tc>/g, (cell) => normalizeCellProperties(normalizeBodyProperties(normalizeTextProperties(cell, header, profile), profile), fill, lastRow, profile));
     const start = rows[index].index ?? 0;
     result = result.slice(0, start) + normalized + result.slice(start + row.length);
   }
   return result;
 }
 
-function normalizeSelectedTables(xml: string, slideNumber: number, selectedIds: Set<string>): { xml: string; count: number } {
+function normalizeSelectedTables(xml: string, slideNumber: number, selectedIds: Map<string, TableStyleVariant>): { xml: string; count: number } {
   let ordinal = 0;
   let count = 0;
   return {
     xml: xml.replace(/<a:tbl\b[\s\S]*?<\/a:tbl>/g, (table) => {
       ordinal += 1;
-      if (!selectedIds.has(`slide-${slideNumber}-table-${ordinal}`)) return table;
+      const variant = selectedIds.get(`slide-${slideNumber}-table-${ordinal}`);
+      if (!variant) return table;
       count += 1;
-      return normalizeTableBlock(table);
+      return normalizeTableBlock(table, variant);
     }),
     get count() { return count; },
   };
@@ -676,15 +805,27 @@ function defaultRunProperties(command: TextStyleCommand): string {
 
 function styleParagraphs(shape: string, command: TextStyleCommand): string {
   const alignment = textAlignmentValue(command.alignment);
-  if (!alignment) return shape;
+  const paragraphStyle = command.paragraphStyle;
+  if (!alignment && !paragraphStyle) return shape;
   return shape.replace(/<a:p\b([^>]*)>([\s\S]*?)<\/a:p>/g, (_paragraph, paragraphAttributes: string, children: string) => {
     let nextChildren = children;
-    if (/<a:pPr\b/.test(nextChildren)) nextChildren = nextChildren.replace(/<a:pPr\b([^>]*)>/, (tag, initial: string) => {
-      const selfClosing = tag.endsWith("/>");
-      const attributes = setAttribute(initial.replace(/\/\s*$/, ""), "algn", alignment);
-      return `<a:pPr${attributes}${selfClosing ? "/" : ""}>`;
-    });
-    else nextChildren = `<a:pPr algn="${alignment}"/>${nextChildren}`;
+    const existing = nextChildren.match(/<a:pPr\b([^>]*?)(?:\/>|>([\s\S]*?)<\/a:pPr>)/);
+    let attributes = existing?.[1] ?? "";
+    let propertyChildren = existing?.[2] ?? "";
+    if (alignment) attributes = setAttribute(attributes, "algn", alignment);
+    const isBullet = /<a:(?:buChar|buAutoNum|buBlip)\b/.test(existing?.[0] ?? "") || /\bindent=(?:"-|'\-)/.test(attributes);
+    if (paragraphStyle?.bulletLeftMarginInches !== undefined && isBullet) attributes = setAttribute(attributes, "marL", String(Math.round(paragraphStyle.bulletLeftMarginInches * 914_400)));
+    if (paragraphStyle?.bulletHangingInches !== undefined && isBullet) attributes = setAttribute(attributes, "indent", String(-Math.round(paragraphStyle.bulletHangingInches * 914_400)));
+    if (paragraphStyle?.lineSpacingMultiple !== undefined) {
+      const lineSpacing = `<a:lnSpc><a:spcPct val="${Math.round(paragraphStyle.lineSpacingMultiple * 100_000)}"/></a:lnSpc>`;
+      propertyChildren = /<a:lnSpc\b/.test(propertyChildren) ? propertyChildren.replace(/<a:lnSpc\b[\s\S]*?<\/a:lnSpc>/, lineSpacing) : `${lineSpacing}${propertyChildren}`;
+    }
+    if (paragraphStyle?.spaceAfterPt !== undefined) {
+      const spacingAfter = `<a:spcAft><a:spcPts val="${Math.round(paragraphStyle.spaceAfterPt * 100)}"/></a:spcAft>`;
+      propertyChildren = /<a:spcAft\b/.test(propertyChildren) ? propertyChildren.replace(/<a:spcAft\b[\s\S]*?<\/a:spcAft>/, spacingAfter) : `${propertyChildren}${spacingAfter}`;
+    }
+    const properties = propertyChildren ? `<a:pPr${attributes}>${propertyChildren}</a:pPr>` : `<a:pPr${attributes}/>`;
+    nextChildren = existing ? nextChildren.replace(existing[0], properties) : `${properties}${nextChildren}`;
     return `<a:p${paragraphAttributes}>${nextChildren}</a:p>`;
   });
 }
@@ -756,7 +897,11 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
   let decorationCount = 0;
   const matchedTextStyleIds = new Set<string>();
   const normalizedTableIds = selected.flatMap((change) => change.kind === "table-style" ? change.tableIds ?? [] : []);
-  const selectedTableIds = new Set(normalizedTableIds);
+  const selectedTableIds = new Map<string, TableStyleVariant>();
+  for (const change of selected.filter((item) => item.kind === "table-style")) {
+    const variant: TableStyleVariant = change.profileId?.endsWith("dense-technical") ? "dense-technical" : "standard";
+    for (const tableId of change.tableIds ?? []) selectedTableIds.set(tableId, variant);
+  }
   const selectedAlignmentRepairs = selected.flatMap((change) => change.kind === "alignment" ? change.alignmentRepairs ?? [] : []);
   const selectedGeometryCommands = selected.flatMap((change) => change.kind === "geometry" ? change.geometryCommands ?? [] : []);
   const selectedLayoutCommands = selected.flatMap((change) => change.kind === "layout-remap" ? change.layoutCommands ?? [] : []);

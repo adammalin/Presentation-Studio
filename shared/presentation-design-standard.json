@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-12.4",
+  "version": "2026-08-12.6",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer. Improve every in-scope slide, not only fonts, while preserving approved technical content exactly.",
@@ -54,6 +54,84 @@
       "independent render QA and bounded repair"
     ],
     "approvalPolicy": "Do not ask the user to approve routine deterministic design choices. Pause only for an exception named in askOnlyWhen."
+  },
+  "componentSystem": {
+    "version": 1,
+    "principle": "Compose slides from shared ORNL page, typography, content-region, figure, table, and footer components. Do not redraw each slide as an unrelated one-off canvas.",
+    "page": {
+      "leftInches": 0.47,
+      "rightInches": 0.47,
+      "topInches": 0.29,
+      "bottomLogoSafeInches": 0.62,
+      "contentTopInches": 1.15,
+      "contentBottomInches": 6.72,
+      "gutterInches": 0.38
+    },
+    "title": {
+      "xInches": 0.47,
+      "yInches": 0.29,
+      "widthInches": 12.39,
+      "heightInches": 0.63,
+      "fontSizePt": 29.25,
+      "ruleXInches": 0.47,
+      "ruleYInches": 0.93,
+      "ruleWidthInches": 0.96,
+      "ruleHeightInches": 0.063
+    },
+    "patterns": {
+      "content": "One primary content region aligned to the page grid; avoid ornamental boxes unless they communicate grouping.",
+      "twoColumn": "Use one shared gutter and equal optical top edges; contain images without changing aspect ratio.",
+      "diagram": "Move nodes, labels, and connectors as a relationship-preserving system; never independently enlarge diagram labels until relationships break.",
+      "table": "Use the shared table component, keep the lower logo safe zone clear, and select standard or dense-technical typography from measured content density.",
+      "figureGrid": "Use consistent figure frames and caption spacing; contain source images without distortion.",
+      "references": "Use the shared body-list component with consistent bullet indentation, hanging indent, line spacing, and paragraph spacing."
+    },
+    "paragraph": {
+      "bodyLineSpacingMultiple": 1.08,
+      "bodySpaceAfterPt": 7,
+      "bulletLeftMarginInches": 0.36,
+      "bulletHangingInches": 0.22
+    },
+    "components": {
+      "titleBar": "One Aptos title frame and one ORNL Green rule at the exact shared title geometry.",
+      "bodyList": "One left-aligned content frame using shared paragraph spacing and bullet indentation; preserve exact wording.",
+      "twoColumn": "Two content regions with equal optical top edges and a 0.38-inch gutter; images use contain behavior unless an intentional crop is approved.",
+      "diagram": "One relationship-preserving group for nodes, connectors, and labels; edit the system rather than isolated shapes.",
+      "figureFrame": "One undistorted source visual with a consistent caption gap and no ornamental border unless it communicates grouping.",
+      "glossary": "A compact Aptos caption block below primary content with no decorative empty column.",
+      "tableStandard": "The standard editable ORNL table variant with a Hale Navy header, Aptos type, measured padding, alternating neutral rows, and minimal horizontal rules.",
+      "tableDenseTechnical": "The dense editable ORNL table variant using the same palette and structure with compact measured type and padding."
+    },
+    "layoutRecipes": {
+      "cover-preserve-native": {
+        "useWhen": "The source is an approved branded cover with an existing hero image and official marks.",
+        "regions": "Preserve the native hero and marks; align the support block as one unit and do not independently redraw logos."
+      },
+      "title-content": {
+        "useWhen": "One primary narrative or list is the slide's communication job.",
+        "regions": "titleBar plus one bodyList spanning the page content region."
+      },
+      "title-two-column": {
+        "useWhen": "Text and one figure, or two peer evidence groups, need balanced comparison.",
+        "regions": "titleBar plus twoColumn; use the same gutter and optical top edge on every slide."
+      },
+      "title-diagram": {
+        "useWhen": "A process, hierarchy, or relationship is the primary evidence.",
+        "regions": "titleBar plus one diagram group; keep all connectors bound and preserve native relationships."
+      },
+      "title-table": {
+        "useWhen": "A native table is the primary evidence.",
+        "regions": "titleBar plus one tableStandard or tableDenseTechnical component from x 0.40 to 12.94 inches and y 1.15 to no lower than 6.50 inches."
+      },
+      "title-figure-grid": {
+        "useWhen": "Two or more figures form the evidence.",
+        "regions": "titleBar plus a consistent figureFrame grid with shared caption baselines and contained aspect ratios."
+      },
+      "title-references": {
+        "useWhen": "The slide contains references or another long enumerated list.",
+        "regions": "titleBar plus one bodyList using the shared hanging-indent and paragraph rhythm."
+      }
+    }
   },
   "tableProfile": {
     "id": "ornl-native-table-minimal-rule",
@@ -110,6 +188,21 @@
       "notes",
       "caption and source relationships"
     ]
+  },
+  "tableVariants": {
+    "standard": {
+      "headerFontSizePt": 16,
+      "bodyFontSizePt": 16,
+      "horizontalPaddingPt": 6,
+      "verticalPaddingPt": 4
+    },
+    "denseTechnical": {
+      "headerFontSizePt": 10.5,
+      "bodyFontSizePt": 10,
+      "horizontalPaddingPt": 6,
+      "verticalPaddingPt": 4,
+      "useWhen": "A native technical table has more than 40 cells, a longest cell above 180 characters, or cannot fit the standard component without clipping. Preserve all cells and structure."
+    }
   },
   "preservationRules": [
     "Do not rewrite, summarize, correct, omit, or invent visible content, data, labels, citations, notes, or technical meaning unless the user explicitly authorizes content editing.",

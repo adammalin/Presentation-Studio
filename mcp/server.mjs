@@ -200,9 +200,22 @@ server.registerTool("stage_designer_cleanup", {
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("stage_designer_cleanup", input, (result) => `Staged a deck-wide designer proposal covering ${result.proposal.slideDispositions.length} slides. Nothing was applied, saved, or exported.`));
 
+server.registerTool("stage_table_design_update", {
+  title: "Stage shared ORNL table components",
+  description: "Apply one shared, versioned ORNL native-table component to 1–40 exact table IDs from get_slide_design_context. Use standard for ordinary tables and dense-technical for large technical tables that require smaller measured type and tighter padding. The component keeps exact cell text, order, merged structure, and editability while standardizing Aptos typography, header treatment, body fills, padding, and restrained rules across slides. Pass the exact IDs of submitted comments this change fully addresses in addressedThreadIds; those comments are removed from the clean canvas while unrelated comments remain active. This accumulates in the reversible proposal and never applies, saves, exports, or overwrites the source.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    tableIds: z.array(z.string().min(1).max(180)).min(1).max(40),
+    variant: z.enum(["standard", "dense-technical"]),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("stage_table_design_update", input, (result) => `Staged the shared ${result.variant} ORNL component for ${result.tableCount} native table${result.tableCount === 1 ? "" : "s"}. Compare Current and Proposal; nothing was applied, saved, exported, or overwritten.`));
+
 server.registerTool("stage_slide_geometry_update", {
   title: "Stage a measured slide-object edit",
-  description: "Stage a reversible move and/or resize for one stable editable object returned by get_slide_design_context. First inspect the Current render and object inventory, calculate exact geometry in inches, and explain the alignment or fit rationale. The object must remain on-slide; protected slides, unsupported grouped resizing, stale revisions, and ambiguous IDs are rejected. This opens Current/Proposal review and never rewrites text, applies, saves, exports, or overwrites the source.",
+  description: "Stage a reversible move and/or resize for one stable editable object returned by get_slide_design_context. First inspect the Current render and object inventory, calculate exact geometry in inches, and explain the alignment or fit rationale. Pass only the exact submitted comment IDs this edit fully addresses in addressedThreadIds; those comments disappear from the clean slide while unrelated feedback stays active. The object must remain on-slide; protected slides, unsupported grouped resizing, stale revisions, and ambiguous IDs are rejected. This opens Current/Proposal review and never rewrites text, applies, saves, exports, or overwrites the source.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -212,6 +225,7 @@ server.registerTool("stage_slide_geometry_update", {
     widthInches: z.number().min(0.1).max(20),
     heightInches: z.number().min(0.1).max(20),
     rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
     allowIntentionalOverlap: z.boolean().default(false),
     allowFitRisk: z.boolean().default(false),
     allowSafeArea: z.boolean().default(false),
@@ -222,11 +236,13 @@ server.registerTool("stage_slide_geometry_update", {
 
 server.registerTool("stage_slide_layout_update", {
   title: "Stage an atomic multi-object slide layout",
-  description: "Stage 1 to 20 measured object moves/resizes for one slide as one atomic design transaction. Read get_slide_design_context plus the Current render first, preserve exact text, use the stable object IDs, and calculate all final coordinates together. Presentation Studio rejects stale IDs, protected slides, off-slide geometry, unsafe picture distortion, worsened text fit, safe-margin regressions, and newly increased overlap unless the corresponding exception is explicitly authorized with a concrete rationale. The full layout appears in Current/Proposal review and remains unapplied, unsaved, and unexported.",
+  description: "Stage up to 20 measured object moves/resizes or explicitly reset prior one-off geometry commands back to their native source positions for one slide as one atomic design transaction. Read get_slide_design_context plus the Current render first, preserve exact text, use the stable object IDs, and calculate all final coordinates together. Pass only the exact submitted comment IDs this layout fully addresses in addressedThreadIds; those comments disappear from the clean slide while unrelated feedback stays active. Presentation Studio rejects stale IDs, protected slides, off-slide geometry, unsafe picture distortion, worsened text fit, safe-margin regressions, and newly increased overlap unless the corresponding exception is explicitly authorized with a concrete rationale. The full layout appears in Current/Proposal review and remains unapplied, unsaved, and unexported.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+    resetObjectIds: z.array(z.string().min(1).max(180)).max(20).default([]),
     commands: z.array(z.object({
       objectId: z.string().min(1).max(180),
       xInches: z.number().min(0).max(20),
@@ -238,19 +254,21 @@ server.registerTool("stage_slide_layout_update", {
       allowFitRisk: z.boolean().default(false),
       allowSafeArea: z.boolean().default(false),
       allowAspectRatioChange: z.boolean().default(false),
-    })).min(1).max(20),
+    })).max(20).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, (input) => call("stage_slide_layout_update", input, (result) => `Staged ${result.commands.length} validated object edits on slide ${result.slideNumber} as one proposal. Compare Current and Proposal; nothing was applied, saved, exported, or overwritten.`));
+}, (input) => call("stage_slide_layout_update", input, (result) => `Staged ${result.commands.length} validated object edits and ${result.resetObjectIds.length} source-geometry resets on slide ${result.slideNumber} as one proposal. Compare Current and Proposal; nothing was applied, saved, exported, or overwritten.`));
 
 server.registerTool("stage_slide_visual_design", {
   title: "Stage native ORNL visual polish",
-  description: "Stage editable PowerPoint-native text hierarchy plus restrained ORNL vector rules, panels, and frames for one slide. Use only source-bound text object IDs and non-text decorative shapes; this operation cannot add or rewrite claims. Inspect the authoritative Current render first, use the Presentation Design Standard and a fresh revision, keep all geometry on-slide, and prefer a few purposeful grouping cues over decoration. The commands accumulate with other pending slide edits in one exact-content proposal and remain unapplied, unsaved, and unexported until reviewed.",
+  description: "Stage editable PowerPoint-native text hierarchy plus restrained ORNL vector rules, panels, and frames for one slide. Use only source-bound text object IDs and non-text decorative shapes; this operation cannot add or rewrite claims. Inspect the authoritative Current render first, use the Presentation Design Standard and a fresh revision, keep all geometry on-slide, and prefer a few purposeful grouping cues over decoration. Pass only the exact submitted comment IDs this visual pass fully addresses in addressedThreadIds; those comments disappear from the clean slide while unrelated feedback stays active. The commands accumulate with other pending slide edits in one exact-content proposal and remain unapplied, unsaved, and unexported until reviewed.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
     clearPendingLayoutRemap: z.boolean().default(false),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+    removeDecorationIds: z.array(z.string().min(1).max(120)).max(30).default([]),
     textStyles: z.array(z.object({
       objectId: z.string().min(1).max(180),
       fontSizePt: z.number().min(10).max(60).optional(),
@@ -260,6 +278,12 @@ server.registerTool("stage_slide_visual_design", {
       alignment: z.enum(["left", "center", "right"]).optional(),
       verticalAlignment: z.enum(["top", "middle", "bottom"]).optional(),
       insetsInches: z.object({ top: z.number().min(0).max(.25), right: z.number().min(0).max(.25), bottom: z.number().min(0).max(.25), left: z.number().min(0).max(.25) }).optional(),
+      paragraphStyle: z.object({
+        lineSpacingMultiple: z.number().min(.8).max(1.6).optional(),
+        spaceAfterPt: z.number().min(0).max(30).optional(),
+        bulletLeftMarginInches: z.number().min(0).max(1).optional(),
+        bulletHangingInches: z.number().min(0).max(.5).optional(),
+      }).optional(),
       rationale: z.string().min(1).max(700),
     })).max(20).default([]),
     decorations: z.array(z.object({
@@ -277,11 +301,11 @@ server.registerTool("stage_slide_visual_design", {
     })).max(30).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, (input) => call("stage_slide_visual_design", input, (result) => `Staged ${result.textStyleCount} text hierarchy updates and ${result.decorationCount} native vector design elements on slide ${result.slideNumber}${result.clearedLayoutRemap ? ", replacing the failed pending layout remap" : ""}. Compare Current and Proposal; nothing was applied, saved, exported, or overwritten.`));
+}, (input) => call("stage_slide_visual_design", input, (result) => `Staged ${result.textStyleCount} text hierarchy updates, ${result.decorationCount} native vector design elements, and ${result.removedDecorationCount} decoration removals on slide ${result.slideNumber}${result.clearedLayoutRemap ? ", replacing the failed pending layout remap" : ""}. Compare Current and Proposal; nothing was applied, saved, exported, or overwritten.`));
 
 server.registerTool("stage_slide_native_layout", {
   title: "Stage a real approved PowerPoint layout",
-  description: "Stage one Designer Cleanup reflow to a real approved Template Pack layout. Presentation Studio first reuses an exact SHA-256-matching native layout already present in the deck; otherwise it clones the guarded master/layout/theme/media dependency graph. It remaps compatible placeholder identities and repoints only the named slide. Exact slide text, native objects, source package, and all other slide relationships remain protected. Requires a fresh design work order, compatible layout, active exact Template Pack revision, and reflow scope. The result is rendered through Microsoft PowerPoint for Current/Proposal review and must be rejected if it is visually worse; this tool never applies, saves, exports, or overwrites the source.",
+  description: "Stage one Designer Cleanup reflow to a real approved Template Pack layout. Presentation Studio first reuses an exact SHA-256-matching native layout already present in the deck; otherwise it clones the guarded master/layout/theme/media dependency graph. It remaps compatible placeholder identities and repoints only the named slide. Exact slide text, native objects, source package, and all other slide relationships remain protected. Pass only the exact submitted comment IDs this remap fully addresses in addressedThreadIds; those comments disappear from the clean slide while unrelated feedback stays active. Requires a fresh design work order, compatible layout, active exact Template Pack revision, and reflow scope. The result is rendered through Microsoft PowerPoint for Current/Proposal review and must be rejected if it is visually worse; this tool never applies, saves, exports, or overwrites the source.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -289,6 +313,7 @@ server.registerTool("stage_slide_native_layout", {
     slideNumber: z.number().int().min(1),
     layoutId: z.string().min(1).max(120),
     rationale: z.string().min(1).max(1_000),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
     allowPoorLayout: z.boolean().default(false),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -296,7 +321,7 @@ server.registerTool("stage_slide_native_layout", {
 
 server.registerTool("stage_slide_recomposition", {
   title: "Stage semantic recomposition into an approved layout",
-  description: "Atomically apply one real approved Template Pack layout and bind 1 to 20 compatible source-bound objects to its unique semantic slots. Presentation Studio reuses an exact SHA-256-matching native layout already in the deck or clones the guarded dependency graph, remaps compatible placeholders, computes native PowerPoint geometry, preserves exact content and unbound objects, rejects stale work orders, incompatible slots, crop-unsafe pictures, substantial unmeasured text-frame replacement, overlap, worsened text fit, and unsupported operations, then opens Current/Proposal review. Prefer align-horizontal for existing text frames: it adopts the approved layout's horizontal edges while preserving proven vertical fit. Use fill only for bounded text frames that do not substantially shrink or move vertically, and contain for pictures. Reject any visually weaker PowerPoint-native proposal.",
+  description: "Atomically apply one real approved Template Pack layout and bind 1 to 20 compatible source-bound objects to its unique semantic slots. Presentation Studio reuses an exact SHA-256-matching native layout already in the deck or clones the guarded dependency graph, remaps compatible placeholders, computes native PowerPoint geometry, preserves exact content and unbound objects, rejects stale work orders, incompatible slots, crop-unsafe pictures, substantial unmeasured text-frame replacement, overlap, worsened text fit, and unsupported operations, then opens Current/Proposal review. Pass only the exact submitted comment IDs this recomposition fully addresses in addressedThreadIds; those comments disappear from the clean slide while unrelated feedback stays active. Prefer align-horizontal for existing text frames: it adopts the approved layout's horizontal edges while preserving proven vertical fit. Use fill only for bounded text frames that do not substantially shrink or move vertically, and contain for pictures. Reject any visually weaker PowerPoint-native proposal.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -304,6 +329,7 @@ server.registerTool("stage_slide_recomposition", {
     slideNumber: z.number().int().min(1),
     layoutId: z.string().min(1).max(120),
     rationale: z.string().min(1).max(1_000),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
     allowPoorLayout: z.boolean().default(false),
     bindings: z.array(z.object({
       objectId: z.string().min(1).max(180),
