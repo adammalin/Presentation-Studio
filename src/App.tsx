@@ -6,6 +6,7 @@ import {
   ArrowsClockwise,
   CaretRight,
   ChatCircleDots,
+  Code,
   Check,
   CheckCircle,
   CirclesThreePlus,
@@ -45,6 +46,10 @@ import type {
   ResourceKind,
   SceneFidelityState,
   SlideEditableObject,
+  StudioLayoutRecipe,
+  StudioWebFrame,
+  StudioWebNode,
+  StudioWebScene,
   TemplateClassification,
 } from "./types";
 import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createNativeLayoutProposal, createNativeLayoutRecompositionProposal, createTableLayoutProposal, createTableStyleProposal, createVisualDesignProposal } from "./lib/cleanup";
@@ -83,13 +88,14 @@ import { nativeTextFrameOverflows, solveTextFit } from "./lib/text-fit-solver";
 import { decideVisualIteration } from "./lib/visual-iteration";
 import { sha256 } from "./lib/hash";
 import { cleanFileStem, projectSaveDefaultName } from "./lib/file-names";
+import { compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeometryRequests, studioVisualDesignRequest, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
 import {
   ONBOARDING_TOUR_STORAGE_KEY,
   ONBOARDING_TOUR_VERSION,
   shouldShowOnboardingTour,
 } from "./lib/onboarding";
 
-type ViewId = "batch" | "decks" | "slides" | "designs" | "rules" | "review" | "resources";
+type ViewId = "batch" | "decks" | "slides" | "studio" | "designs" | "rules" | "review" | "resources";
 type SlideWorkspaceRequest = { id: string; deckId: string; slideNumber: number; mode: "review" | "edit" | "comment"; representation: "current" | "proposal" };
 const MAX_PROJECT_PACKAGE_BYTES = 1_500_000_000;
 
@@ -101,6 +107,7 @@ const navItems: Array<{ id: ViewId; label: string; icon: Icon }> = [
   { id: "batch", label: "Batch", icon: Files },
   { id: "decks", label: "Deck audit", icon: PresentationChart },
   { id: "slides", label: "Slides", icon: Slideshow },
+  { id: "studio", label: "Studio", icon: Code },
   { id: "designs", label: "Designs", icon: SquaresFour },
   { id: "rules", label: "Rules", icon: ListChecks },
   { id: "review", label: "Review", icon: MagicWand },
@@ -573,6 +580,101 @@ function NativeTemplateLayoutCanvas({ catalog, layout, layoutNumber, nativeRende
       {slots.map((slot) => { const visualSlot = ["image", "table", "chart", "media", "content"].includes(slot.role); return <g key={slot.id} className={`semantic-slot slot-${slot.role}`}><rect x={slot.x} y={slot.y} width={slot.width} height={slot.height} />{(showLabels || visualSlot) && <text x={slot.x + slot.width / 2} y={slot.y + slot.height / 2} textAnchor="middle" dominantBaseline="middle">{slot.role}</text>}</g>; })}
     </svg>
   </span>;
+}
+
+function StudioTemplateBase({ catalog, layout }: { catalog: PreviewCanvasCatalog; layout: TemplateLayoutPreview }) {
+  const viewportWidth = 1200;
+  const scale = viewportWidth / catalog.slideWidth;
+  const viewportHeight = catalog.slideHeight * scale;
+  return <svg className="studio-template-base" viewBox={`0 0 ${viewportWidth} ${viewportHeight}`} preserveAspectRatio="none" aria-hidden="true">
+    <rect width={viewportWidth} height={viewportHeight} fill={layout.background} />
+    {layout.elements.filter((element) => !element.placeholderType).map((element) => <TemplatePreviewElementView key={element.id} element={element} catalog={catalog} scale={scale} />)}
+  </svg>;
+}
+
+function StudioNodeView({ node, scene, catalog, nativeSlideSource, selected, onPointerDown }: { node: StudioWebNode; scene: StudioWebScene; catalog?: SlideRenderCatalog; nativeSlideSource?: string; selected: boolean; onPointerDown?: (event: ReactPointerEvent<HTMLElement>, mode: "move" | "resize") => void }) {
+  if (!node.visible) return null;
+  const percent = (value: number, total: number) => `${value / total * 100}%`;
+  const style = {
+    left: percent(node.frame.x, scene.slideSize.width), top: percent(node.frame.y, scene.slideSize.height), width: percent(node.frame.width, scene.slideSize.width), height: percent(node.frame.height, scene.slideSize.height),
+    transform: node.frame.rotation ? `rotate(${node.frame.rotation}deg)` : undefined,
+    zIndex: node.zIndex + 10,
+    color: node.style.color,
+    background: node.style.background,
+    borderColor: node.style.borderColor,
+    borderWidth: `${node.style.borderWidthPt}px`,
+    fontFamily: previewFontStack(node.style.fontFamily),
+    fontSize: `${node.style.fontSizePt / 9.6}cqw`,
+    fontWeight: node.style.fontWeight,
+    lineHeight: node.style.lineHeight,
+    textAlign: node.style.textAlign,
+    padding: `${node.style.paddingPt.top / 72}in ${node.style.paddingPt.right / 72}in ${node.style.paddingPt.bottom / 72}in ${node.style.paddingPt.left / 72}in`,
+    alignItems: node.style.verticalAlign === "middle" ? "center" : node.style.verticalAlign === "bottom" ? "flex-end" : "flex-start",
+  } as const;
+  const media = node.mediaPart ? catalog?.media[node.mediaPart] : undefined;
+  const nativeCrop = nativeSlideSource && (["native-object", "connector", "shape"].includes(node.kind) || (node.kind === "image" && !media)) ? <svg className="studio-native-crop" viewBox={`${node.sourceFrame.x} ${node.sourceFrame.y} ${node.sourceFrame.width} ${node.sourceFrame.height}`} preserveAspectRatio="none" aria-label={`${node.name} from the PowerPoint-native source render`}><image href={nativeSlideSource} x="0" y="0" width={scene.slideSize.width} height={scene.slideSize.height} preserveAspectRatio="none" /></svg> : undefined;
+  const content = node.kind === "image" && media ? <img src={media} alt={node.name} style={{ objectFit: node.style.objectFit ?? "contain" }} />
+    : node.kind === "image" && nativeCrop ? nativeCrop
+    : node.kind === "table" && node.table ? <span className="studio-native-table" style={{ gridTemplateColumns: `repeat(${Math.max(1, node.table.columns)}, minmax(0, 1fr))` }}>{node.table.cells.map((cell) => <span key={cell.id} className={cell.row === 1 ? "header" : "body"} style={{ gridColumn: `${cell.column} / span ${cell.columnSpan}`, gridRow: `${cell.row} / span ${cell.rowSpan}`, background: cell.fill && /^#[0-9a-f]{6}$/i.test(cell.fill) ? cell.fill : undefined }}>{cell.text}</span>)}</span>
+      : node.kind === "text" ? <span className="studio-text-content">{node.text}</span>
+        : nativeCrop ?? <span className="studio-native-object-label">{node.name}</span>;
+  return <div role="button" tabIndex={0} className={`studio-node kind-${node.kind} role-${node.role} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""}`} style={style} onPointerDown={(event) => onPointerDown?.(event, "move")} aria-label={`${node.name}${node.locked ? ", locked" : ""}`}>{content}{selected && !node.locked && <span className="studio-resize-handle" onPointerDown={(event) => { event.stopPropagation(); onPointerDown?.(event, "resize"); }} />}</div>;
+}
+
+function StudioWebCanvas({ scene, slide, catalog, templateCatalog, nativeSlideSource, selectedNodeId, onSelectNode, onMoveNode }: { scene: StudioWebScene; slide: StudioWebScene["slides"][number]; catalog?: SlideRenderCatalog; templateCatalog?: TemplateCatalog; nativeSlideSource?: string; selectedNodeId?: string; onSelectNode: (nodeId: string) => void; onMoveNode: (nodeId: string, frame: StudioWebFrame) => void }) {
+  const canvas = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ nodeId: string; mode: "move" | "resize"; startX: number; startY: number; frame: StudioWebFrame } | undefined>(undefined);
+  const layout = slide.targetLayoutId ? templateCatalog?.layouts.find((item) => item.id === slide.targetLayoutId) : undefined;
+  function begin(event: ReactPointerEvent<HTMLElement>, node: StudioWebNode, mode: "move" | "resize") {
+    event.stopPropagation();
+    onSelectNode(node.id);
+    if (node.locked || !canvas.current) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { nodeId: node.id, mode, startX: event.clientX, startY: event.clientY, frame: { ...node.frame } };
+  }
+  function move(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!drag.current || !canvas.current || event.buttons === 0) return;
+    const bounds = canvas.current.getBoundingClientRect();
+    const deltaX = (event.clientX - drag.current.startX) / bounds.width * scene.slideSize.width;
+    const deltaY = (event.clientY - drag.current.startY) / bounds.height * scene.slideSize.height;
+    const next = drag.current.mode === "resize"
+      ? { ...drag.current.frame, width: drag.current.frame.width + deltaX, height: drag.current.frame.height + deltaY }
+      : { ...drag.current.frame, x: drag.current.frame.x + deltaX, y: drag.current.frame.y + deltaY };
+    onMoveNode(drag.current.nodeId, next);
+  }
+  return <div ref={canvas} className="studio-web-canvas" style={{ aspectRatio: `${scene.slideSize.width} / ${scene.slideSize.height}`, background: slide.background }} onPointerMove={move} onPointerUp={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }} onClick={() => onSelectNode("")}>
+    {layout && templateCatalog && <StudioTemplateBase catalog={templateCatalog} layout={layout} />}
+    {slide.recipe !== "source" && slide.recipe !== "template-layout" && <span className="studio-title-rule" />}
+    {slide.nodes.map((node) => <StudioNodeView key={node.id} node={node} scene={scene} catalog={catalog} nativeSlideSource={nativeSlideSource} selected={node.id === selectedNodeId} onPointerDown={(event, mode) => begin(event, node, mode)} />)}
+  </div>;
+}
+
+function StudioView({ deck, catalog, nativeRender, templateCatalog, onInitialize, onRecompose, onMoveNode, onStyleNode, onStage }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; templateCatalog?: TemplateCatalog; onInitialize: () => void; onRecompose: (slideNumber: number, recipe: StudioLayoutRecipe, layoutId?: string) => void; onMoveNode: (slideNumber: number, nodeId: string, frame: StudioWebFrame) => void; onStyleNode: (slideNumber: number, nodeId: string, patch: Partial<Pick<StudioWebNode["style"], "fontSizePt" | "fontWeight" | "color" | "textAlign" | "verticalAlign" | "objectFit">>) => void; onStage: (slideNumber: number) => void }) {
+  const [selectedNumber, setSelectedNumber] = useState(1);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const scene = deck?.studioScene;
+  useEffect(() => { setSelectedNumber(1); setSelectedNodeId(undefined); }, [deck?.id]);
+  if (!deck?.audit) return <NoSelection message="Select an audited deck before entering Studio redesign mode." />;
+  if (!scene) return <div className="view-stack studio-empty"><header className="view-header compact"><div><p className="eyebrow">HTML-first presentation design</p><h1>Build a Studio Web Scene</h1><p>Extract exact source content into a semantic 16:9 web canvas. The original PowerPoint remains immutable.</p></div></header><section className="designs-empty"><span className="designs-empty-icon"><Code size={34} /></span><h2>Turn this deck into an editable web design system</h2><p>Studio will preserve source bindings while giving the AI and the user one component-based canvas for layout, hierarchy, tables, imagery, and ORNL templates.</p><button className="button primary large" onClick={onInitialize}><Sparkle size={18} />Create Studio scene</button></section></div>;
+  const slide = scene.slides.find((item) => item.slideNumber === selectedNumber) ?? scene.slides[0];
+  const selectedNode = slide?.nodes.find((node) => node.id === selectedNodeId);
+  const nativeSlide = nativeRender?.status === "ready" ? nativeRender.slides.find((item) => item.number === slide?.slideNumber) : undefined;
+  const nativeSlideSource = nativeSlide ? `data:${nativeSlide.mimeType};base64,${bytesToBase64(bytesFrom(nativeSlide.bytes))}` : undefined;
+  const catalogSlide = catalog?.slides.find((item) => item.number === slide?.slideNumber);
+  const designedCount = scene.slides.filter((item) => item.status === "designed").length;
+  const recommended = slide ? (slide.nodes.some((node) => node.kind === "table") ? "ornl-title-table" : slide.nodes.filter((node) => node.kind === "image").length >= 2 ? "ornl-title-figure-grid" : slide.nodes.some((node) => node.kind === "image") ? "ornl-title-two-column" : "ornl-title-content") as StudioLayoutRecipe : "ornl-title-content";
+  return <div className="view-stack studio-view">
+    <header className="view-header compact"><div><p className="eyebrow">Studio Web Scene · HTML/CSS design authority</p><h1>{deck.name}</h1><p>The user and AI edit the same semantic web canvas; export compiles supported nodes back to editable PowerPoint objects.</p></div><div className="header-actions"><span className="standard-version">{designedCount}/{scene.slides.length} designed</span><button className="button primary small" disabled={!slide || slide.status !== "designed"} onClick={() => onStage(slide.slideNumber)}><MagicWand size={16} />Stage to PowerPoint</button></div></header>
+    <section className="studio-shell">
+      <aside className="studio-slide-rail"><span className="field-label">Slides</span>{scene.slides.map((item) => <button key={item.id} className={item.slideNumber === slide?.slideNumber ? "selected" : ""} onClick={() => { setSelectedNumber(item.slideNumber); setSelectedNodeId(undefined); }}><span>{item.slideNumber}</span><small>{item.status === "designed" ? item.recipe.replace("ornl-", "") : "source"}</small></button>)}</aside>
+      <section className="studio-stage">
+        <div className="studio-toolbar"><label>Recipe<select value={slide?.recipe ?? "source"} onChange={(event) => onRecompose(slide.slideNumber, event.target.value as StudioLayoutRecipe, slide.targetLayoutId)}><option value="source">Source geometry</option><option value="ornl-title-content">ORNL title + content</option><option value="ornl-title-two-column">ORNL two column</option><option value="ornl-title-table">ORNL table</option><option value="ornl-title-figure-grid">ORNL figure grid</option><option value="template-layout">Installed template layout</option></select></label>{slide?.recipe === "template-layout" && <label>Template layout<select value={slide.targetLayoutId ?? ""} onChange={(event) => onRecompose(slide.slideNumber, "template-layout", event.target.value)}><option value="">Choose layout…</option>{templateCatalog?.layouts.map((layout) => <option key={layout.id} value={layout.id}>{layout.name}</option>)}</select></label>}<button className="button secondary small" onClick={() => onRecompose(slide.slideNumber, recommended)}><Sparkle size={15} />Use recommended</button><span className="studio-mode-chip">Web canvas</span></div>
+        <StudioWebCanvas scene={scene} slide={slide} catalog={catalog} templateCatalog={templateCatalog} nativeSlideSource={nativeSlideSource} selectedNodeId={selectedNodeId} onSelectNode={(value) => setSelectedNodeId(value || undefined)} onMoveNode={(nodeId, next) => onMoveNode(slide.slideNumber, nodeId, next)} />
+        <div className="studio-canvas-caption"><span><strong>{slide.recipe.replaceAll("-", " ")}</strong> · {slide.nodes.filter((node) => node.visible).length} semantic nodes · exact source copy locked</span><span>Drag elements; use the lower-right handle to resize.</span></div>
+      </section>
+      <aside className="studio-inspector"><span className="field-label">Design inspector</span>{selectedNode ? <><strong>{selectedNode.name}</strong><small>{selectedNode.kind} · {selectedNode.role} · {selectedNode.locked ? "locked native" : "editable"}</small><div className="studio-inspector-grid">{(["x", "y", "width", "height"] as const).map((field) => <label key={`${selectedNode.id}-${field}`}><span>{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()}</span><input type="number" min={field === "width" || field === "height" ? .1 : 0} max={20} step={.01} defaultValue={(selectedNode.frame[field] / 914400).toFixed(2)} disabled={selectedNode.locked} onBlur={(event) => { const value = Number(event.currentTarget.value); if (Number.isFinite(value)) onMoveNode(slide.slideNumber, selectedNode.id, { ...selectedNode.frame, [field]: value * 914400 }); }} /><small>in</small></label>)}</div>{selectedNode.kind === "text" && <div className="studio-type-controls"><label><span>Size</span><input type="number" min={10} max={60} step={.25} defaultValue={selectedNode.style.fontSizePt} disabled={selectedNode.locked} onBlur={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { fontSizePt: Number(event.currentTarget.value) })} /><small>pt</small></label><label><span>Weight</span><select value={selectedNode.style.fontWeight} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { fontWeight: Number(event.currentTarget.value) as 400 | 600 | 700 })}><option value="400">Regular</option><option value="600">Semibold</option><option value="700">Bold</option></select></label><label><span>Align</span><select value={selectedNode.style.textAlign} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { textAlign: event.currentTarget.value as "left" | "center" | "right" })}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><label><span>Color</span><input type="color" value={selectedNode.style.color} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { color: event.currentTarget.value })} /></label></div>}{selectedNode.exactContent && <div className="inline-note"><ShieldCheck size={15} />Content remains bound to its source hash.</div>}</> : <><p>Select an element to inspect its semantic role, CSS-computed frame, and PowerPoint binding.</p><div className="inline-note"><Info size={15} />This is the new design authority. Native PowerPoint pixels remain the final export authority.</div></>}<div className="studio-source-reference"><span className="field-label">PowerPoint source reference</span><span className="studio-source-thumb">{catalogSlide ? <SlideDesignCanvas nativeRender={nativeRender} slideNumber={slide.slideNumber} catalog={catalog} layout={catalogSlide} label={`PowerPoint source slide ${slide.slideNumber}`} /> : <span className="proposal-preview-wait">Preparing…</span>}</span><small>{nativeSlideSource ? "PowerPoint-native · read only" : "Structural fallback · read only"}</small></div></aside>
+    </section>
+  </div>;
 }
 
 type DesignFilter = "all" | TemplateLayoutPreview["category"];
@@ -1281,6 +1383,32 @@ export default function App() {
           instruction: "Use only operations declared true for each object. Preserved or conversion-required internals must remain intact; native PowerPoint pixels remain authoritative for appearance.",
         };
       }
+      if (request.operation === "get_studio_web_scene") {
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current PowerPoint audit and preservation scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
+        const catalog = await getOrBuildSlideCatalog(deck, current);
+        const scene = deck.studioScene ?? compileStudioWebScene(deck, catalog);
+        const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
+        if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+        return {
+          updatedAt: current.project.updatedAt,
+          deck: { id: deck.id, name: deck.name, targetTemplateId: deck.targetTemplateId },
+          scene: { schema: scene.schema, version: scene.version, revision: scene.revision, slideSize: scene.slideSize, designSystem: scene.designSystem, persisted: Boolean(deck.studioScene) },
+          slide: {
+            id: slide.id, slideNumber: slide.slideNumber, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, status: slide.status, designRationale: slide.designRationale, sourceTextHash: slide.sourceTextHash,
+            recommendedRecipe: recommendedStudioRecipe(slide),
+            nodes: slide.nodes.map((node) => ({
+              id: node.id, sourceObjectId: node.sourceObjectId, name: node.name, kind: node.kind, role: node.role, visible: node.visible, locked: node.locked, exactContent: node.exactContent, text: node.text, textHash: node.textHash, tableId: node.tableId, table: node.table,
+              sourceFrameInches: { x: node.sourceFrame.x / 914_400, y: node.sourceFrame.y / 914_400, width: node.sourceFrame.width / 914_400, height: node.sourceFrame.height / 914_400, rotation: node.sourceFrame.rotation },
+              frameInches: { x: node.frame.x / 914_400, y: node.frame.y / 914_400, width: node.frame.width / 914_400, height: node.frame.height / 914_400, rotation: node.frame.rotation },
+              style: node.style,
+            })),
+          },
+          instruction: "Design in this semantic HTML/CSS scene, not by preserving weak source coordinates. Choose one shared ORNL recipe or installed template layout, then use stage_studio_web_design. Exact copy and table cells are locked; PowerPoint-native Current/Proposal renders remain the visual acceptance authority.",
+        };
+      }
       if (request.operation === "list_resources") {
         const allowed = current.resources.filter((resource) => resource.mcpAccess !== "none");
         return {
@@ -1527,6 +1655,70 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === thread.deckId);
         const slide = deck?.audit?.slides.find((item) => item.id === thread.slideId || item.number === thread.slideNumber);
         return { updatedAt: current.project.updatedAt, thread, deck: deck ? { id: deck.id, name: deck.name, targetTemplateId: deck.targetTemplateId } : null, slide: slide ? { id: slide.id, number: slide.number, title: slide.title, textHash: slide.textHash, objects: { tables: slide.tableCount, pictures: slide.pictureCount, charts: slide.chartCount } } : null, instruction: "Read the current revision and get_slide_render before staging a bounded fix. Do not guess if the anchor no longer maps unambiguously." };
+      }
+      if (request.operation === "stage_studio_web_design") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read get_studio_web_scene again before staging a Studio design.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current PowerPoint audit and preservation scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
+        const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-table", "ornl-title-figure-grid", "template-layout"];
+        const recipe = String(request.input.recipe ?? "") as StudioLayoutRecipe;
+        if (!allowedRecipes.includes(recipe)) throw new Error("Choose a supported Studio web recipe.");
+        const layoutId = typeof request.input.layoutId === "string" ? request.input.layoutId : undefined;
+        const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
+        if (recipe === "template-layout" && !layout) throw new Error("Choose an installed Template Pack layout ID before staging template-layout.");
+        const catalog = await getOrBuildSlideCatalog(deck, current);
+        const baseScene = deck.studioScene ?? compileStudioWebScene(deck, catalog);
+        let studioScene = recomposeStudioWebSlide(baseScene, slideNumber, recipe, layout, String(request.input.rationale ?? "Recompose the exact source content as a coherent ORNL-branded slide using the shared Studio Web Scene design system."));
+        const nodeFrames = Array.isArray(request.input.nodeFrames) ? request.input.nodeFrames : [];
+        for (const raw of nodeFrames) {
+          const nodeId = String(raw?.nodeId ?? "");
+          const values = [raw?.xInches, raw?.yInches, raw?.widthInches, raw?.heightInches].map(Number);
+          if (!nodeId || values.some((value) => !Number.isFinite(value))) throw new Error("Every Studio node-frame override requires a valid nodeId and finite x, y, width, and height in inches.");
+          studioScene = updateStudioWebNodeFrame(studioScene, slideNumber, nodeId, {
+            x: values[0] * 914_400,
+            y: values[1] * 914_400,
+            width: values[2] * 914_400,
+            height: values[3] * 914_400,
+            rotation: Number.isFinite(Number(raw?.rotation)) ? Number(raw.rotation) : 0,
+          });
+        }
+        const nodeStyles = Array.isArray(request.input.nodeStyles) ? request.input.nodeStyles : [];
+        for (const raw of nodeStyles) {
+          const nodeId = String(raw?.nodeId ?? "");
+          if (!nodeId) throw new Error("Every Studio node-style override requires a valid nodeId.");
+          const patch: Partial<Pick<StudioWebNode["style"], "fontSizePt" | "fontWeight" | "color" | "textAlign" | "verticalAlign" | "objectFit">> = {};
+          if (raw?.fontSizePt !== undefined) patch.fontSizePt = Number(raw.fontSizePt);
+          if (raw?.fontWeight !== undefined) patch.fontWeight = Number(raw.fontWeight) as 400 | 600 | 700;
+          if (raw?.color !== undefined) patch.color = String(raw.color);
+          if (raw?.textAlign !== undefined) patch.textAlign = String(raw.textAlign) as "left" | "center" | "right";
+          if (raw?.verticalAlign !== undefined) patch.verticalAlign = String(raw.verticalAlign) as "top" | "middle" | "bottom";
+          if (raw?.objectFit !== undefined) patch.objectFit = String(raw.objectFit) as "contain" | "cover";
+          studioScene = updateStudioWebNodeStyle(studioScene, slideNumber, nodeId, patch);
+        }
+        const adoptedDeck: DeckJob = { ...deck, operationScope: "reflow", studioScene };
+        const compiled = await compileStudioProposal(adoptedDeck, studioScene, slideNumber, current.project.updatedAt, "ai");
+        const proposal = compiled.proposal;
+        const next = touchProject({
+          ...current,
+          designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)),
+          decks: current.decks.map((item) => item.id === deck.id ? { ...adoptedDeck, proposal, status: "proposal-ready" as const } : item),
+        }, "mcp-studio-web-design-staged", `AI recomposed slide ${slideNumber} of ${deck.name} with the shared ${recipe} Studio web recipe and compiled ${compiled.geometryCount} source-bound geometry edits to editable PowerPoint; source bytes remain unchanged.`);
+        proposal.baseUpdatedAt = next.project.updatedAt;
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setActiveView("review");
+        return {
+          projectUpdatedAt: next.project.updatedAt,
+          studioSceneRevision: studioScene.revision,
+          slide: { number: slideNumber, recipe, layoutId: layout?.id, layoutName: layout?.name, nodeFrameOverrideCount: nodeFrames.length, nodeStyleOverrideCount: nodeStyles.length },
+          proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, geometryCount: compiled.geometryCount },
+          applied: false,
+          saved: false,
+          instruction: "Presentation Studio is showing the staged design in Review. Inspect the authoritative PowerPoint-native Current/Proposal comparison, then revise, reject, or leave it for human acceptance. The source file was not changed.",
+        };
       }
       if (request.operation === "stage_font_cleanup") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the deck list again before staging a proposal.");
@@ -2346,6 +2538,112 @@ export default function App() {
     }
   }
 
+  async function initializeStudioScene() {
+    if (!selectedDeck?.audit || !selectedDeck.scene) return;
+    clearMessages();
+    setBusy("Extracting the PowerPoint into a semantic Studio Web Scene…");
+    try {
+      const current = projectRef.current;
+      const deck = current.decks.find((item) => item.id === selectedDeck.id);
+      if (!deck?.audit || !deck.scene) throw new Error("Audit the selected deck before creating its Studio Web Scene.");
+      const catalog = await getOrBuildSlideCatalog(deck, current);
+      const studioScene = compileStudioWebScene(deck, catalog);
+      const now = new Date().toISOString();
+      const adopted = { ...deck, operationScope: "reflow" as const, targetTemplateId: deck.targetTemplateId ?? PRESENTATION_DESIGN_STANDARD.defaults.template.id, targetTemplateConfirmedAt: deck.targetTemplateConfirmedAt ?? now, targetTemplateDecisionSource: deck.targetTemplateDecisionSource ?? "automatic-default" as const, designProfile: deck.designProfile ?? createOrnlDesignProfile("automatic-default", now), studioScene, proposal: undefined, status: "ready-for-cleanup" as const };
+      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? adopted : item) }, "studio-web-scene-created", `Extracted ${studioScene.slides.length} slides into the constrained HTML/CSS Studio design system; source PowerPoint bytes remain unchanged.`);
+      projectRef.current = next;
+      setProject(next);
+      setNotice(`Studio Web Scene created for ${studioScene.slides.length} slides. Choose a shared ORNL recipe or installed template layout, then design on the canvas.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Studio Web Scene could not be created.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  function recomposeStudioSlide(slideNumber: number, recipe: StudioLayoutRecipe, layoutId?: string) {
+    if (!selectedDeck?.studioScene) return;
+    clearMessages();
+    try {
+      const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
+      const studioScene = recomposeStudioWebSlide(selectedDeck.studioScene, slideNumber, recipe, layout, `Recompose slide ${slideNumber} with the shared ${recipe} web layout while retaining exact source content and editable PowerPoint bindings.`);
+      setProject((current) => touchProject({ ...current, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, operationScope: "reflow", studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }, "studio-slide-recomposed", `Recomposed slide ${slideNumber} with ${recipe} in the Studio Web Scene; no PowerPoint file was changed.`));
+      setNotice(`Slide ${slideNumber} now uses the ${recipe.replaceAll("-", " ")} web composition. Drag elements to refine it or stage it for PowerPoint review.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The slide could not be recomposed.");
+    }
+  }
+
+  async function compileStudioProposal(deck: DeckJob, studioScene: StudioWebScene, slideNumber: number, updatedAt: string, author: "human" | "ai") {
+    const geometry = studioGeometryRequests(deck, studioScene, slideNumber, author);
+    const studioSlide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
+    if (!studioSlide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+    let baseProposal: CleanupProposal;
+    if (studioSlide.recipe === "template-layout") {
+      if (!templateCatalog || !templateSourceBytes || !studioSlide.targetLayoutId) throw new Error("The installed Template Pack is required to compile this web layout to its real PowerPoint master and custom layout.");
+      const layout = templateCatalog.layouts.find((item) => item.id === studioSlide.targetLayoutId);
+      if (!layout) throw new Error("The Studio slide references a template layout that is no longer installed.");
+      const command = {
+        id: `studio-native-layout-slide-${slideNumber}`,
+        slideNumber,
+        templateSha256: templateCatalog.sha256,
+        templateLayoutPart: layout.sourcePart,
+        templateLayoutSha256: await templateLayoutPartSha256(templateSourceBytes, layout.sourcePart),
+        templateLayoutName: layout.name,
+        rationale: `${studioSlide.designRationale} Compile the same installed template layout used by the Studio web canvas into PowerPoint.`.slice(0, 1_000),
+        author,
+      } as const;
+      baseProposal = createNativeLayoutRecompositionProposal({ ...deck, operationScope: "reflow" }, updatedAt, command, geometry);
+    } else {
+      baseProposal = createGeometryBatchProposal({ ...deck, operationScope: "reflow" }, updatedAt, geometry);
+    }
+    const proposal = createVisualDesignProposal({ ...deck, proposal: baseProposal, operationScope: "reflow" }, updatedAt, studioVisualDesignRequest(studioScene, slideNumber, author));
+    return { proposal, geometryCount: geometry.length };
+  }
+
+  function moveStudioNode(slideNumber: number, nodeId: string, nextFrame: StudioWebFrame) {
+    if (!selectedDeck?.studioScene) return;
+    try {
+      const studioScene = updateStudioWebNodeFrame(selectedDeck.studioScene, slideNumber, nodeId, nextFrame);
+      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Studio element could not be moved.");
+    }
+  }
+
+  function styleStudioNode(slideNumber: number, nodeId: string, patch: Partial<Pick<StudioWebNode["style"], "fontSizePt" | "fontWeight" | "color" | "textAlign" | "verticalAlign" | "objectFit">>) {
+    if (!selectedDeck?.studioScene) return;
+    try {
+      const studioScene = updateStudioWebNodeStyle(selectedDeck.studioScene, slideNumber, nodeId, patch);
+      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Studio element style could not be updated.");
+    }
+  }
+
+  async function stageStudioSlide(slideNumber: number) {
+    if (!selectedDeck?.studioScene) return;
+    clearMessages();
+    setBusy(`Compiling Studio slide ${slideNumber} to editable PowerPoint…`);
+    try {
+      const current = projectRef.current;
+      const deck = current.decks.find((item) => item.id === selectedDeck.id);
+      if (!deck?.studioScene) throw new Error("Create or reopen the Studio Web Scene before compiling a slide to PowerPoint.");
+      const compiled = await compileStudioProposal(deck, deck.studioScene, slideNumber, current.project.updatedAt, "human");
+      const proposal = compiled.proposal;
+      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" } : item) }, "studio-slide-compiled", `Compiled slide ${slideNumber}'s semantic HTML/CSS scene into ${compiled.geometryCount} editable PowerPoint geometry bindings plus shared ORNL typography and components.`);
+      proposal.baseUpdatedAt = next.project.updatedAt;
+      projectRef.current = next;
+      setProject(next);
+      setActiveView("review");
+      setNotice(`Slide ${slideNumber} was compiled from the web scene into an editable PowerPoint proposal. Compare the PowerPoint-native Current and Proposal renders before accepting it.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Studio slide could not be compiled to PowerPoint.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   function stageCleanup() {
     if (!selectedDeck) return;
     clearMessages();
@@ -2560,6 +2858,7 @@ export default function App() {
     if (activeView === "batch") return <BatchView project={project} selectedId={selectedDeck?.id} onSelect={(id) => { setSelectedDeckId(id); setActiveView("decks"); }} onAdd={() => void addDecks()} />;
     if (activeView === "decks") return <DeckAuditView deck={selectedDeck} onConfirm={confirmTemplate} onStage={stageCleanup} onStartOrnlCleanup={startOrnlCleanup} onMarkExemplar={markTableExemplar} onExportReport={() => void exportAuditReport()} isExemplar={Boolean(selectedDeck && project.styleExemplars.some((item) => item.deckId === selectedDeck.id && item.kind === "table"))} />;
     if (activeView === "slides") { const proposalWorkspace = selectedDeck?.proposal?.status === "applied" || (slideWorkspaceRequest?.deckId === selectedDeck?.id && slideWorkspaceRequest.representation === "proposal"); return <SlidesView deck={selectedDeck} catalog={selectedDeck ? proposalWorkspace ? proposalCatalogs[selectedDeck.id] : slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? proposalWorkspace ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} loading={Boolean(selectedDeck && (proposalWorkspace ? proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal` : slideCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:current`))} revision={project.project.updatedAt} threads={project.designThreads} openRequest={slideWorkspaceRequest} onSaveThread={saveDesignThread} onDeleteThread={deleteDesignThread} onStageGeometry={stageGeometryEdit} />; }
+    if (activeView === "studio") return <StudioView deck={selectedDeck} catalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} templateCatalog={templateCatalog} onInitialize={() => void initializeStudioScene()} onRecompose={recomposeStudioSlide} onMoveNode={moveStudioNode} onStyleNode={styleStudioNode} onStage={stageStudioSlide} />;
     if (activeView === "designs") return <DesignsView catalog={templateCatalog} installedAt={templateInstalledAt} loading={templateLoading} nativeRender={templateNativeRender} nativeLoading={templateNativeLoading} onInstall={() => void installTemplate()} />;
     if (activeView === "rules") return <RulesView deck={selectedDeck} exemplarCount={project.styleExemplars.filter((item) => item.kind === "table").length} />;
     if (activeView === "review") return <ReviewView deck={selectedDeck} projectUpdatedAt={project.project.updatedAt} currentCatalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} proposalCatalog={selectedDeck ? proposalCatalogs[selectedDeck.id] : undefined} currentNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} proposalNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : undefined} previewLoading={Boolean(selectedDeck && (proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal`))} threads={project.designThreads} onToggle={toggleChange} onReviewSlide={reviewSlide} onRequestChanges={requestSlideChanges} onDeleteThread={deleteDesignThread} onOpenSlide={openSlideWorkspace} onReject={rejectProposal} onApply={acceptProposal} onExport={() => void exportCleaned()} />;

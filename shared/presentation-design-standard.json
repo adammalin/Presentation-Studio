@@ -1,12 +1,12 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-13.11",
+  "version": "2026-08-13.12-web-scene",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
-  "mission": "Act as a presentation graphic designer. Improve every in-scope slide, not only fonts, while preserving approved technical content exactly.",
+  "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
   "defaultMode": {
     "name": "designer-cleanup",
-    "behavior": "Adopt the resolved project profile once, then review and improve the full deck without asking for routine per-slide approvals.",
+    "behavior": "Adopt the resolved project profile once, inspect the PowerPoint-native source, import exact content into the canonical Studio Web Scene, choose a shared ORNL recipe or approved Template Pack layout, compose visibly, compile to editable PowerPoint, and iterate without asking for routine per-slide approvals.",
     "definitionOfDone": "Every slide has been visually reviewed in an independent export render and has no known clipping, overflow, accidental overlap, off-slide content, unreadable text, or unbalanced placement."
   },
   "defaults": {
@@ -95,8 +95,41 @@
     "nativeRevisionLoop": "Inspect, diagnose, solve, materialize, render in PowerPoint, remeasure, compare metrics, critique pixels, revise, and reject any regression with a bounded iteration count.",
     "exportAcceptance": "Before a PPTX can be saved as a completed review copy, independently rerender and remeasure the exact export bytes, verify visible-copy and table-structure hashes, compare every staged/export raster hash, and reject any native-geometry mismatch."
   },
+  "studioWebDesign": {
+    "version": 1,
+    "principle": "Use the constrained semantic HTML/CSS Studio Web Scene as the shared design authority for AI and human composition. Use the imported PPTX as the preservation envelope, and use Microsoft PowerPoint-native rendering and measurement as final appearance authority.",
+    "authority": {
+      "content": "Exact source-bound text, table cells, data, media, notes, and technical meaning from the imported PowerPoint.",
+      "composition": "The persisted Studio Web Scene: semantic roles, component recipe, template-layout binding, computed frames, hierarchy, type tokens, image-fit behavior, and intentional visual relationships.",
+      "appearance": "The independently rendered and remeasured PowerPoint proposal and final export. Browser similarity alone is not acceptance."
+    },
+    "requiredLoop": [
+      "Inspect the PowerPoint-native Current render and exact source-bound content.",
+      "Read or create the Studio Web Scene and diagnose the slide's communication job.",
+      "Choose one shared ORNL web recipe or one compatible approved Template Pack layout.",
+      "Recompose the whole semantic slide; do not preserve weak source coordinates by default.",
+      "Use bounded node frame and style refinements only after the composition choice.",
+      "Compile supported web nodes back to editable source-bound PowerPoint objects.",
+      "Inspect the PowerPoint-native Current and Proposal renders, remeasure, and revise or reject regressions.",
+      "Leave the proposal for human acceptance; never silently apply or export it."
+    ],
+    "antiPatterns": [
+      "Changing only type size or font family when the layout remains weak.",
+      "Treating every imported coordinate as intentional design.",
+      "Drawing every slide as an unrelated one-off canvas instead of shared components.",
+      "Using arbitrary CSS effects that cannot compile to editable PowerPoint.",
+      "Judging final quality from the browser canvas without PowerPoint-native comparison."
+    ],
+    "supportedRecipes": [
+      "ornl-title-content",
+      "ornl-title-two-column",
+      "ornl-title-table",
+      "ornl-title-figure-grid",
+      "template-layout"
+    ]
+  },
   "componentSystem": {
-    "version": 2,
+    "version": 3,
     "principle": "Compose slides from shared ORNL page, typography, content-region, figure, table, and footer components. Do not redraw each slide as an unrelated one-off canvas.",
     "page": {
       "leftInches": 0.47,

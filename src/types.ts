@@ -281,6 +281,8 @@ export const PRESENTATION_SCENE_SCHEMA = "presentation-studio/scene" as const;
 export const PRESENTATION_SCENE_VERSION = 3 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
+export const STUDIO_WEB_SCENE_SCHEMA = "presentation-studio/web-scene" as const;
+export const STUDIO_WEB_SCENE_VERSION = 1 as const;
 
 export type SceneFidelityState = "editable-native" | "preserved-native" | "conversion-required" | "unsupported-blocking";
 export type SceneSemanticRole = "title" | "body" | "caption" | "label" | "image" | "table" | "chart" | "connector" | "group" | "decoration" | "other";
@@ -434,6 +436,97 @@ export interface PresentationScene {
   tables?: PresentationSceneTable[];
   fidelityCounts: SceneFidelityCounts;
   preservationEnvelope: PowerPointPreservationEnvelope;
+}
+
+export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-table" | "ornl-title-figure-grid" | "template-layout";
+export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
+
+export interface StudioWebFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
+
+export interface StudioWebNode {
+  id: string;
+  sourceObjectId: string;
+  sourceShapeId: string;
+  name: string;
+  kind: StudioWebNodeKind;
+  role: SceneSemanticRole;
+  sourceFrame: StudioWebFrame;
+  frame: StudioWebFrame;
+  zIndex: number;
+  visible: boolean;
+  locked: boolean;
+  exactContent: boolean;
+  text?: string;
+  textHash?: string;
+  tableId?: string;
+  table?: {
+    rows: number;
+    columns: number;
+    cells: Array<{
+      id: string;
+      row: number;
+      column: number;
+      rowSpan: number;
+      columnSpan: number;
+      text: string;
+      fill?: string;
+      semanticColorRole?: string;
+    }>;
+  };
+  mediaPart?: string;
+  style: {
+    fontFamily: "Aptos";
+    fontSizePt: number;
+    fontWeight: 400 | 600 | 700;
+    lineHeight: number;
+    color: string;
+    background?: string;
+    borderColor?: string;
+    borderWidthPt: number;
+    textAlign: "left" | "center" | "right";
+    verticalAlign: "top" | "middle" | "bottom";
+    paddingPt: { top: number; right: number; bottom: number; left: number };
+    objectFit?: "contain" | "cover";
+  };
+}
+
+export interface StudioWebSlide {
+  id: string;
+  slideNumber: number;
+  sourceSlideId: string;
+  sourceTextHash: string;
+  sourceRevision: string;
+  recipe: StudioLayoutRecipe;
+  targetLayoutId?: string;
+  targetLayoutName?: string;
+  background: string;
+  status: "imported" | "designed";
+  designRationale: string;
+  nodes: StudioWebNode[];
+  updatedAt: string;
+}
+
+export interface StudioWebScene {
+  schema: typeof STUDIO_WEB_SCENE_SCHEMA;
+  version: typeof STUDIO_WEB_SCENE_VERSION;
+  revision: string;
+  deckId: string;
+  sourceSha256: string;
+  slideSize: { width: number; height: number };
+  designSystem: {
+    id: "ornl-presentation-web-v1";
+    standardVersion: string;
+    unit: "emu";
+    renderer: "html-css";
+    exportTarget: "editable-powerpoint";
+  };
+  slides: StudioWebSlide[];
 }
 
 export interface GeometryEditCommand {
@@ -691,6 +784,7 @@ export interface DeckJob {
   status: DeckStatus;
   audit?: PptxAudit;
   scene?: PresentationScene;
+  studioScene?: StudioWebScene;
   proposal?: CleanupProposal;
   protectedSlideNumbers: number[];
   failureMessage?: string;

@@ -51,7 +51,7 @@ async function callImages(operation, input, message) {
 
 server.registerTool("get_design_contract", {
   title: "Get the presentation designer contract",
-  description: "Read the mandatory deck-wide design and QA instructions that govern any AI model using Presentation Studio. Call this before proposing or performing cleanup. The contract requires improving every slide, preserving approved content exactly, inspecting every text box and visual, choosing the best approved layout, minimizing routine approval questions, and independently rendering the export for visual QA.",
+  description: "Read the mandatory web-first presentation design and QA instructions that govern any AI model using Presentation Studio. Call this before design work. The contract requires improving every slide by importing exact content into the shared Studio HTML/CSS scene, making a substantive whole-slide composition decision with shared ORNL components or an approved layout, preserving approved content exactly, minimizing routine approval questions, compiling to editable PowerPoint, and independently rendering the result for visual QA.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => success(DESIGN_CONTRACT, designContractMessage()));
@@ -83,6 +83,13 @@ server.registerTool("get_slide_scene", {
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_slide_scene", input, (result) => `Read ${result.objects.length} source-bound objects on slide ${result.slide.number} of ${result.deck.name}.`));
+
+server.registerTool("get_studio_web_scene", {
+  title: "Read one slide as a Studio web-design scene",
+  description: "Read the canonical semantic HTML/CSS scene for one imported PowerPoint slide: exact locked text and table cells, source-bound editable node IDs, source and current frames in inches, semantic roles, media bindings, ORNL design tokens, and the recommended shared layout recipe. This is the AI and human design surface—use it to make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_studio_web_scene", input, (result) => `Read ${result.slide.nodes.length} semantic web nodes for slide ${result.slide.slideNumber} of ${result.deck.name}; recommended recipe: ${result.slide.recommendedRecipe}.`));
 
 server.registerTool("list_resources", {
   title: "List authorized project Resources",
@@ -242,6 +249,38 @@ server.registerTool("get_design_thread", {
   inputSchema: { threadId: z.string().min(1).max(120) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_design_thread", input, (result) => `Read the submitted design thread on slide ${result.thread.slideNumber} of ${result.deck?.name ?? "the open deck"}.`));
+
+server.registerTool("stage_studio_web_design", {
+  title: "Recompose a slide in Studio and stage editable PowerPoint",
+  description: "Choose one shared Studio HTML/CSS layout recipe—or a real installed Template Pack layout—then atomically recompose the slide's exact source-bound content and compile its web-computed frames, typography, and ORNL components back to editable native PowerPoint objects. Optional nodeFrames are deliberate final refinements in inches, not a substitute for choosing a coherent recipe. Use get_studio_web_scene first. Make a substantive layout decision when the source is weak; do not default to smaller text or no-op cleanup. Submitted comments listed in addressedThreadIds are removed only when this proposal actually affects their slide. The result is a reversible Current/Proposal draft and never applies, saves, exports, or overwrites the source.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-table", "ornl-title-figure-grid", "template-layout"]),
+    layoutId: z.string().min(1).max(120).optional(),
+    rationale: z.string().min(1).max(1000),
+    nodeFrames: z.array(z.object({
+      nodeId: z.string().min(1).max(180),
+      xInches: z.number().min(0).max(20),
+      yInches: z.number().min(0).max(20),
+      widthInches: z.number().min(.1).max(20),
+      heightInches: z.number().min(.1).max(20),
+      rotation: z.number().min(-360).max(360).default(0),
+    })).max(30).default([]),
+    nodeStyles: z.array(z.object({
+      nodeId: z.string().min(1).max(180),
+      fontSizePt: z.number().min(10).max(60).optional(),
+      fontWeight: z.union([z.literal(400), z.literal(600), z.literal(700)]).optional(),
+      color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+      textAlign: z.enum(["left", "center", "right"]).optional(),
+      verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+      objectFit: z.enum(["contain", "cover"]).optional(),
+    })).max(30).default([]),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("stage_studio_web_design", input, (result) => `Recomposed slide ${result.slide.number} with ${result.slide.recipe} and staged ${result.proposal.geometryCount} source-bound PowerPoint geometry edits for native Current/Proposal review. Nothing was applied, saved, exported, or overwritten.`));
 
 server.registerTool("stage_font_cleanup", {
   title: "Stage conservative font cleanup",

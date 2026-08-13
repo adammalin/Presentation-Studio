@@ -3,12 +3,12 @@
 ## Product and Technical Specification
 
 - **Status:** Working foundation; phased implementation in progress
-- **Specification version:** 0.9
-- **Date:** 2026-08-12
+- **Specification version:** 1.1 - Studio Web Scene
+- **Date:** 2026-08-13
 - **Repository:** `adammalin/Presentation-Studio`
 - **Distribution boundary:** Source-based installation only; no application installers
 
-Presentation Studio is a local-first Electron desktop application for auditing, conservatively cleaning, reflowing, composing, reviewing, and exporting presentation decks from a structured, self-contained project package. Its first production job is to help a human review and consistently clean a large batch of existing PowerPoint slides without rewriting content, erasing intentional prior edits, heavily redesigning the material, or applying the wrong organization’s template. The package contains a canonical JSON presentation model for supported editable properties, an immutable PowerPoint preservation envelope for native content that is not fully interpreted, and the documents, data, images, audio, video, and other project Resources required to reopen the work without relying on the files' original locations. The application uses versioned presentation rules and Template Packs, a PowerPoint-aware scene graph, native-render observations, and a local Model Context Protocol (MCP) server so any MCP-capable AI client can inspect an authorized project, design against reliable visual evidence, and stage changes for visible human review.
+Presentation Studio is a local-first Electron desktop application for auditing, redesigning, cleaning, reflowing, composing, reviewing, and exporting presentation decks from a structured, self-contained project package. Its first production job is to help a human improve a large batch of existing PowerPoint slides without rewriting content, erasing intentional prior edits, or applying the wrong organization’s template. The package contains a canonical semantic HTML/CSS Studio Web Scene for supported design composition, an immutable PowerPoint preservation envelope for native content that is not fully interpreted, and the documents, data, images, audio, video, and other project Resources required to reopen the work without relying on the files' original locations. The application uses versioned presentation rules and Template Packs, a PowerPoint-aware source-binding scene, native-render observations, and a local Model Context Protocol (MCP) server so any MCP-capable AI client and the user can work on the same visible design scene, compile supported objects back to editable PowerPoint, and stage changes for visible human review.
 
 The first template target is the official ORNL 16:9 PowerPoint template. The application must preserve its master/layout intent, Aptos typography, theme colors, and presentation guidance while treating every cleaned, reflowed, or generated output as a draft until the appropriate content owner and brand reviewer approve it.
 
@@ -64,6 +64,18 @@ Specification 0.9 makes AI design quality and PowerPoint fidelity one architectu
 5. the user and AI work from the same revision-bound pixels, structured objects, template constraints, content protections, and deterministic findings.
 
 This is not a promise that every PowerPoint feature becomes fully editable in a web canvas. It is a promise that supported objects are honestly editable, unsupported objects are preserved or explicitly converted, renderer provenance is visible, and no design is called ready until the actual exported artifact has been inspected.
+
+### 0.3 Specification 1.1 architecture correction: Studio Web Scene
+
+Specification 1.1 makes the constrained semantic web scene—not inherited PowerPoint coordinates—the primary design authority for supported content in redesign mode:
+
+1. imported PowerPoint remains the immutable preservation envelope and exact-content source;
+2. the persisted `presentation-studio/web-scene` is the shared AI/human composition surface for semantic roles, recipes, component bindings, frames, hierarchy, Aptos typography, image fit, and intentional relationships;
+3. the app renders that scene with ordinary React, HTML, and CSS so an AI model can reason in the same component-and-layout language it uses effectively for web design;
+4. the web scene is deliberately constrained to operations that can compile to editable PowerPoint objects; arbitrary browser effects are not part of the export contract;
+5. Microsoft PowerPoint-native Current and Proposal renders remain the final appearance authority and must close the visual iteration loop.
+
+The first implemented vertical slice extracts source-bound text, tables, pictures, and preserved native objects into the Studio Web Scene; exposes shared ORNL title/content, two-column, table, figure-grid, and installed-template recipes; provides drag, resize, and bounded type controls; persists the scene in `.pstudio`; exposes it through MCP; and compiles web-computed geometry and typography back to editable native PowerPoint proposals with exact-content and table-structure guards. Unsupported native objects remain visible through their cropped PowerPoint-native source pixels and stay locked unless a safe whole-object operation exists.
 
 ---
 

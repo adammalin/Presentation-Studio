@@ -1,7 +1,18 @@
 # Presentation Studio TODO
 
-- **Development-plan version:** 1.0
-- **Architecture focus:** pixels for gestalt, PowerPoint for measurement, deterministic solvers for geometry, AI for design judgment, lossless imported-content preservation, and independently verified editable-PPTX export.
+- **Development-plan version:** 1.1 - Studio Web Scene
+- **Architecture focus:** constrained semantic HTML/CSS for shared AI/human composition; immutable PowerPoint for preservation; native PowerPoint pixels and measurements for final appearance; independently verified editable-PPTX export.
+
+## Studio Web Scene implementation status
+
+- [x] **Phase A — Isolated web-design branch and preservation baseline.** Development runs in the separate `codex/web-slide-design-engine` worktree and branch. The original working tree, running app, installed Template Pack, autosave, and main repository state are unchanged.
+- [x] **Phase B — Canonical persisted Studio Web Scene.** Imported source-bound text, tables, images, and preserved objects compile into `presentation-studio/web-scene` version 1 with exact content, stable PowerPoint bindings, semantic roles, source and computed frames, Aptos design tokens, media bindings, fidelity locks, and `.pstudio` persistence.
+- [x] **Phase C — Shared ORNL web components and collaborative canvas.** Studio exposes title/content, two-column, table, figure-grid, and installed-template recipes. The user and AI work against the same React/HTML/CSS scene; the UI supports slide navigation, drag, resize, numeric geometry, bounded typography controls, table rendering, source images, cropped native-object pixels, and a read-only PowerPoint reference.
+- [x] **Phase D — MCP web-design contract and staging.** `get_studio_web_scene` returns exact semantic nodes and recommended recipes; `stage_studio_web_design` chooses a shared recipe or approved Template Pack layout, accepts bounded frame/style refinements, persists the same scene, clears only explicitly addressed comments, and stages a reversible Current/Proposal draft without applying or exporting it.
+- [x] **Phase E — Editable PowerPoint compiler foundation.** Web-computed frames and Aptos hierarchy compile to source-bound editable PowerPoint geometry/text-style commands, real installed template layouts compile through the existing native layout-remap path, and shared ORNL title rules remain native editable vectors. Synthetic round-trip validation preserves every visible-text hash plus exact table content and merged topology.
+- [ ] **Phase F — Golden-slide native visual qualification.** Select 3–5 representative private EMT slides, compare Current, Studio Web Scene, compiled Proposal, and prior Walnut output, then iterate shared recipes until the PowerPoint-native results meet or exceed the approved benchmark. Do not expand autonomous deck-wide redesign until this gate passes.
+- [ ] **Phase G — Rich component editors and design memory.** Add multi-select, guides, undo/redo, crop/focal-point controls, relationship-preserving diagram editing, a first-class table component editor, repeated component instances, and deck-level rhythm/consistency tokens.
+- [ ] **Phase H — New composition and media.** Add source-grounded assertion-evidence slide creation, visual-need prompts and locally packaged generated assets, semantic icons, figure/caption components, continuation-slide orchestration, and PDF/SVG/PNG exports.
 
 ## Precision-layout implementation status
 
@@ -42,16 +53,15 @@
 
 ### Round goal and implementation order
 
-The current implementation provides a useful OOXML inspection and bounded geometry foundation. Continue in this order so the AI designs against trustworthy evidence before the editor gains broader authoring features:
+The current implementation now includes the first web-design-to-editable-PowerPoint vertical slice. Continue in this order:
 
-1. build the local PowerPoint-native render bridge and make renderer provenance visible;
-2. complete the ORNL Template Pack compiler with native thumbnails, semantic slots, constraints, and compatibility scoring;
-3. formalize the hybrid scene graph plus OOXML preservation envelope and object fidelity states;
-4. close the AI design loop across Source → Current → Proposal → Export renders;
-5. implement semantic layout selection, the cleanup/round-trip engine, and the composition engine;
-6. build the first-class native table solver and editor;
-7. expand the collaborative canvas, anchored comments, multi-select, guides, undo/redo, cropping, and property editing;
-8. add source-grounded assertion-evidence composition, multimedia workflows, remaining exports, and large-batch qualification.
+1. qualify 3–5 representative slides through Studio Web Scene → editable PPTX → PowerPoint-native comparison against the prior Walnut benchmark;
+2. strengthen shared ORNL recipe selection and component responsiveness from that visual evidence;
+3. build the first-class table and relationship-preserving diagram component editors;
+4. add multi-select, guides, undo/redo, crop/focal-point editing, and deck-level component consistency controls;
+5. expand the MCP iterative loop across Source → Studio → Proposal → Export while keeping routine design autonomous;
+6. add source-grounded assertion-evidence composition, multimedia workflows, remaining exports, and large-batch qualification;
+7. qualify Windows PowerPoint automation and persistent native-render caching.
 
 ### Current qualification evidence
 

@@ -1,11 +1,12 @@
 # Presentation Studio
 
-Presentation Studio is a local-first Electron application for auditing, conservatively cleaning, visually improving, reviewing, and composing editable presentations. The product direction is an iterative human/AI ORNL design environment: the AI receives native slide pixels, structured PowerPoint objects, approved template layouts, brand rules, protected-content constraints, and deterministic findings; it proposes changes, inspects the rendered result, and revises before the user reviews it. The first working slice targets high-volume PowerPoint production cleanup: mixed fonts, template uncertainty, table/figure consistency review, unsupported package features, and human-approved output.
+Presentation Studio is a local-first Electron application for auditing, redesigning, cleaning, reviewing, and composing editable presentations. Its primary design surface is now a constrained semantic HTML/CSS Studio Web Scene shared by the human and AI. Imported PowerPoint remains the exact-content preservation envelope, supported web-scene objects compile back to editable PowerPoint, and Microsoft PowerPoint-native pixels and measurements remain final appearance authority.
 
 The application never overwrites an imported deck. It embeds source bytes in a self-contained project, stages bounded changes for review, validates that visible text and slide count remain unchanged, and exports a new PowerPoint copy.
 
 ## Current working slice
 
+- A persisted `presentation-studio/web-scene` design model that extracts exact source-bound text, tables, pictures, and preserved native objects into semantic React/HTML/CSS slides; shared ORNL title/content, two-column, table, figure-grid, and installed-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and side-by-side source reference; MCP scene inspection and staging; and editable PowerPoint round-trip tests with exact visible-copy and table-structure preservation.
 - Multi-file `.pptx` import with bounded OOXML preflight, unsafe-path checks, and expanded-size/compression-ratio limits.
 - App-wide drag-and-drop and Resources file-picker intake for presentations, documents, data, images, audio, video, and SVG assets.
 - Versioned first-run onboarding walkthrough with keyboard navigation, deterministic spotlights, persisted completion, and an always-available Tour replay control.
