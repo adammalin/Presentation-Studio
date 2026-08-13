@@ -5,6 +5,12 @@ const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { createHash, randomUUID } = require("node:crypto");
 const { promisify } = require("node:util");
+const {
+  classifyPowerPointAutomationError,
+  describePowerPointAutomationError,
+  macSessionLocked,
+  runPowerPointAutomationWithStartupRecovery,
+} = require("./powerpoint-automation-error.cjs");
 
 const execFileAsync = promisify(execFile);
 const POWERPOINT_MAC_PATH = "/Applications/Microsoft PowerPoint.app";
@@ -12,16 +18,36 @@ const MAX_NATIVE_SOURCE_BYTES = 1_250_000_000;
 const MAX_NATIVE_RENDER_BYTES = 300_000_000;
 const MAX_NATIVE_SLIDES = 1_000;
 
+async function openPresentationCount() {
+  const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", 'tell application "Microsoft PowerPoint" to return count of presentations'], { timeout: 10_000, maxBuffer: 64 * 1024 });
+  return Number(String(stdout || "").trim());
+}
+
+async function quitPowerPointWithoutPresentations() {
+  await execFileAsync("/usr/bin/osascript", ["-e", 'tell application "Microsoft PowerPoint" to quit'], { timeout: 15_000, maxBuffer: 64 * 1024 });
+}
+
 const POWERPOINT_RENDER_SCRIPT = `on run argv
   set sourcePath to item 1 of argv
   set outputPath to item 2 of argv
   set sourceFile to POSIX file sourcePath
   set outputFile to POSIX file outputPath
   tell application "Microsoft PowerPoint"
-    open sourceFile
-    if full name of active presentation is not sourcePath then error "PowerPoint did not activate the requested render copy."
-    save active presentation in outputFile as save as PDF
-    close active presentation saving no
+    set targetPresentation to missing value
+    try
+      open sourceFile
+      set targetPresentation to active presentation
+      if full name of targetPresentation is not sourcePath then error "PowerPoint did not activate the requested render copy."
+      save targetPresentation in outputFile as save as PDF
+      close targetPresentation saving no
+    on error renderError number renderErrorNumber
+      if targetPresentation is not missing value then
+        try
+          close targetPresentation saving no
+        end try
+      end if
+      error renderError number renderErrorNumber
+    end try
   end tell
   return "rendered|" & version of application "Microsoft PowerPoint"
 end run`;
@@ -62,23 +88,19 @@ function nativeRenderCapabilities(platform = process.platform) {
       reason: platform === "win32" ? "The Windows PowerPoint render bridge is not implemented yet." : "PowerPoint-native rendering currently requires macOS.",
       powerPointInstalled: false,
       rasterizerAvailable: Boolean(rasterizerPath),
+      sessionLocked: false,
     };
   }
   const powerPointInstalled = fsSync.existsSync(POWERPOINT_MAC_PATH);
+  const sessionLocked = powerPointInstalled && macSessionLocked();
   return {
-    available: powerPointInstalled && Boolean(rasterizerPath),
+    available: powerPointInstalled && Boolean(rasterizerPath) && !sessionLocked,
     renderer: powerPointInstalled && rasterizerPath ? "powerpoint-native" : "studio-approximate",
-    reason: !powerPointInstalled ? "Microsoft PowerPoint is not installed." : !rasterizerPath ? "The local PDF rasterizer is unavailable." : undefined,
+    reason: !powerPointInstalled ? "Microsoft PowerPoint is not installed." : !rasterizerPath ? "The local PDF rasterizer is unavailable." : sessionLocked ? "Unlock the Mac to enable PowerPoint-native rendering." : undefined,
     powerPointInstalled,
     rasterizerAvailable: Boolean(rasterizerPath),
+    sessionLocked,
   };
-}
-
-function classifyPowerPointAutomationError(error) {
-  const message = `${error?.message || ""}\n${error?.stderr || ""}`;
-  if (/-1743|not authorized|not permitted to send apple events|automation permission/i.test(message)) return "permission-required";
-  if (/-128|user canceled|cancelled/i.test(message)) return "permission-required";
-  return "failed";
 }
 
 function jpegDimensions(bytes) {
@@ -101,13 +123,20 @@ function jpegDimensions(bytes) {
   throw new Error("The native renderer could not read the JPEG dimensions.");
 }
 
+function pngDimensions(bytes) {
+  if (!Buffer.isBuffer(bytes)) bytes = Buffer.from(bytes);
+  if (bytes.length < 24 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("The native renderer produced an invalid PNG image.");
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
 function slideNumberFromFile(fileName) {
-  const match = fileName.match(/-(\d+)\.jpe?g$/i);
+  const match = fileName.match(/-(\d+)\.(?:jpe?g|png)$/i);
   return match ? Number(match[1]) : Number.NaN;
 }
 
-async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.pptx", homePath = os.homedir() }) {
+async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.pptx", homePath = os.homedir(), width = 1400, format = "jpeg" }) {
   const capabilities = nativeRenderCapabilities();
+  if (capabilities.sessionLocked) return { status: "failed", renderer: "powerpoint-native", authoritative: false, reason: "mac-session-locked", slides: [], warnings: ["Unlock the Mac, leave Microsoft PowerPoint available, and retry native rendering."] };
   if (!capabilities.available) {
     return { status: "unavailable", ...capabilities, authoritative: false, slides: [], warnings: capabilities.reason ? [capabilities.reason] : [] };
   }
@@ -115,6 +144,8 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
   if (bytes.length === 0) throw new Error("PowerPoint-native rendering received an empty presentation.");
   if (bytes.length > MAX_NATIVE_SOURCE_BYTES) throw new Error("The presentation exceeds the native render safety limit.");
   if (!/^PK/.test(bytes.subarray(0, 2).toString("ascii"))) throw new Error("PowerPoint-native rendering requires a valid PPTX package.");
+  if (!Number.isInteger(width) || width < 800 || width > 3_000) throw new Error("Native render width must be an integer from 800 to 3,000 pixels.");
+  if (!["jpeg", "png"].includes(format)) throw new Error("Native render format must be JPEG or PNG.");
 
   const digest = createHash("sha256").update(bytes).digest("hex");
   const jobId = randomUUID();
@@ -128,22 +159,31 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
     await fs.mkdir(jobRoot, { recursive: true, mode: 0o700 });
     await fs.writeFile(sourcePath, bytes, { mode: 0o600 });
     try {
-      var automation = await execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_RENDER_SCRIPT, sourcePath, pdfPath], { timeout: 180_000, maxBuffer: 1024 * 1024 });
+      var automation = await runPowerPointAutomationWithStartupRecovery({
+        action: "rendering",
+        run: () => execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_RENDER_SCRIPT, sourcePath, pdfPath], { timeout: 180_000, maxBuffer: 1024 * 1024 }),
+        presentationCount: openPresentationCount,
+        quit: quitPowerPointWithoutPresentations,
+      });
     } catch (error) {
-      const status = classifyPowerPointAutomationError(error);
+      const diagnostic = describePowerPointAutomationError(error, "rendering");
       return {
-        status,
+        status: diagnostic.status,
         renderer: "powerpoint-native",
         authoritative: false,
         sourceSha256: digest,
         slides: [],
-        warnings: [status === "permission-required" ? "Allow Presentation Studio to control Microsoft PowerPoint, then retry the native render." : `Microsoft PowerPoint could not render this presentation: ${String(error?.message || error).slice(0, 500)}`],
+        reason: diagnostic.reason,
+        warnings: [diagnostic.message],
       };
     }
     const pdfStat = await fs.stat(pdfPath).catch(() => null);
     if (!pdfStat?.isFile() || pdfStat.size === 0) throw new Error("Microsoft PowerPoint did not create the expected native PDF render.");
-    await execFileAsync(capabilities.rasterizerPath || resolvePdfRasterizer(), ["-jpeg", "-scale-to-x", "1400", "-scale-to-y", "-1", "-jpegopt", "quality=90,progressive=y,optimize=y", pdfPath, imagePrefix], { timeout: 180_000, maxBuffer: 1024 * 1024 });
-    const fileNames = (await fs.readdir(jobRoot)).filter((fileName) => /^slide-\d+\.jpe?g$/i.test(fileName)).sort((left, right) => slideNumberFromFile(left) - slideNumberFromFile(right));
+    const rasterArguments = format === "png"
+      ? ["-png", "-scale-to-x", String(width), "-scale-to-y", "-1", pdfPath, imagePrefix]
+      : ["-jpeg", "-scale-to-x", String(width), "-scale-to-y", "-1", "-jpegopt", "quality=90,progressive=y,optimize=y", pdfPath, imagePrefix];
+    await execFileAsync(capabilities.rasterizerPath || resolvePdfRasterizer(), rasterArguments, { timeout: 180_000, maxBuffer: 1024 * 1024 });
+    const fileNames = (await fs.readdir(jobRoot)).filter((fileName) => format === "png" ? /^slide-\d+\.png$/i.test(fileName) : /^slide-\d+\.jpe?g$/i.test(fileName)).sort((left, right) => slideNumberFromFile(left) - slideNumberFromFile(right));
     if (fileNames.length === 0) throw new Error("The local rasterizer did not create any slide images.");
     if (fileNames.length > MAX_NATIVE_SLIDES) throw new Error("The presentation exceeds the 1,000-slide native render limit.");
     const slides = [];
@@ -152,13 +192,13 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
       const data = await fs.readFile(path.join(jobRoot, fileName));
       totalBytes += data.length;
       if (totalBytes > MAX_NATIVE_RENDER_BYTES) throw new Error("The native slide images exceed the 300 MB in-memory safety limit.");
-      const dimensions = jpegDimensions(data);
-      slides.push({ number: slideNumberFromFile(fileName), mimeType: "image/jpeg", width: dimensions.width, height: dimensions.height, sha256: createHash("sha256").update(data).digest("hex"), bytes: new Uint8Array(data) });
+      const dimensions = format === "png" ? pngDimensions(data) : jpegDimensions(data);
+      slides.push({ number: slideNumberFromFile(fileName), mimeType: format === "png" ? "image/png" : "image/jpeg", width: dimensions.width, height: dimensions.height, sha256: createHash("sha256").update(data).digest("hex"), bytes: new Uint8Array(data) });
     }
     return {
       status: "ready",
       renderer: "powerpoint-native",
-      pipeline: "powerpoint-save-as-pdf+local-pdf-raster",
+      pipeline: `powerpoint-save-as-pdf+local-pdf-raster:${format}:${width}px`,
       powerPointVersion: automation?.stdout?.trim().split("|")[1] || undefined,
       authoritative: true,
       sourceSha256: digest,
@@ -173,8 +213,10 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
 }
 
 module.exports = {
+  POWERPOINT_RENDER_SCRIPT,
   classifyPowerPointAutomationError,
   jpegDimensions,
+  pngDimensions,
   nativeRenderCapabilities,
   renderPowerPointNative,
   resolvePdfRasterizer,

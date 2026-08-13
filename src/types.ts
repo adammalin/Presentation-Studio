@@ -151,6 +151,40 @@ export interface TableInventoryItem {
   styleFingerprint: string;
   contentHash: string;
   structureHash: string;
+  columns?: TableColumnInventoryItem[];
+  rows?: TableRowInventoryItem[];
+  cells?: TableCellInventoryItem[];
+}
+
+export interface TableColumnInventoryItem {
+  id: string;
+  index: number;
+  widthEmu: number;
+}
+
+export interface TableRowInventoryItem {
+  id: string;
+  index: number;
+  heightEmu: number;
+}
+
+export interface TableCellInventoryItem {
+  id: string;
+  row: number;
+  column: number;
+  rowSpan: number;
+  columnSpan: number;
+  horizontalMergeContinuation: boolean;
+  verticalMergeContinuation: boolean;
+  text: string;
+  textHash: string;
+  characterCount: number;
+  paragraphCount: number;
+  fontFamilies: string[];
+  fontSizes: number[];
+  marginsEmu: { left: number; right: number; top: number; bottom: number };
+  horizontalAlignment: "left" | "center" | "right" | "justified" | "mixed";
+  verticalAlignment: "top" | "middle" | "bottom";
 }
 
 export interface PictureInventoryItem {
@@ -241,7 +275,7 @@ export interface SlideEditableObject {
 }
 
 export const PRESENTATION_SCENE_SCHEMA = "presentation-studio/scene" as const;
-export const PRESENTATION_SCENE_VERSION = 1 as const;
+export const PRESENTATION_SCENE_VERSION = 2 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
 
@@ -310,6 +344,49 @@ export interface PresentationSceneSlide {
   protected: boolean;
 }
 
+export interface PresentationSceneTableColumn {
+  id: string;
+  index: number;
+  width: number;
+  x: number;
+}
+
+export interface PresentationSceneTableRow {
+  id: string;
+  index: number;
+  height: number;
+  y: number;
+}
+
+export interface PresentationSceneTableCell {
+  id: string;
+  row: number;
+  column: number;
+  rowSpan: number;
+  columnSpan: number;
+  geometry: { x: number; y: number; width: number; height: number };
+  margins: { left: number; right: number; top: number; bottom: number };
+  contentHash: string;
+  characterCount: number;
+  horizontalAlignment: TableCellInventoryItem["horizontalAlignment"];
+  verticalAlignment: TableCellInventoryItem["verticalAlignment"];
+  mergeContinuation: boolean;
+}
+
+export interface PresentationSceneTable {
+  id: string;
+  objectId: string;
+  slideNumber: number;
+  rowCount: number;
+  columnCount: number;
+  geometry: { x: number; y: number; width: number; height: number };
+  rows: PresentationSceneTableRow[];
+  columns: PresentationSceneTableColumn[];
+  cells: PresentationSceneTableCell[];
+  contentHash: string;
+  structureHash: string;
+}
+
 export interface PowerPointPreservationEnvelope {
   schema: typeof PRESERVATION_ENVELOPE_SCHEMA;
   version: typeof PRESERVATION_ENVELOPE_VERSION;
@@ -351,6 +428,7 @@ export interface PresentationScene {
   };
   slides: PresentationSceneSlide[];
   objects: PresentationSceneObject[];
+  tables?: PresentationSceneTable[];
   fidelityCounts: SceneFidelityCounts;
   preservationEnvelope: PowerPointPreservationEnvelope;
 }
@@ -405,6 +483,29 @@ export interface TextStyleCommand {
 }
 
 export type TableStyleVariant = "standard" | "dense-technical";
+
+export interface TableLayoutCommand {
+  id: string;
+  slideNumber: number;
+  tableId: string;
+  objectId: string;
+  columnWidthsEmu: number[];
+  rowHeightsEmu: number[];
+  cellMarginsEmu: { left: number; right: number; top: number; bottom: number };
+  rationale: string;
+  author: "human" | "ai";
+  constraints: {
+    minimumFontPt: number;
+    minimumHorizontalPaddingPt: number;
+    minimumVerticalPaddingPt: number;
+    preserveTableBounds: boolean;
+  };
+  validation: {
+    feasible: boolean;
+    predictedOverflowCellIds: string[];
+    warnings: string[];
+  };
+}
 
 export interface DecorativeShapeCommand {
   id: string;
@@ -467,12 +568,13 @@ export interface PptxAudit {
 
 export interface CleanupChange {
   id: string;
-  kind: "font-family" | "table-style" | "alignment" | "geometry" | "layout-remap" | "text-style" | "decoration";
+  kind: "font-family" | "table-style" | "table-layout" | "alignment" | "geometry" | "layout-remap" | "text-style" | "decoration";
   from: string;
   to: string;
   affectedSlideNumbers: number[];
   affectedRunCount: number;
   tableIds?: string[];
+  tableLayoutCommands?: TableLayoutCommand[];
   profileId?: string;
   alignmentRepairs?: AlignmentRepairCandidate[];
   geometryCommands?: GeometryEditCommand[];
@@ -548,6 +650,20 @@ export interface CleanupProposal {
       proposalRasterSha256: string;
       changedPixelRatio: number;
     };
+  };
+  visualIteration?: {
+    maxAttempts: 3;
+    history: Array<{
+      attempt: number;
+      slideNumber: number;
+      inspectionRevision: string;
+      verdict: "better" | "revise" | "reject";
+      rationale: string;
+      reviewedAt: string;
+      currentRasterSha256: string;
+      proposalRasterSha256: string;
+      metrics: { improvements: string[]; regressions: string[] };
+    }>;
   };
   changes: CleanupChange[];
   slideDispositions: SlideDesignDisposition[];

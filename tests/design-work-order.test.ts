@@ -50,7 +50,7 @@ test("slide design work order closes content and binds evidence to scene, templa
   const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber: 1, projectUpdatedAt: updatedAt, templateCatalog: catalog() });
   assert.equal(workOrder.schema, "presentation-studio/design-work-order");
   assert.equal(workOrder.version, 1);
-  assert.match(workOrder.revision, /render-unavailable$/);
+  assert.match(workOrder.revision, /render-unavailable:measurement-unavailable$/);
   assert.equal(workOrder.slide.exactVisibleText, deck.audit?.slides[0].text);
   assert.equal(workOrder.closedContentInventory.lockedTextHash, deck.audit?.slides[0].textHash);
   assert.equal(workOrder.objects.length, deck.scene?.objects.filter((object) => object.slideNumber === 1).length);

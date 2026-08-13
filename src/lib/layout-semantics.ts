@@ -3,6 +3,14 @@ import type { TemplateLayoutPreview, TemplatePreviewElement } from "./template-c
 export type TemplateSemanticRole = "title" | "subtitle" | "body" | "caption" | "image" | "table" | "chart" | "media" | "content" | "footer" | "date" | "slide-number" | "other";
 export type TemplateContentKind = "text" | "image" | "table" | "chart" | "media";
 export type TemplateLayoutIntent = "cover" | "section" | "assertion" | "content" | "comparison" | "visual" | "data" | "conclusion" | "blank";
+export type TemplateSlotAlignmentIntent = "optical-left" | "contain" | "fill" | "structural";
+
+export interface TemplateSlotBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface TemplateSemanticSlot {
   id: string;
@@ -14,8 +22,15 @@ export interface TemplateSemanticSlot {
   width: number;
   height: number;
   acceptedContent: TemplateContentKind[];
+  allowedObjectKinds: TemplateContentKind[];
   required: boolean;
   capacity: "micro" | "short" | "medium" | "long" | "visual";
+  preferredBounds: TemplateSlotBounds;
+  minimumBounds: TemplateSlotBounds;
+  maximumBounds: TemplateSlotBounds;
+  alignmentIntent: TemplateSlotAlignmentIntent;
+  paddingIntentPt: { top: number; right: number; bottom: number; left: number };
+  priority: number;
 }
 
 export interface TemplateLayoutSemantics {
@@ -121,6 +136,33 @@ function capacityFor(element: TemplatePreviewElement, role: TemplateSemanticRole
   return "long";
 }
 
+function responsiveSlotContract(element: TemplatePreviewElement, role: TemplateSemanticRole) {
+  const preferredBounds = { x: element.x, y: element.y, width: element.width, height: element.height };
+  const scale = ["title", "subtitle"].includes(role) ? { width: .55, height: .5 }
+    : ["body", "caption"].includes(role) ? { width: .45, height: .35 }
+      : ["image", "table", "chart", "media", "content"].includes(role) ? { width: .4, height: .4 }
+        : { width: .6, height: .5 };
+  const minimumBounds = { ...preferredBounds, width: Math.round(element.width * scale.width), height: Math.round(element.height * scale.height) };
+  const alignmentIntent: TemplateSlotAlignmentIntent = ["title", "subtitle", "body", "caption"].includes(role) ? "optical-left"
+    : role === "image" || role === "media" ? "contain"
+      : ["table", "chart", "content"].includes(role) ? "fill"
+        : "structural";
+  const padding = ["body", "caption", "content"].includes(role) ? 8 : 0;
+  const priority = role === "title" ? 100
+    : role === "subtitle" ? 90
+      : ["body", "table", "chart", "image", "media", "content"].includes(role) ? 80
+        : role === "caption" ? 60
+          : 10;
+  return {
+    preferredBounds,
+    minimumBounds,
+    maximumBounds: { ...preferredBounds },
+    alignmentIntent,
+    paddingIntentPt: { top: padding, right: padding, bottom: padding, left: padding },
+    priority,
+  };
+}
+
 function inferIntent(name: string, slots: TemplateSemanticSlot[], category: TemplateLayoutPreview["category"]): TemplateLayoutIntent {
   const normalized = name.toLowerCase();
   const imageSlots = slots.filter((slot) => slot.role === "image").length;
@@ -150,6 +192,7 @@ function summaryFor(intent: TemplateLayoutIntent, capabilities: TemplateLayoutSe
 export function deriveLayoutSemantics(layout: Pick<TemplateLayoutPreview, "id" | "name" | "category" | "elements">, slideWidth: number, slideHeight: number): TemplateLayoutSemantics {
   const slots = uniquePlaceholderElements(layout.elements).map((element, index): TemplateSemanticSlot => {
     const role = roleFor(element, slideHeight);
+    const acceptedContent = acceptedContentFor(role);
     return {
       id: `${layout.id}-slot-${index + 1}`,
       role,
@@ -159,9 +202,11 @@ export function deriveLayoutSemantics(layout: Pick<TemplateLayoutPreview, "id" |
       y: element.y,
       width: element.width,
       height: element.height,
-      acceptedContent: acceptedContentFor(role),
+      acceptedContent,
+      allowedObjectKinds: acceptedContent,
       required: role === "title",
       capacity: capacityFor(element, role, slideWidth, slideHeight),
+      ...responsiveSlotContract(element, role),
     };
   });
   const count = (role: TemplateSemanticRole) => slots.filter((slot) => slot.role === role).length;

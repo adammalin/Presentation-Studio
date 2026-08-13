@@ -95,6 +95,59 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
     const styleFingerprint = await sha256Text(JSON.stringify({ styleId: styleId ? decodeXml(styleId).trim() : null, styleFlags, cellFonts: cellFonts.map(normalizeFont), colorTokens, marginSignatures }));
     const cellBlocks = [...block.matchAll(/<a:tc\b[\s\S]*?<\/a:tc>/g)].map((match) => match[0]);
     const cellTexts = cellBlocks.map((cell) => extractTextRuns(cell).join(""));
+    const tableId = `slide-${slideNumber}-table-${index + 1}`;
+    const columns = [...(block.match(/<a:tblGrid>[\s\S]*?<\/a:tblGrid>/)?.[0] ?? "").matchAll(/<a:gridCol\b([^>]*)\/?\s*>/g)].map((match, columnIndex) => ({
+      id: `${tableId}-column-${columnIndex + 1}`,
+      index: columnIndex + 1,
+      widthEmu: Number(attributeValue(match[1] ?? "", "w")) || 0,
+    }));
+    const rowBlocks = [...block.matchAll(/<a:tr\b([^>]*)>([\s\S]*?)<\/a:tr>/g)];
+    const rows = rowBlocks.map((match, rowIndex) => ({
+      id: `${tableId}-row-${rowIndex + 1}`,
+      index: rowIndex + 1,
+      heightEmu: Number(attributeValue(match[1] ?? "", "h")) || 0,
+    }));
+    const cells = [];
+    for (let rowIndex = 0; rowIndex < rowBlocks.length; rowIndex += 1) {
+      const rowXml = rowBlocks[rowIndex][2] ?? "";
+      const rowCells = [...rowXml.matchAll(/<a:tc\b([^>]*)>([\s\S]*?)<\/a:tc>/g)];
+      for (let columnIndex = 0; columnIndex < rowCells.length; columnIndex += 1) {
+        const cellAttributes = rowCells[columnIndex][1] ?? "";
+        const cellXml = rowCells[columnIndex][0];
+        const cellProperties = cellXml.match(/<a:tcPr\b([^>]*)/)?.[1] ?? "";
+        const numberAttribute = (name: string, fallback: number) => {
+          const value = Number(attributeValue(cellProperties, name));
+          return Number.isFinite(value) ? value : fallback;
+        };
+        const spanAttribute = (name: string) => Math.max(1, Number(attributeValue(cellAttributes, name)) || 1);
+        const text = extractTextRuns(cellXml).join("");
+        const fontSizes = uniqueSorted([...cellXml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
+        const anchor = attributeValue(cellProperties, "anchor")?.toLowerCase();
+        cells.push({
+          id: `${tableId}-cell-r${rowIndex + 1}-c${columnIndex + 1}`,
+          row: rowIndex + 1,
+          column: columnIndex + 1,
+          rowSpan: spanAttribute("rowSpan"),
+          columnSpan: spanAttribute("gridSpan"),
+          horizontalMergeContinuation: attributeValue(cellAttributes, "hMerge") === "1",
+          verticalMergeContinuation: attributeValue(cellAttributes, "vMerge") === "1",
+          text,
+          textHash: await sha256Text(text),
+          characterCount: text.length,
+          paragraphCount: Math.max(1, xmlCount(cellXml, /<a:p\b/g)),
+          fontFamilies: uniqueSorted(extractFonts(cellXml)),
+          fontSizes,
+          marginsEmu: {
+            left: numberAttribute("marL", 91_440),
+            right: numberAttribute("marR", 91_440),
+            top: numberAttribute("marT", 45_720),
+            bottom: numberAttribute("marB", 45_720),
+          },
+          horizontalAlignment: paragraphAlignment(cellXml),
+          verticalAlignment: (anchor === "ctr" ? "middle" : anchor === "b" ? "bottom" : "top") as "top" | "middle" | "bottom",
+        });
+      }
+    }
     const contentHash = await sha256Text(JSON.stringify(cellBlocks.map((cell) => extractTextRuns(cell))));
     const structureHash = await sha256Text(JSON.stringify({
       rows: [...block.matchAll(/<a:tr\b[^>]*>([\s\S]*?)<\/a:tr>/g)].map((row) => [...row[1].matchAll(/<a:tc\b([^>]*)>[\s\S]*?<\/a:tc>/g)].map((cell) => ({
@@ -106,7 +159,7 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
       columns: xmlCount(block.match(/<a:tblGrid>[\s\S]*?<\/a:tblGrid>/)?.[0] ?? "", /<a:gridCol\b/g),
     }));
     tables.push({
-      id: `slide-${slideNumber}-table-${index + 1}`,
+      id: tableId,
       slideNumber,
       ordinal: index + 1,
       rowCount: xmlCount(block, /<a:tr\b/g),
@@ -122,6 +175,9 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
       styleFingerprint,
       contentHash,
       structureHash,
+      columns,
+      rows,
+      cells,
     });
   }
   return tables;

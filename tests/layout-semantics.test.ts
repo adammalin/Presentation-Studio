@@ -23,6 +23,16 @@ test("deduplicates inherited placeholders and derives stable semantic slots", ()
   assert.equal(preview.semantic?.intent, "visual");
   assert.equal(preview.semantic?.capabilities.imageSlots, 1);
   assert.equal(preview.semantic?.constraints.requiresVisual, true);
+  const titleSlot = preview.semantic?.slots.find((slot) => slot.role === "title");
+  const imageSlot = preview.semantic?.slots.find((slot) => slot.role === "image");
+  assert.deepEqual(titleSlot?.preferredBounds, { x: 300_000, y: 300_000, width: 11_000_000, height: 900_000 });
+  assert.ok((titleSlot?.minimumBounds.width ?? 0) < (titleSlot?.preferredBounds.width ?? 0));
+  assert.deepEqual(titleSlot?.maximumBounds, titleSlot?.preferredBounds);
+  assert.equal(titleSlot?.alignmentIntent, "optical-left");
+  assert.equal(titleSlot?.priority, 100);
+  assert.deepEqual(imageSlot?.allowedObjectKinds, ["image"]);
+  assert.equal(imageSlot?.alignmentIntent, "contain");
+  assert.equal(imageSlot?.priority, 80);
 });
 
 test("ranks content, visual, and data layouts from exact-content needs", () => {

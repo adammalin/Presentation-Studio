@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { XMLValidator } from "fast-xml-parser";
 import type {
   CleanupChange,
   CleanupProposal,
@@ -10,6 +11,7 @@ import type {
   SlideEditableObject,
   SlideDesignDisposition,
   TableInventoryItem,
+  TableLayoutCommand,
   TableNormalizationException,
   TableStyleVariant,
   TextStyleCommand,
@@ -268,6 +270,43 @@ export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input
   };
 }
 
+export function createTableLayoutProposal(deck: DeckJob, updatedAt: string, command: TableLayoutCommand): CleanupProposal {
+  assertDeckReady(deck);
+  if (!deck.audit) throw new Error("Audit the deck before staging a solved native-table layout.");
+  if (deck.operationScope !== "reflow") throw new Error("Solved native-table layout requires Designer Cleanup reflow scope.");
+  const table = deck.audit.tables.find((item) => item.id === command.tableId);
+  if (!table || table.slideNumber !== command.slideNumber) throw new Error("The solved table command is stale or belongs to another slide.");
+  if (!command.validation.feasible) throw new Error("An infeasible table-layout command cannot be staged. Use its recommendations to create more room first.");
+  if (command.columnWidthsEmu.length !== table.columnCount || command.rowHeightsEmu.length !== table.rowCount) throw new Error("The solved table grid no longer matches the current table structure.");
+  const base: CleanupProposal = deck.proposal && ["pending", "applied"].includes(deck.proposal.status) && deck.proposal.baseUpdatedAt === updatedAt ? deck.proposal : {
+    id: crypto.randomUUID(), deckId: deck.id, baseUpdatedAt: updatedAt, createdAt: new Date().toISOString(), summary: "Stage a solved native-table layout", status: "pending", mode: "slide-reflow", standardVersion: PRESENTATION_DESIGN_STANDARD.version, changes: [], slideDispositions: [], tableExceptions: [], layoutExceptions: deck.audit.layoutReviews ?? [],
+  };
+  const changes = base.changes.filter((change) => !(change.kind === "table-layout" && change.tableLayoutCommands?.some((item) => item.tableId === command.tableId)));
+  changes.push({
+    id: command.id,
+    kind: "table-layout",
+    from: "measured current native-table grid",
+    to: "constraint-solved native-table grid",
+    affectedSlideNumbers: [command.slideNumber],
+    affectedRunCount: table.rowCount * table.columnCount,
+    tableIds: [command.tableId],
+    tableLayoutCommands: [command],
+    rationale: command.rationale,
+    selected: true,
+  });
+  return {
+    ...base,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    status: "pending",
+    mode: "slide-reflow",
+    summary: `Fit ${command.tableId} with the deterministic native-table solver`,
+    changes,
+    slideDispositions: slideDispositions(deck, changes, base.tableExceptions, base.layoutExceptions),
+    slideReviews: (base.slideReviews ?? []).filter((review) => review.slideNumber !== command.slideNumber),
+  };
+}
+
 function objectGeometry(object: SlideEditableObject) {
   const { x, y, width, height } = object.geometry;
   return { x, y, width, height };
@@ -292,7 +331,7 @@ export interface VisualDesignRequest {
 }
 
 const GEOMETRY_DEFAULTS: GeometryConstraints = { allowIntentionalOverlap: false, allowFitRisk: false, allowSafeArea: false, allowAspectRatioChange: false };
-const GEOMETRY_SAFE_MARGIN_EMU = Math.round(.25 * 914_400);
+const GEOMETRY_SAFE_MARGIN_EMU = Math.round(PRESENTATION_DESIGN_STANDARD.defaults.geometry.safeMarginPt * 12_700);
 const GEOMETRY_MARGIN_TOLERANCE_EMU = Math.round(.02 * 914_400);
 
 function geometryOverlapRatio(left: GeometryEditCommand["source"], right: GeometryEditCommand["source"]): number {
@@ -602,6 +641,23 @@ function setAttribute(attributes: string, name: string, value: string): string {
   return expression.test(attributes) ? attributes.replace(expression, ` ${name}="${value}"`) : `${attributes} ${name}="${value}"`;
 }
 
+function assertWellFormedXml(xml: string, partPath: string) {
+  const validation = XMLValidator.validate(xml);
+  if (validation === true) return;
+  const detail = validation.err ? `${validation.err.msg} at line ${validation.err.line}, column ${validation.err.col}` : "unknown XML syntax error";
+  throw new Error(`PowerPoint package validation failed for ${partPath}: ${detail}.`);
+}
+
+async function assertWellFormedPowerPointPackage(bytes: Uint8Array) {
+  const packageZip = await JSZip.loadAsync(bytes, { checkCRC32: false });
+  const xmlPaths = Object.keys(packageZip.files).filter((entryPath) => /(?:\.xml|\.rels)$/i.test(entryPath) && !packageZip.files[entryPath].dir);
+  for (const entryPath of xmlPaths) {
+    const entry = packageZip.file(entryPath);
+    if (!entry) continue;
+    assertWellFormedXml(await entry.async("text"), entryPath);
+  }
+}
+
 function directSolidFill(color: string) {
   return `<a:solidFill><a:srgbClr val="${color}"/></a:solidFill>`;
 }
@@ -669,10 +725,12 @@ function normalizeCellProperties(cell: string, fill: string, lastRow: boolean, p
 function normalizeTableBlock(table: string, variant: TableStyleVariant): string {
   const profile = materializedTableProfile(variant);
   let result = table.replace(/<a:tblPr\b([^>]*)>/, (_tag, initial: string) => {
-    let attributes = setAttribute(initial ?? "", "firstRow", "1");
+    const selfClosing = /\/\s*>$/.test(_tag);
+    let attributes = (initial ?? "").replace(/\/\s*$/, "");
+    attributes = setAttribute(attributes, "firstRow", "1");
     attributes = setAttribute(attributes, "bandRow", "0");
     attributes = setAttribute(attributes, "bandCol", "0");
-    return `<a:tblPr${attributes}>`;
+    return `<a:tblPr${attributes}${selfClosing ? "/>" : ">"}`;
   });
   // A source deck's tableStyleId can silently re-introduce its own borders,
   // fills, and banding after our direct cell formatting. Shared components
@@ -704,6 +762,49 @@ function normalizeSelectedTables(xml: string, slideNumber: number, selectedIds: 
     }),
     get count() { return count; },
   };
+}
+
+function applyTableLayoutBlock(table: string, command: TableLayoutCommand): string {
+  let columnIndex = 0;
+  let result = table.replace(/<a:gridCol\b([^>]*)\/?\s*>/g, (_tag, initial: string) => {
+    const width = command.columnWidthsEmu[columnIndex++];
+    const attributes = (initial ?? "").replace(/\/\s*$/, "");
+    return width === undefined ? _tag : `<a:gridCol${setAttribute(attributes, "w", String(width))}/>`;
+  });
+  let rowIndex = 0;
+  result = result.replace(/<a:tr\b([^>]*)>/g, (_tag, initial: string) => {
+    const height = command.rowHeightsEmu[rowIndex++];
+    return height === undefined ? _tag : `<a:tr${setAttribute(initial ?? "", "h", String(height))}>`;
+  });
+  const applyMargins = (attributes: string, children?: string) => {
+    let next = attributes ?? "";
+    next = setAttribute(next, "marL", String(command.cellMarginsEmu.left));
+    next = setAttribute(next, "marR", String(command.cellMarginsEmu.right));
+    next = setAttribute(next, "marT", String(command.cellMarginsEmu.top));
+    next = setAttribute(next, "marB", String(command.cellMarginsEmu.bottom));
+    return children === undefined ? `<a:tcPr${next}/>` : `<a:tcPr${next}>${children}</a:tcPr>`;
+  };
+  result = result.replace(/<a:tc\b[\s\S]*?<\/a:tc>/g, (cell) => {
+    if (/<a:tcPr\b[^>]*\/>/.test(cell)) return cell.replace(/<a:tcPr\b([^>]*)\/>/, (_tag, attributes) => applyMargins(attributes));
+    if (/<a:tcPr\b/.test(cell)) return cell.replace(/<a:tcPr\b([^>]*)>([\s\S]*?)<\/a:tcPr>/, (_tag, attributes, children) => applyMargins(attributes, children));
+    return cell.replace(/<\/a:tc>/, `${applyMargins("")}</a:tc>`);
+  });
+  return result;
+}
+
+function applyTableLayoutCommands(xml: string, slideNumber: number, commands: TableLayoutCommand[]): { xml: string; count: number } {
+  const selected = new Map(commands.filter((command) => command.slideNumber === slideNumber).map((command) => [command.tableId, command]));
+  if (!selected.size) return { xml, count: 0 };
+  let ordinal = 0;
+  let count = 0;
+  const next = xml.replace(/<a:tbl\b[\s\S]*?<\/a:tbl>/g, (table) => {
+    ordinal += 1;
+    const command = selected.get(`slide-${slideNumber}-table-${ordinal}`);
+    if (!command) return table;
+    count += 1;
+    return applyTableLayoutBlock(table, command);
+  });
+  return { xml: next, count };
 }
 
 function applyAlignmentRepairs(xml: string, slideNumber: number, repairs: CleanupChange["alignmentRepairs"]): { xml: string; count: number } {
@@ -883,7 +984,7 @@ function attributeFromXml(attributes: string, name: string): string | undefined 
   return attributes.match(new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "i"))?.slice(1).find(Boolean);
 }
 
-async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProposal, requireAccepted: boolean, options?: { templateBytes?: Uint8Array }): Promise<{ bytes: Uint8Array; replacementCount: number; tableCount: number; alignmentCount: number; geometryCount: number; layoutCount: number; textStyleCount: number; decorationCount: number; layoutReceipts: NativeLayoutCloneReceipt[]; normalizedTableIds: string[] }> {
+async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProposal, requireAccepted: boolean, options?: { templateBytes?: Uint8Array }): Promise<{ bytes: Uint8Array; replacementCount: number; tableCount: number; tableLayoutCount: number; alignmentCount: number; geometryCount: number; layoutCount: number; textStyleCount: number; decorationCount: number; layoutReceipts: NativeLayoutCloneReceipt[]; normalizedTableIds: string[] }> {
   if (requireAccepted && proposal.status !== "applied") throw new Error("Accept the cleanup plan before exporting a review copy.");
   const selected = proposal.changes.filter((change) => change.selected);
   if (selected.length === 0) throw new Error("Select at least one cleanup change.");
@@ -891,6 +992,7 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
   const zip = await JSZip.loadAsync(sourceBytes, { checkCRC32: false });
   let replacementCount = 0;
   let tableCount = 0;
+  let tableLayoutCount = 0;
   let alignmentCount = 0;
   let geometryCount = 0;
   let textStyleCount = 0;
@@ -903,6 +1005,7 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     for (const tableId of change.tableIds ?? []) selectedTableIds.set(tableId, variant);
   }
   const selectedAlignmentRepairs = selected.flatMap((change) => change.kind === "alignment" ? change.alignmentRepairs ?? [] : []);
+  const selectedTableLayoutCommands = selected.flatMap((change) => change.kind === "table-layout" ? change.tableLayoutCommands ?? [] : []);
   const selectedGeometryCommands = selected.flatMap((change) => change.kind === "geometry" ? change.geometryCommands ?? [] : []);
   const selectedLayoutCommands = selected.flatMap((change) => change.kind === "layout-remap" ? change.layoutCommands ?? [] : []);
   const selectedTextStyleCommands = selected.flatMap((change) => change.kind === "text-style" ? change.textStyleCommands ?? [] : []);
@@ -922,6 +1025,9 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     const tables = normalizeSelectedTables(xml, slideNumber, selectedTableIds);
     xml = tables.xml;
     tableCount += tables.count;
+    const tableLayouts = applyTableLayoutCommands(xml, slideNumber, selectedTableLayoutCommands);
+    xml = tableLayouts.xml;
+    tableLayoutCount += tableLayouts.count;
     const geometry = applyGeometryCommands(xml, slideNumber, selectedGeometryCommands);
     xml = geometry.xml;
     geometryCount += geometry.count;
@@ -935,6 +1041,7 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     const decorations = applyDecorationCommands(xml, slideNumber, selectedDecorationCommands);
     xml = decorations.xml;
     decorationCount += decorations.count;
+    assertWellFormedXml(xml, path);
     zip.file(path, xml);
   }
   if (alignmentCount !== selectedAlignmentRepairs.length) throw new Error("Alignment validation failed because a staged text box no longer matched its source geometry.");
@@ -944,7 +1051,8 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     throw new Error(`Text-style validation failed because ${selectedTextStyleCommands.length - textStyleCount} staged text object${selectedTextStyleCommands.length - textStyleCount === 1 ? "" : "s"} no longer matched the source revision: ${missing.join(", ")}.`);
   }
   if (decorationCount !== selectedDecorationCommands.length) throw new Error("Decoration validation failed because a staged slide no longer matched the source revision.");
-  if (replacementCount === 0 && tableCount === 0 && alignmentCount === 0 && geometryCount === 0 && textStyleCount === 0 && decorationCount === 0 && selectedLayoutCommands.length === 0) throw new Error("The selected cleanup changes did not match any editable slide markup.");
+  if (tableLayoutCount !== selectedTableLayoutCommands.length) throw new Error("Table-layout validation failed because a staged native table no longer matched the source revision.");
+  if (replacementCount === 0 && tableCount === 0 && tableLayoutCount === 0 && alignmentCount === 0 && geometryCount === 0 && textStyleCount === 0 && decorationCount === 0 && selectedLayoutCommands.length === 0) throw new Error("The selected cleanup changes did not match any editable slide markup.");
 
   let output = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
   const layoutReceipts: NativeLayoutCloneReceipt[] = [];
@@ -954,6 +1062,7 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     output = remapped.bytes;
     layoutReceipts.push(remapped.receipt);
   }
+  await assertWellFormedPowerPointPackage(output);
   const outputAudit = await auditPptx(output);
   if (outputAudit.slideCount !== sourceAudit.slideCount) throw new Error("Cleanup validation failed because the slide count changed.");
   for (let index = 0; index < sourceAudit.slides.length; index += 1) {
@@ -970,7 +1079,13 @@ async function materializeCleanup(sourceBytes: Uint8Array, proposal: CleanupProp
     const outputObject = (outputAudit.editableObjects ?? []).find((object) => object.id === command.objectId);
     if (!outputObject || outputObject.geometry.x !== command.target.x || outputObject.geometry.y !== command.target.y || outputObject.geometry.width !== command.target.width || outputObject.geometry.height !== command.target.height) throw new Error(`Geometry validation failed for ${command.objectId}.`);
   }
-  return { bytes: output, replacementCount, tableCount, alignmentCount, geometryCount, layoutCount: selectedLayoutCommands.length, textStyleCount, decorationCount, layoutReceipts, normalizedTableIds };
+  for (const command of selectedTableLayoutCommands) {
+    const outputTable = outputAudit.tables.find((table) => table.id === command.tableId);
+    if (!outputTable) throw new Error(`Table-layout validation failed for ${command.tableId}.`);
+    if ((outputTable.columns ?? []).some((column, index) => column.widthEmu !== command.columnWidthsEmu[index])) throw new Error(`Column-width validation failed for ${command.tableId}.`);
+    if ((outputTable.rows ?? []).some((row, index) => row.heightEmu !== command.rowHeightsEmu[index])) throw new Error(`Row-height validation failed for ${command.tableId}.`);
+  }
+  return { bytes: output, replacementCount, tableCount, tableLayoutCount, alignmentCount, geometryCount, layoutCount: selectedLayoutCommands.length, textStyleCount, decorationCount, layoutReceipts, normalizedTableIds };
 }
 
 export async function buildCleanupProposalPptx(sourceBytes: Uint8Array, proposal: CleanupProposal, options?: { templateBytes?: Uint8Array }) {

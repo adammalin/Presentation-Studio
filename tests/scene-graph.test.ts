@@ -51,6 +51,12 @@ test("hybrid scene binds every audited object to hashed native slide parts", asy
   assert.equal(table.operations.editTableStyle, true);
   assert.equal(table.operations.editText, false);
   assert.equal(table.representation.internalStructure, "native");
+  const sceneTable = scene.tables?.find((item) => item.objectId === table.id);
+  assert.ok(sceneTable);
+  assert.equal(sceneTable.cells.length, audit.tables[0].rowCount * audit.tables[0].columnCount);
+  assert.equal(sceneTable.rows.length, audit.tables[0].rowCount);
+  assert.equal(sceneTable.columns.length, audit.tables[0].columnCount);
+  assert.match(sceneTable.cells[0].id, /cell-r1-c1$/);
 });
 
 test("scene fidelity distinguishes preserved and conversion-only PowerPoint objects", async () => {

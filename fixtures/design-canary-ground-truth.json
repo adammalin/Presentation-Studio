@@ -1,0 +1,22 @@
+{
+  "schema": "presentation-studio/design-canary-ground-truth",
+  "version": 2,
+  "slideSize": "16:9",
+  "fontFamily": "Aptos",
+  "slides": [
+    { "slideNumber": 1, "defect": "optical-left-misalignment", "objects": ["canary-1-title-off-2pt", "canary-1-body-reference"], "magnitudePt": 2, "expectedDetection": true, "expectedRepair": "align-optical-left" },
+    { "slideNumber": 2, "defect": "optical-left-misalignment", "objects": ["canary-2-title-off-4pt", "canary-2-body-reference"], "magnitudePt": 4, "expectedDetection": true, "expectedRepair": "align-optical-left" },
+    { "slideNumber": 3, "defect": "text-margin-optical-misalignment", "objects": ["canary-3-text-zero-margin", "canary-3-text-margin-5_4pt"], "magnitudePt": 5.4, "expectedDetection": true, "expectedRepair": "align-optical-left" },
+    { "slideNumber": 4, "defect": "bullet-indent-false-alignment", "objects": ["canary-4-plain", "canary-4-bullet-indent"], "magnitudePt": 18, "expectedDetection": true, "expectedRepair": "paragraph-indent-or-optical-alignment" },
+    { "slideNumber": 5, "defect": "vertical-gap-variance", "objects": ["canary-5-panel-1", "canary-5-panel-2", "canary-5-panel-3", "canary-5-panel-4"], "gapsPt": [16, 24, 16], "expectedDetection": true, "expectedRepair": "vertical-equal-gap" },
+    { "slideNumber": 6, "defect": "safe-margin-violation", "objects": ["canary-6-safe-margin-minus-4pt"], "magnitudePt": 4, "expectedDetection": true, "expectedRepair": "move-inside-safe-region" },
+    { "slideNumber": 7, "defect": "table-horizontal-padding", "objects": ["canary-7-table-padding-2pt"], "paddingPt": 2, "expectedDetection": true, "expectedDisposition": "table-layout", "expectedRepair": "six-point-horizontal-and-four-point-vertical-clearance" },
+    { "slideNumber": 8, "defect": "table-horizontal-padding-control", "objects": ["canary-8-table-padding-4pt"], "paddingPt": 4, "expectedDetection": true, "expectedDisposition": "table-layout", "expectedRepair": "six-point-horizontal-and-four-point-vertical-clearance" },
+    { "slideNumber": 9, "defect": "table-horizontal-padding-control", "objects": ["canary-9-table-padding-6pt"], "paddingPt": 6, "expectedDetection": true, "expectedDisposition": "preserved-as-is", "expectedRepair": "approved-as-is" },
+    { "slideNumber": 10, "defect": "table-cell-text-clipping", "objects": ["canary-10-table-clipped-2pt"], "magnitudePt": 2, "expectedDetection": true, "expectedDisposition": "grow-and-table-layout", "expectedRepair": "minimum-safe-region-growth-plus-row-fit" },
+    { "slideNumber": 11, "defect": "table-column-wrap-pressure", "objects": ["canary-11-table-narrow-column"], "expectedDetection": true, "expectedDisposition": "table-layout", "expectedRepair": "redistribute-columns-without-wrap-regression" },
+    { "slideNumber": 12, "defect": "table-row-redistribution-after-native-autogrow", "objects": ["canary-12-table-short-row"], "expectedDetection": true, "expectedDisposition": "table-layout", "expectedRepair": "native-row-grid-fit-without-unnecessary-frame-growth" },
+    { "slideNumber": 13, "defect": "merged-cell-preservation", "objects": ["canary-13-table-merged-cell"], "expectedDetection": true, "expectedDisposition": "table-layout", "expectedRepair": "native-fit-with-identical-merged-topology" },
+    { "slideNumber": 14, "defect": "visual-balance-only", "objects": ["canary-14-small-left-panel", "canary-14-large-right-panel"], "expectedDetection": false, "requiresAiJudgment": true, "expectedRepair": "semantic-recomposition" }
+  ]
+}

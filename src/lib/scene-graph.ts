@@ -3,6 +3,7 @@ import type {
   PptxAudit,
   PresentationScene,
   PresentationSceneObject,
+  PresentationSceneTable,
   SceneFidelityCounts,
   SceneFidelityState,
   SceneSemanticRole,
@@ -99,6 +100,57 @@ function sceneObject(
   };
 }
 
+function sceneTable(input: SceneCompileInput, tableId: string): PresentationSceneTable | undefined {
+  const table = input.audit.tables.find((item) => item.id === tableId);
+  const object = input.audit.editableObjects.find((item) => item.tableId === tableId);
+  if (!table || !object) return undefined;
+  let x = 0;
+  const columns = (table.columns ?? []).map((column) => {
+    const compiled = { id: column.id, index: column.index, width: column.widthEmu, x };
+    x += column.widthEmu;
+    return compiled;
+  });
+  let y = 0;
+  const rows = (table.rows ?? []).map((row) => {
+    const compiled = { id: row.id, index: row.index, height: row.heightEmu, y };
+    y += row.heightEmu;
+    return compiled;
+  });
+  const cells = (table.cells ?? []).map((cell) => {
+    const column = columns[cell.column - 1];
+    const row = rows[cell.row - 1];
+    const width = columns.slice(cell.column - 1, cell.column - 1 + cell.columnSpan).reduce((sum, item) => sum + item.width, 0);
+    const height = rows.slice(cell.row - 1, cell.row - 1 + cell.rowSpan).reduce((sum, item) => sum + item.height, 0);
+    return {
+      id: cell.id,
+      row: cell.row,
+      column: cell.column,
+      rowSpan: cell.rowSpan,
+      columnSpan: cell.columnSpan,
+      geometry: { x: column?.x ?? 0, y: row?.y ?? 0, width, height },
+      margins: { ...cell.marginsEmu },
+      contentHash: cell.textHash,
+      characterCount: cell.characterCount,
+      horizontalAlignment: cell.horizontalAlignment,
+      verticalAlignment: cell.verticalAlignment,
+      mergeContinuation: cell.horizontalMergeContinuation || cell.verticalMergeContinuation,
+    };
+  });
+  return {
+    id: table.id,
+    objectId: object.id,
+    slideNumber: table.slideNumber,
+    rowCount: table.rowCount,
+    columnCount: table.columnCount,
+    geometry: { x: object.geometry.x, y: object.geometry.y, width: object.geometry.width, height: object.geometry.height },
+    rows,
+    columns,
+    cells,
+    contentHash: table.contentHash,
+    structureHash: table.structureHash,
+  };
+}
+
 export function compilePresentationScene(input: SceneCompileInput): PresentationScene {
   const objects: PresentationSceneObject[] = [];
   for (const slide of input.audit.slides) {
@@ -125,6 +177,7 @@ export function compilePresentationScene(input: SceneCompileInput): Presentation
       protected: protectedSlide,
     };
   });
+  const tables = input.audit.tables.map((table) => sceneTable(input, table.id)).filter((table): table is PresentationSceneTable => Boolean(table));
   const blockingFeatures: Array<"macros" | "ole-objects" | "external-relationships"> = [];
   if (input.audit.containsMacros) blockingFeatures.push("macros");
   if (input.audit.containsOleObjects) blockingFeatures.push("ole-objects");
@@ -143,6 +196,7 @@ export function compilePresentationScene(input: SceneCompileInput): Presentation
     templateBinding,
     slides,
     objects,
+    tables,
     fidelityCounts: countFidelity(objects.map((object) => object.fidelityState)),
     preservationEnvelope: {
       schema: PRESERVATION_ENVELOPE_SCHEMA,

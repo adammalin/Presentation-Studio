@@ -32,6 +32,22 @@ async function callImage(operation, input, message) {
   } catch (error) { return failure(error); }
 }
 
+async function callImages(operation, input, message) {
+  try {
+    const result = await client.command(operation, input);
+    const images = Array.isArray(result.images) ? result.images : [];
+    if (!images.length || images.some((item) => typeof item?.data !== "string" || !["image/jpeg", "image/png"].includes(item?.mimeType))) throw new Error("Presentation Studio did not return the required bounded inspection images.");
+    const structuredContent = { ...result, images: images.map(({ data: _data, ...metadata }) => metadata) };
+    return {
+      structuredContent,
+      content: [
+        { type: "text", text: typeof message === "function" ? message(result) : message },
+        ...images.map((item) => ({ type: "image", data: item.data, mimeType: item.mimeType })),
+      ],
+    };
+  } catch (error) { return failure(error); }
+}
+
 server.registerTool("get_design_contract", {
   title: "Get the presentation designer contract",
   description: "Read the mandatory deck-wide design and QA instructions that govern any AI model using Presentation Studio. Call this before proposing or performing cleanup. The contract requires improving every slide, preserving approved content exactly, inspecting every text box and visual, choosing the best approved layout, minimizing routine approval questions, and independently rendering the export for visual QA.",
@@ -41,10 +57,10 @@ server.registerTool("get_design_contract", {
 
 server.registerTool("get_app_status", {
   title: "Get Presentation Studio status",
-  description: "Check whether the local desktop app is open and summarize the active project without reading deck content. AI session access may remain off for this status check.",
+  description: "Check whether the local desktop app is open, summarize the active project without reading deck content, and report whether PowerPoint-native render/measurement is ready or blocked by a locked Mac. AI session access may remain off for this status check.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, () => call("get_app_status", {}, (result) => `Presentation Studio is open with ${result.project.deckCount} decks and ${result.project.slideCount} audited slides. AI session access is ${result.aiSessionAccess ? "on" : "off"}.`));
+}, () => call("get_app_status", {}, (result) => `Presentation Studio is open with ${result.project.deckCount} decks and ${result.project.slideCount} audited slides. AI session access is ${result.aiSessionAccess ? "on" : "off"}. PowerPoint-native QA is ${result.nativePowerPoint?.ready ? "ready" : result.nativePowerPoint?.sessionLocked ? "blocked until the Mac is unlocked" : "unavailable"}.`));
 
 server.registerTool("list_decks", {
   title: "List presentation review jobs",
@@ -76,7 +92,7 @@ server.registerTool("list_resources", {
 
 server.registerTool("get_template_layout_catalog", {
   title: "Read the active Template Pack layout system",
-  description: "Read every approved layout in the installed local PowerPoint Template Pack as semantic intent, editable slots, accepted content kinds, capacity, and fit constraints. This exposes no template bytes or artwork. Use it before choosing a layout; never select from the layout name alone.",
+  description: "Read every approved layout in the installed local PowerPoint Template Pack as semantic intent plus responsive editable-slot contracts: preferred/minimum/maximum bounds, allowed object kinds, alignment and padding intent, priority, capacity, and fit constraints. This exposes no template bytes or artwork. Use it before choosing a layout; never select from the layout name alone.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => call("get_template_layout_catalog", {}, (result) => `Read ${result.layouts.length} semantic layouts from ${result.template.name}.`));
@@ -104,7 +120,14 @@ server.registerTool("get_slide_design_work_order", {
   description: "Assemble the authoritative Current PowerPoint evidence, exact locked copy, hybrid scene objects and allowed operations, slide findings, submitted comments, ORNL rules, and ranked Template Pack layouts into one revision-bound work order. Call this before designing a slide; it is the primary Inspect and Diagnose input for the iterative visual-design loop.",
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, (input) => call("get_slide_design_work_order", input, (result) => `Built design work order ${result.revision} for slide ${result.slide.number} of ${result.deck.name}.`));
+}, (input) => callImage("get_slide_design_work_order", input, (result) => `Built image-bearing design work order ${result.revision} for slide ${result.slide.number} of ${result.deck.name}. The attached PNG is an authoritative 2,200-pixel Microsoft PowerPoint render.`));
+
+server.registerTool("get_slide_inspection_packet", {
+  title: "Inspect a slide with native pixels, crops, measurements, and metrics",
+  description: "Return one revision-bound inspection packet containing the exact design work order, a 2,200-pixel PowerPoint-native full-slide PNG, readable title/table/text crops, a deterministic crop overlay, native rendered-text and cell measurements, and objective design metrics. Call this instead of guessing geometry from a screenshot. Use current before design work and proposal after staging; pixels guide gestalt, PowerPoint supplies measurements, and deterministic solvers supply exact coordinates.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), representation: z.enum(["current", "proposal"]).default("current") },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImages("get_slide_inspection_packet", input, (result) => `Built ${result.representation} inspection packet ${result.revision} with ${result.images.length} PowerPoint-native visual evidence images for slide ${result.slide.number} of ${result.deck.name}.`));
 
 server.registerTool("get_deck_design_work_order", {
   title: "Read the representative deck-design qualification set",
@@ -113,12 +136,30 @@ server.registerTool("get_deck_design_work_order", {
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_deck_design_work_order", input, (result) => `Built ${result.workOrders.length} representative design work orders for ${result.deck.name}.`));
 
+server.registerTool("get_deck_contact_sheet", {
+  title: "Review a PowerPoint-native deck contact sheet",
+  description: "Return one revision-bound page of up to 40 PowerPoint-native slide thumbnails for deck-level visual review. Page through the complete Current or Proposal deck to judge hierarchy, density, pacing, repeated-component consistency, and outliers before opening precise slide inspection packets. The contact sheet is authoritative for gestalt but not point geometry.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    representation: z.enum(["current", "proposal"]).default("current"),
+    page: z.number().int().min(1).max(25).default(1),
+  },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImages("get_deck_contact_sheet", input, (result) => `Rendered PowerPoint-native ${result.representation} deck contact sheet page ${result.page} of ${result.pageCount}, covering slides ${result.firstSlideNumber}–${result.lastSlideNumber} of ${result.deck.name}.`));
+
 server.registerTool("get_deck_audit", {
   title: "Read a deck audit",
   description: "Read deterministic template, font, editable text-box geometry, fit risk, alignment, object, comments, support, and production findings for one audited deck. Requires AI session access. Visible slide text and Resource bytes are intentionally omitted.",
   inputSchema: { deckId: z.string().min(1).max(120) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_deck_audit", input, (result) => `Read the audit for ${result.deck.name} with ${result.audit.findings.length} findings.`));
+
+server.registerTool("get_slide_measurements", {
+  title: "Read native PowerPoint slide measurements",
+  description: "Read revision-bound Microsoft PowerPoint measurements for every source-bound object on one current or proposed slide: rendered text bounds, text-frame margins, line counts, object geometry, table row heights, column widths, cell bounds, cell margins, rendered cell-text bounds, and clearance metrics. The result returns hashes and counts but no slide copy. Use these facts and the semantic solvers instead of estimating point geometry from pixels.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), representation: z.enum(["current", "proposal"]).default("current") },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_slide_measurements", input, (result) => `Read ${result.measurement.authority} measurements and design metrics for ${result.representation} slide ${result.slideNumber} of ${result.deck.name}.`));
 
 server.registerTool("get_slide_design_context", {
   title: "Read bounded slide design context",
@@ -172,6 +213,21 @@ server.registerTool("reject_design_proposal", {
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("reject_design_proposal", input, (result) => `Rejected proposal ${result.proposal.id} after PowerPoint-native review. The source, accepted state, saved project, and exports are unchanged.`));
 
+server.registerTool("record_proposal_visual_critique", {
+  title: "Record a revision-bound AI visual critique",
+  description: "After reading the Proposal inspection packet, record whether the native PowerPoint draft is visually better, needs another semantic revision, or should be rejected. The exact inspection revision, PowerPoint raster hashes, objective metric changes, rationale, and attempt number are persisted. A requested better verdict is withheld when deterministic metrics regress or pixels are unchanged. Automatic AI revision is capped at three attempts; attempt three rejects an unresolved draft. This never applies, saves, exports, or overwrites content.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    proposalId: z.string().min(1).max(120),
+    slideNumber: z.number().int().min(1),
+    inspectionRevision: z.string().min(1).max(500),
+    verdict: z.enum(["better", "revise", "reject"]),
+    rationale: z.string().min(1).max(1_000),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("record_proposal_visual_critique", input, (result) => `Recorded AI visual iteration ${result.critique.attempt}/3 as ${result.recordedVerdict}. The proposal remains ${result.proposal.status}; nothing was applied, saved, exported, or overwritten.`));
+
 server.registerTool("list_design_threads", {
   title: "List design comments submitted to AI",
   description: "List only location-anchored design threads the user explicitly submitted to AI. Private notes are excluded. Results include the exact slide revision and normalized region but no unrelated slide content.",
@@ -212,6 +268,125 @@ server.registerTool("stage_table_design_update", {
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("stage_table_design_update", input, (result) => `Staged the shared ${result.variant} ORNL component for ${result.tableCount} native table${result.tableCount === 1 ? "" : "s"}. Compare Current and Proposal; nothing was applied, saved, exported, or overwritten.`));
+
+server.registerTool("solve_and_stage_alignment", {
+  title: "Solve and stage semantic alignment",
+  description: "Align 2–20 source-bound objects with a deterministic minimum-movement solver. Optical-left uses PowerPoint-native rendered text starts; structural modes use native object edges or centers. The solver enforces slide bounds, safe margins, and collision constraints, returns infeasible instead of guessing, and stages only a reversible Current/Proposal transaction. Use this for titles, body columns, captions, and peer elements instead of manually inventing x/y coordinates.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+    objectIds: z.array(z.string().min(1).max(180)).min(2).max(20),
+    anchorObjectId: z.string().min(1).max(180).optional(),
+    mode: z.enum(["left", "optical-left", "center", "right", "top", "middle", "bottom"]),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("solve_and_stage_alignment", input, (result) => result.staged ? `Solved and staged ${result.result.commands.length} minimum-movement alignment edits. Inspect and remeasure the Proposal; nothing was applied, saved, exported, or overwritten.` : `The alignment solver refused the requested transaction: ${result.result.diagnostics.join(" ")}`));
+
+server.registerTool("solve_and_stage_distribution", {
+  title: "Solve and stage equal-gap distribution",
+  description: "Distribute 3–20 source-bound objects—or three or more declared object groups—with exact horizontal or vertical equal gaps while preserving the outer span and minimizing movement. Use groups for cards, panels, captions, or other components whose children must move together. The deterministic solver rejects overlap, safe-region, and collision failures instead of asking the AI to estimate coordinates. The result remains a reversible Current/Proposal transaction.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+    objectIds: z.array(z.string().min(1).max(180)).min(3).max(20),
+    groups: z.array(z.array(z.string().min(1).max(180)).min(1).max(10)).min(3).max(10).optional(),
+    mode: z.enum(["horizontal-equal-gap", "vertical-equal-gap"]),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("solve_and_stage_distribution", input, (result) => result.staged ? `Solved and staged ${result.result.commands.length} equal-gap distribution edits. Inspect and remeasure the Proposal; nothing was applied, saved, exported, or overwritten.` : `The distribution solver refused the requested transaction: ${result.result.diagnostics.join(" ")}`));
+
+server.registerTool("solve_and_stage_safe_region", {
+  title: "Fit objects into the slide safe region",
+  description: "Move 1–20 source-bound objects as one intact group by the minimum distance needed to fit inside the 18-point slide safe region. The deterministic solver preserves every relative position, rejects infeasible oversized groups and new collisions, then remeasures the staged proposal in PowerPoint. Use this instead of inventing x/y coordinates for near-edge content.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+    objectIds: z.array(z.string().min(1).max(180)).min(1).max(20),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("solve_and_stage_safe_region", input, (result) => result.staged ? `Solved and staged ${result.result.commands.length} minimum-movement safe-region edits. Inspect and remeasure the Proposal; nothing was applied, saved, exported, or overwritten.` : `The safe-region solver refused the requested transaction: ${result.result.diagnostics.join(" ")}`));
+
+server.registerTool("solve_and_stage_group_layout", {
+  title: "Compose visual groups in an approved layout region",
+  description: "Place 1–10 declared visual groups into one responsive semantic slot from the active approved Template Pack as a horizontal or vertical stack. Presentation Studio preserves each group's internal geometry and relationships, applies versioned hierarchy-aware spacing for primary, supporting, and caption groups, honors slot padding and cross-axis alignment, and centers unused whitespace. When explicitly enabled, bounded proportional scaling can fit resize-capable groups down to a declared floor; PowerPoint remeasurement still rejects text-fit regression. Infeasible regions or new collisions are withheld. Use this after the AI chooses the appropriate layout, grouping, and semantic hierarchy; do not calculate coordinates manually.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+    layoutId: z.string().min(1).max(180),
+    slotId: z.string().min(1).max(180),
+    groups: z.array(z.array(z.string().min(1).max(180)).min(1).max(10)).min(1).max(10),
+    groupRoles: z.array(z.enum(["primary", "supporting", "caption"])).min(1).max(10).optional(),
+    mode: z.enum(["horizontal-stack", "vertical-stack"]),
+    alignment: z.enum(["start", "center", "end"]).default("start"),
+    preferredGapPt: z.number().min(0).max(72).default(18),
+    allowResponsiveScale: z.boolean().default(false),
+    minimumScale: z.number().min(.5).max(1).default(.75),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("solve_and_stage_group_layout", input, (result) => result.staged ? `Solved and staged ${result.result.commands.length} approved-region group-layout edits. Inspect the native Proposal pixels; nothing was applied, saved, exported, or overwritten.` : `The approved-region group solver refused the requested transaction: ${result.result.diagnostics.join(" ")}`));
+
+server.registerTool("fit_scene_to_layout", {
+  title: "Fit a complete slide scene to approved layout regions",
+  description: "Atomically fit 1–30 source-bound objects across 1–8 responsive semantic regions from one approved Template Pack layout. Declare relationship-preserving groups and primary/supporting/caption hierarchy per region; Presentation Studio applies each slot's preferred bounds, padding and alignment intent, optionally performs bounded proportional scaling on resize-capable groups, validates cross-region collisions and the slide safe area as one transaction, then rerenders and remeasures the reversible Proposal in PowerPoint. Use this shared-layout operation instead of redrawing each slide or calculating coordinates independently.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    slideNumber: z.number().int().min(1),
+    layoutId: z.string().min(1).max(180),
+    regions: z.array(z.object({
+      slotId: z.string().min(1).max(180),
+      groups: z.array(z.array(z.string().min(1).max(180)).min(1).max(10)).min(1).max(10),
+      groupRoles: z.array(z.enum(["primary", "supporting", "caption"])).min(1).max(10).optional(),
+      mode: z.enum(["horizontal-stack", "vertical-stack"]),
+      alignment: z.enum(["start", "center", "end"]).optional(),
+      preferredGapPt: z.number().min(0).max(72).optional(),
+      allowResponsiveScale: z.boolean().default(false),
+      minimumScale: z.number().min(.5).max(1).default(.75),
+    })).min(1).max(8),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("fit_scene_to_layout", input, (result) => result.staged ? `Fitted and staged ${result.result.commands.length} cross-region scene-layout edits. Inspect the native Proposal pixels; nothing was applied, saved, exported, or overwritten.` : `The responsive scene-layout solver refused the requested transaction: ${result.result.diagnostics.join(" ")}`));
+
+server.registerTool("solve_and_stage_table_layout", {
+  title: "Solve and stage a native table layout",
+  description: "Fit one cell-level native PowerPoint table using measured text bounds, row heights, column widths, cell margins, readable type floors, and minimum padding. The deterministic solver preserves a table that already passes, reallocates rows and columns when needed, and may grow the native table by the minimum amount that fits inside the safe region before PowerPoint remeasurement. It preserves exact cell copy and merged structure and returns concrete space recommendations when constraints remain infeasible instead of shrinking text. The solved grid remains a reversible Current/Proposal transaction and must be remeasured before acceptance.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    tableId: z.string().min(1).max(180),
+    variant: z.enum(["standard", "dense-technical"]).default("standard"),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("solve_and_stage_table_layout", input, (result) => result.staged ? `Solved and staged a cell-level native table layout for ${result.tableId}. Inspect and remeasure the Proposal; nothing was applied, saved, exported, or overwritten.` : result.result.status === "already-fit" ? `PowerPoint confirms that ${result.tableId} already satisfies the resolved table constraints; no proposal was needed.` : `The table solver refused to violate its readability constraints. ${result.result.diagnostics.reasons.join(" ")} ${result.result.diagnostics.recommendations.join(" ")}`));
+
+server.registerTool("solve_and_stage_text_fit", {
+  title: "Fit text from native PowerPoint measurements",
+  description: "Fit one source-bound text frame using PowerPoint-native rendered bounds and real frame margins. The deterministic solver raises uniform body or caption type to the resolved readability floor when needed, grows the frame by the minimum measured amount around its existing vertical anchor, preserves exact copy, and remeasures/rerenders the proposal in PowerPoint. It refuses horizontal clipping, mixed run-level hierarchy below the floor, safe-region regressions, and unresolved overflow; use an approved wider/taller region or semantic recomposition when infeasible. This remains a reversible Current/Proposal transaction and never silently shrinks text.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    objectId: z.string().min(1).max(180),
+    rationale: z.string().min(1).max(700),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("solve_and_stage_text_fit", input, (result) => result.staged ? `PowerPoint remeasurement confirmed a non-clipping text fit for ${result.result.geometry?.objectId ?? result.result.textStyle?.objectId}. Inspect the Proposal pixels; nothing was applied, saved, exported, or overwritten.` : `The text-fit solver withheld the draft. ${result.result.diagnostics.reasons.join(" ")} ${result.result.diagnostics.recommendations.join(" ")}`));
 
 server.registerTool("stage_slide_geometry_update", {
   title: "Stage a measured slide-object edit",

@@ -11,5 +11,15 @@ const child = spawn(process.execPath, [electronBin, "."], { cwd: root, env: { ..
 const code = await new Promise((resolve) => child.on("exit", resolve));
 if (code !== 0) process.exit(code ?? 1);
 const stats = await fs.stat(capture);
-if (stats.size < 75_000) throw new Error("Electron smoke capture was unexpectedly small and may be blank.");
-console.log(`Electron smoke passed with a ${stats.size.toLocaleString()}-byte renderer capture.`);
+const png = await fs.readFile(capture);
+if (png.length < 24) throw new Error("Electron smoke capture is truncated.");
+const signature = png.subarray(0, 8).toString("hex");
+const width = png.readUInt32BE(16);
+const height = png.readUInt32BE(20);
+if (signature !== "89504e470d0a1a0a") throw new Error("Electron smoke capture is not a valid PNG image.");
+if (width < 1200 || height < 700) throw new Error(`Electron smoke capture is unexpectedly small (${width} x ${height}).`);
+// The flat ORNL UI compresses efficiently, so compressed byte size is only a
+// coarse blank-image guard. Dimension checks above remain stable as styling
+// changes make otherwise healthy screenshots larger or smaller on disk.
+if (stats.size < 20_000) throw new Error("Electron smoke capture may be blank or incomplete.");
+console.log(`Electron smoke passed with a ${width} x ${height}, ${stats.size.toLocaleString()}-byte renderer capture.`);

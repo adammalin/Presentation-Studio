@@ -16,6 +16,8 @@
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:fixture": "tsx scripts/create-synthetic-fixture.ts",
+    "test:canary:create": "tsx scripts/create-design-canary.ts",
+    "test:canary:native": "tsx scripts/run-design-canary.ts",
     "desktop:smoke": "node scripts/electron-smoke.mjs",
     "mcp": "node mcp/server.mjs",
     "guide": "python3 scripts/build-install-guide.py",

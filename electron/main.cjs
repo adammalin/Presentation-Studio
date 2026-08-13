@@ -5,6 +5,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 const { nativeRenderCapabilities, renderPowerPointNative } = require("./native-render.cjs");
+const { measurePowerPointNative, nativeMeasurementCapabilities } = require("./native-measurement.cjs");
 const { installEditorContextMenu } = require("./editor-context-menu.cjs");
 
 app.setName("Presentation Studio");
@@ -14,6 +15,7 @@ const capturePath = process.env.PRESENTATION_STUDIO_CAPTURE_PATH || "";
 const captureView = process.env.PRESENTATION_STUDIO_CAPTURE_VIEW || "";
 const captureResourceFixture = process.env.PRESENTATION_STUDIO_CAPTURE_RESOURCE_FIXTURE === "1";
 const skipFirstRunTour = process.env.PRESENTATION_STUDIO_SKIP_FIRST_RUN_TOUR === "1";
+const launchProjectPath = String(process.env.PRESENTATION_STUDIO_OPEN_PROJECT || "").trim();
 if (smokeTest || capturePath) app.setPath("userData", path.join(app.getPath("temp"), `presentation-studio-isolated-${process.pid}`));
 
 const MCP_RUNTIME_FILE_NAME = "mcp-runtime.json";
@@ -142,7 +144,7 @@ function dispatchMcpCommand(operation, input) {
   }
   const id = randomUUID();
   return new Promise((resolve, reject) => {
-    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render"].includes(operation);
+    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation);
     const timer = setTimeout(() => {
       pendingMcpCommands.delete(id);
       reject(new Error("Presentation Studio did not answer the MCP request in time."));
@@ -274,11 +276,23 @@ function registerIpc() {
 
   ipcMain.handle("render:get-capabilities", () => nativeRenderCapabilities());
 
+  ipcMain.handle("measurement:get-capabilities", () => nativeMeasurementCapabilities());
+
   ipcMain.handle("render:powerpoint", async (_event, payload) => {
     const name = path.basename(String(payload?.name ?? "presentation.pptx"));
     if (!/\.pptx$/i.test(name)) throw new Error("PowerPoint-native rendering requires a PPTX file.");
     const bytes = validateBinary(payload?.bytes);
-    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => renderPowerPointNative({ bytes, name, homePath: app.getPath("home") }));
+    const width = payload?.width === undefined ? 1400 : Number(payload.width);
+    const format = payload?.format === "png" ? "png" : "jpeg";
+    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => renderPowerPointNative({ bytes, name, homePath: app.getPath("home"), width, format }));
+    return nativeRenderQueue;
+  });
+
+  ipcMain.handle("measurement:powerpoint", async (_event, payload) => {
+    const name = path.basename(String(payload?.name ?? "presentation.pptx"));
+    if (!/\.pptx$/i.test(name)) throw new Error("PowerPoint-native measurement requires a PPTX file.");
+    const bytes = validateBinary(payload?.bytes);
+    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => measurePowerPointNative({ bytes, name, homePath: app.getPath("home") }));
     return nativeRenderQueue;
   });
 
@@ -361,6 +375,10 @@ function registerIpc() {
   });
 
   ipcMain.handle("file:open-project", async () => {
+    if (launchProjectPath) {
+      if (!path.isAbsolute(launchProjectPath) || !/\.pstudio(?:-secure)?$/i.test(launchProjectPath)) throw new Error("PRESENTATION_STUDIO_OPEN_PROJECT must be an absolute Presentation Studio project path.");
+      return { canceled: false, file: { name: path.basename(launchProjectPath), filePath: launchProjectPath, bytes: new Uint8Array(await fs.readFile(launchProjectPath)) } };
+    }
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Open Presentation Studio project",
       properties: ["openFile"],
@@ -476,10 +494,39 @@ async function createWindow() {
       backgroundThrottling: !smokeTest,
     },
   });
+  if (launchProjectPath) {
+    mainWindow.webContents.on("did-start-loading", () => console.log("PRESENTATION_STUDIO_LAUNCH_PROJECT did-start-loading"));
+    mainWindow.webContents.on("did-finish-load", () => console.log("PRESENTATION_STUDIO_LAUNCH_PROJECT did-finish-load"));
+    mainWindow.webContents.on("render-process-gone", (_event, details) => console.log(`PRESENTATION_STUDIO_LAUNCH_PROJECT render-process-gone ${JSON.stringify(details)}`));
+    mainWindow.on("closed", () => console.log("PRESENTATION_STUDIO_LAUNCH_PROJECT window-closed"));
+  }
   installEditorContextMenu(mainWindow, Menu);
   const devUrl = process.env.PRESENTATION_STUDIO_DEV_URL;
   if (devUrl) await mainWindow.loadURL(devUrl);
   else await mainWindow.loadFile(path.join(projectRoot, "dist", "index.html"));
+  if (launchProjectPath) {
+    const opened = await mainWindow.webContents.executeJavaScript(`(async () => {
+      const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.trim() === 'Open');
+        if (button) { button.click(); break; }
+        await wait(50);
+      }
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        if (document.body.innerText.includes('1 decks · preserve-exact')) return true;
+        await wait(100);
+      }
+      return false;
+    })()`);
+    if (!opened) throw new Error("The launch project did not finish opening in Presentation Studio.");
+    if (process.env.PRESENTATION_STUDIO_ENABLE_AI_SESSION === "1") {
+      await mainWindow.webContents.executeJavaScript(`(() => {
+        const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('AI session'));
+        if (button?.textContent?.includes('Access off')) button.click();
+        return Boolean(button);
+      })()`);
+    }
+  }
   if (capturePath || smokeTest) {
     let ready = false;
     for (let attempt = 0; attempt < 50; attempt += 1) {

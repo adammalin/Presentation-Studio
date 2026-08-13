@@ -29,6 +29,12 @@ test("OOXML audit inventories synthetic slides, fonts, and tables", async () => 
   assert.match(audit.tables[0].styleFingerprint, /^[0-9a-f]{64}$/);
   assert.match(audit.tables[0].contentHash, /^[0-9a-f]{64}$/);
   assert.match(audit.tables[0].structureHash, /^[0-9a-f]{64}$/);
+  assert.equal(audit.tables[0].rows?.length, 3);
+  assert.equal(audit.tables[0].columns?.length, 3);
+  assert.equal(audit.tables[0].cells?.length, 9);
+  assert.equal(audit.tables[0].cells?.[0].id, "slide-2-table-1-cell-r1-c1");
+  assert.equal(audit.tables[0].cells?.[0].text, "Category");
+  assert.match(audit.tables[0].cells?.[0].textHash ?? "", /^[0-9a-f]{64}$/);
   assert.equal(audit.alignmentRepairs.length, 2);
   assert.ok(audit.alignmentRepairs.some((repair) => repair.ruleId === "cover.dominant-left-edge"));
   assert.ok(audit.alignmentRepairs.some((repair) => repair.ruleId === "peer.dominant-left-edge"));

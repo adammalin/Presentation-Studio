@@ -1,5 +1,7 @@
 import type { DeckJob, DesignThread } from "../types";
 import type { NativeRenderResult } from "./desktop";
+import type { NativeMeasurementPacket } from "./native-measurement";
+import { calculateSlideDesignMetrics } from "./design-metrics";
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import { rankLayoutCompatibility, type LayoutContentProfile, type TemplateLayoutIntent } from "./layout-semantics";
 import type { TemplateCatalog } from "./template-catalog";
@@ -101,6 +103,7 @@ export function buildSlideDesignWorkOrder(input: {
   projectUpdatedAt: string;
   templateCatalog: TemplateCatalog;
   currentRender?: NativeRenderResult;
+  currentMeasurement?: NativeMeasurementPacket;
   threads?: DesignThread[];
 }) {
   const { deck, slideNumber, projectUpdatedAt, templateCatalog } = input;
@@ -130,11 +133,27 @@ export function buildSlideDesignWorkOrder(input: {
         confidence: textBox.opticalAlignmentConfidence,
         instruction: "Align visible text starts, not only shape x coordinates. Treat partial-inheritance values as visual-review evidence, not exact inherited PowerPoint layout values.",
       } : undefined,
+      nativeMeasurement: input.currentMeasurement?.objects.find((measurement) => measurement.objectId === object.id),
+    };
+  });
+  const tables = (deck.scene.tables ?? []).filter((table) => table.slideNumber === slideNumber).map((table) => {
+    const inventory = deck.audit?.tables.find((item) => item.id === table.id);
+    const measurement = input.currentMeasurement?.objects.find((item) => item.tableId === table.id)?.table;
+    return {
+      ...table,
+      columns: table.columns.map((column) => ({ ...column, widthInches: column.width / 914_400, nativeWidthPt: measurement?.columnWidthsPt[column.index - 1] })),
+      rows: table.rows.map((row) => ({ ...row, heightInches: row.height / 914_400, nativeHeightPt: measurement?.rowHeightsPt[row.index - 1] })),
+      cells: table.cells.map((cell) => {
+        const source = inventory?.cells?.find((candidate) => candidate.id === cell.id);
+        const native = measurement?.cells.find((candidate) => candidate.cellId === cell.id);
+        return { ...cell, exactText: source?.text, fontFamilies: source?.fontFamilies, fontSizes: source?.fontSizes, nativeMeasurement: native };
+      }),
     };
   });
   const submittedThreads = (input.threads ?? []).filter((thread) => thread.deckId === deck.id && thread.slideNumber === slideNumber && thread.status !== "note");
   const currentVisualEvidence = visualEvidence(input.currentRender, slideNumber);
-  const revision = `${projectUpdatedAt}:${deck.scene.revision}:slide-${slideNumber}:standard-${PRESENTATION_DESIGN_STANDARD.version}:template-${templateCatalog.sha256}:render-${"rasterSha256" in currentVisualEvidence ? currentVisualEvidence.rasterSha256 : "unavailable"}`;
+  const designMetrics = input.currentMeasurement ? calculateSlideDesignMetrics(deck, input.currentMeasurement, slideNumber) : undefined;
+  const revision = `${projectUpdatedAt}:${deck.scene.revision}:slide-${slideNumber}:standard-${PRESENTATION_DESIGN_STANDARD.version}:template-${templateCatalog.sha256}:render-${"rasterSha256" in currentVisualEvidence ? currentVisualEvidence.rasterSha256 : "unavailable"}:measurement-${input.currentMeasurement?.revision ?? "unavailable"}`;
   return {
     schema: DESIGN_WORK_ORDER_SCHEMA,
     version: DESIGN_WORK_ORDER_VERSION,
@@ -162,6 +181,15 @@ export function buildSlideDesignWorkOrder(input: {
     communicationJob: `Improve slide ${slideNumber} as a restrained ORNL technical presentation slide while preserving every approved word and technical relationship.`,
     contentProfile: profile,
     objects,
+    tables,
+    nativeMeasurement: input.currentMeasurement ? {
+      revision: input.currentMeasurement.revision,
+      authority: input.currentMeasurement.authority,
+      adapter: input.currentMeasurement.adapter,
+      powerPointVersion: input.currentMeasurement.powerPointVersion,
+      warnings: input.currentMeasurement.warnings,
+    } : { authority: "unavailable", warnings: ["Acquire a native PowerPoint measurement packet before precision alignment or table fitting."] },
+    designMetrics,
     findings: deck.audit.findings.filter((finding) => finding.slideNumber === slideNumber),
     geometryChecks: deck.audit.layoutReviews.filter((finding) => finding.slideNumber === slideNumber),
     submittedThreads: submittedThreads.map((thread) => ({ id: thread.id, baseRevision: thread.baseRevision, anchor: thread.anchor, comment: thread.comment, status: thread.status })),
@@ -169,6 +197,7 @@ export function buildSlideDesignWorkOrder(input: {
     currentVisualEvidence,
     designRules: {
       expression: "restrained",
+      precisionLayout: PRESENTATION_DESIGN_STANDARD.precisionLayout,
       typography: PRESENTATION_DESIGN_STANDARD.defaults.typography,
       palette: PRESENTATION_DESIGN_STANDARD.defaults.palette,
       geometry: PRESENTATION_DESIGN_STANDARD.defaults.geometry,
@@ -180,7 +209,7 @@ export function buildSlideDesignWorkOrder(input: {
     },
     requiredSequence: [
       "Inspect the authoritative Current render and every structured object.",
-      "Diagnose hierarchy, optical text alignment, fit, visual balance, table/figure treatment, and layout compatibility; align visible text starts using insets and paragraph indents rather than shape x coordinates alone.",
+      "Diagnose hierarchy, optical text alignment, fit, visual balance, table/figure treatment, and layout compatibility using PowerPoint-native bounds where available; do not estimate point geometry from pixels.",
       "Classify the slide into one shared layout recipe and compose it from the named components; do not invent a new spacing system for the slide.",
       "Choose a compatible approved PowerPoint layout or explain why the current native arrangement is stronger.",
       "Stage one bounded semantic recomposition or atomic geometry transaction without rewriting content.",
@@ -198,6 +227,7 @@ export function buildDeckDesignWorkOrder(input: {
   projectUpdatedAt: string;
   templateCatalog: TemplateCatalog;
   currentRender?: NativeRenderResult;
+  currentMeasurement?: NativeMeasurementPacket;
   threads?: DesignThread[];
 }) {
   const representatives = selectRepresentativeSlides(input.deck);

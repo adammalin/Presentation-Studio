@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-12.6",
+  "version": "2026-08-12.10",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer. Improve every in-scope slide, not only fonts, while preserving approved technical content exactly.",
@@ -32,7 +32,8 @@
     "contentPolicy": "preserve-exact",
     "sourceProtection": "read-only-source-new-output",
     "geometry": {
-      "brandContainerRadius": 0
+      "brandContainerRadius": 0,
+      "safeMarginPt": 18
     },
     "palette": {
       "ornlGreen": "#00662C",
@@ -55,8 +56,37 @@
     ],
     "approvalPolicy": "Do not ask the user to approve routine deterministic design choices. Pause only for an exception named in askOnlyWhen."
   },
+  "precisionLayout": {
+    "principle": "Pixels for gestalt. PowerPoint for measurement. Deterministic solvers for geometry. AI for design judgment.",
+    "authorityOrder": [
+      "PowerPoint-native rendered text, object, row, column, cell, margin, and clearance measurements",
+      "direct OOXML geometry and structure",
+      "derived OOXML metrics",
+      "heuristic estimates clearly labeled as non-authoritative"
+    ],
+    "requiredInspection": [
+      "revision-bound 2200-pixel PowerPoint-native full-slide PNG",
+      "readable title, text, object, and table crops",
+      "native measurement provenance",
+      "objective design metrics",
+      "exact source-bound object and cell IDs"
+    ],
+    "semanticOperations": [
+      "optical or structural alignment",
+      "horizontal or vertical equal-gap distribution",
+      "minimum-movement safe-region fitting",
+      "hierarchy-aware relationship-preserving group layout inside responsive approved semantic regions",
+      "atomic multi-region scene fitting to one approved layout with bounded proportional scaling",
+      "PowerPoint-measured text fitting without clipping or type-floor regression",
+      "cell-level table fitting",
+      "approved-layout semantic recomposition"
+    ],
+    "solverPolicy": "The AI chooses design intent and objects. A deterministic minimum-movement solver computes point geometry, enforces safe-region and collision constraints, and returns infeasible with concrete space recommendations instead of guessing, clipping, or silently shrinking type.",
+    "nativeRevisionLoop": "Inspect, diagnose, solve, materialize, render in PowerPoint, remeasure, compare metrics, critique pixels, revise, and reject any regression with a bounded iteration count.",
+    "exportAcceptance": "Before a PPTX can be saved as a completed review copy, independently rerender and remeasure the exact export bytes, verify visible-copy and table-structure hashes, compare every staged/export raster hash, and reject any native-geometry mismatch."
+  },
   "componentSystem": {
-    "version": 1,
+    "version": 2,
     "principle": "Compose slides from shared ORNL page, typography, content-region, figure, table, and footer components. Do not redraw each slide as an unrelated one-off canvas.",
     "page": {
       "leftInches": 0.47,
@@ -91,6 +121,11 @@
       "bodySpaceAfterPt": 7,
       "bulletLeftMarginInches": 0.36,
       "bulletHangingInches": 0.22
+    },
+    "spacing": {
+      "compactPt": 8,
+      "normalPt": 18,
+      "primarySeparationPt": 24
     },
     "components": {
       "titleBar": "One Aptos title frame and one ORNL Green rule at the exact shared title geometry.",
@@ -211,6 +246,7 @@
     "Never fabricate an icon, image, claim, value, citation, or technical conclusion. Add a visual only when it clarifies existing content and its meaning is unambiguous."
   ],
   "everySlideChecklist": [
+    "Use the image-bearing inspection packet before primary design diagnosis. Judge hierarchy and balance from pixels, but never estimate point geometry from pixels when PowerPoint-native measurement or a deterministic solver is available.",
     "Use a consistent grid, margins, safe areas, alignment lines, spacing rhythm, and visual hierarchy.",
     "Inspect every text box for bounds, wrapping, overflow, line breaks, insets, alignment, placement, font family, font size, weight, color, contrast, and line spacing.",
     "Treat geometry as evidence: compare peer edges, safe margins, fit estimates, collisions, and the rendered slide before moving a text box. Automatically repair only a high-confidence outlier with a unique peer edge and a collision-free target; surface every ambiguous case for review.",
@@ -249,7 +285,8 @@
     "Render the source slide, the current/proposal slide, and the exported slide when those representations are available.",
     "Compare source and proposal to confirm that approved content and technical objects remain present.",
     "Inspect the independently rendered export at slide scale and at readable zoom; do not rely only on object coordinates or an internal canvas preview.",
-    "Repair every observed defect, re-export, and re-inspect the affected slide plus the deck contact sheet."
+    "Repair every observed defect, re-export, and re-inspect the affected slide plus the deck contact sheet.",
+    "Reject the export before the save dialog if its independently rerendered slide hashes or native measurements differ from the staged proposal."
   ],
   "askOnlyWhen": [
     "The target ORNL or sponsor template is genuinely ambiguous.",

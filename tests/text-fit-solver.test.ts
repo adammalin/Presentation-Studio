@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { createSyntheticLegacyDeck } from "../scripts/create-synthetic-fixture";
+import { bindNativeMeasurement } from "../src/lib/native-measurement";
+import { auditPptx } from "../src/lib/pptx-audit";
+import { compilePresentationScene } from "../src/lib/scene-graph";
+import { nativeTextFrameOverflowEdges, solveTextFit } from "../src/lib/text-fit-solver";
+import type { DeckJob } from "../src/types";
+
+test("measured text-fit solver grows a frame without asking AI to invent geometry", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-text-fit-"));
+  const filePath = path.join(directory, "synthetic.pptx");
+  await createSyntheticLegacyDeck(filePath);
+  const bytes = new Uint8Array(await fs.readFile(filePath));
+  const audit = await auditPptx(bytes);
+  const deck: DeckJob = { id: "fit", name: "synthetic.pptx", sourceResourceId: "fit-source", sourceSha256: "f".repeat(64), operationScope: "reflow", templateClassification: "custom", status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  deck.scene = compilePresentationScene({ ...deck, audit });
+  const object = deck.scene.objects.find((item) => item.kind === "text" && item.operations.resize && audit.textBoxes.find((text) => text.slideNumber === item.slideNumber && text.shapeId === item.shapeId)?.fontSizes.length === 1)!;
+  assert.ok(object);
+  const measurement = bindNativeMeasurement(deck);
+  const measured = measurement.objects.find((item) => item.objectId === object.id)!;
+  measurement.authority = "powerpoint-native";
+  measurement.status = "ready";
+  measured.provenance.authority = "powerpoint-native";
+  measured.text = { ...measured.text!, renderedBoundsPt: { left: measured.measuredGeometryPt!.left, top: measured.measuredGeometryPt!.top, width: measured.measuredGeometryPt!.width - 8, height: measured.measuredGeometryPt!.height + 18 }, coordinateSpace: "slide" };
+  const solved = solveTextFit({ deck, measurement, objectId: object.id, rationale: "Fit the exact text without clipping." });
+  assert.equal(solved.status, "solved");
+  assert.ok(solved.geometry);
+  assert.ok(solved.geometry.target.height > object.geometry.height);
+  assert.equal(solved.geometry.target.width, object.geometry.width);
+  assert.equal(solved.diagnostics.nativeOverflow, true);
+});
+
+test("native overflow detection measures against the real text region inside frame margins", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-text-bounds-"));
+  const filePath = path.join(directory, "synthetic.pptx");
+  await createSyntheticLegacyDeck(filePath);
+  const bytes = new Uint8Array(await fs.readFile(filePath));
+  const audit = await auditPptx(bytes);
+  const deck: DeckJob = { id: "bounds", name: "synthetic.pptx", sourceResourceId: "bounds-source", sourceSha256: "b".repeat(64), operationScope: "reflow", templateClassification: "custom", status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  deck.scene = compilePresentationScene({ ...deck, audit });
+  const object = deck.scene.objects.find((item) => item.kind === "text" && item.operations.resize)!;
+  const measured = bindNativeMeasurement(deck).objects.find((item) => item.objectId === object.id)!;
+  const box = measured.measuredGeometryPt!;
+  const margins = measured.text!.marginsPt!;
+  measured.text = { ...measured.text!, renderedBoundsPt: { left: box.left + margins.left - 1, top: box.top + margins.top, width: 20, height: 10 }, coordinateSpace: "slide" };
+  assert.deepEqual(nativeTextFrameOverflowEdges(measured), ["left"]);
+});

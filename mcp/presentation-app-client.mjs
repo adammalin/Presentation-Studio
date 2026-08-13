@@ -52,7 +52,7 @@ export class PresentationAppClient {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json", "x-presentation-studio-token": descriptor.token },
         body: JSON.stringify({ operation, input }),
-        signal: AbortSignal.timeout(["get_slide_render", "get_slide_render_comparison", "get_template_layout_render"].includes(operation) ? NATIVE_RENDER_TIMEOUT_MS : REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "fit_scene_to_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation) ? NATIVE_RENDER_TIMEOUT_MS : REQUEST_TIMEOUT_MS),
       });
     } catch { throw new PresentationAppUnavailableError(); }
     const body = response.headers.get("content-type")?.includes("application/json") ? await response.json() : { error: await response.text() };

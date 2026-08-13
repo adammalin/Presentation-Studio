@@ -16,10 +16,19 @@ export interface PresentationDesignStandard {
     template: { id: string; policy: string };
     contentPolicy: "preserve-exact";
     sourceProtection: "read-only-source-new-output";
-    geometry: { brandContainerRadius: 0 };
+    geometry: { brandContainerRadius: 0; safeMarginPt: number };
     palette: Record<string, string>;
   };
   autonomy: { routineDecisions: string[]; approvalPolicy: string };
+  precisionLayout: {
+    principle: string;
+    authorityOrder: string[];
+    requiredInspection: string[];
+    semanticOperations: string[];
+    solverPolicy: string;
+    nativeRevisionLoop: string;
+    exportAcceptance: string;
+  };
   componentSystem: {
     version: number;
     principle: string;
@@ -27,6 +36,7 @@ export interface PresentationDesignStandard {
     title: Record<string, number>;
     patterns: Record<string, string>;
     paragraph: Record<string, number>;
+    spacing: { compactPt: number; normalPt: number; primarySeparationPt: number };
     components: Record<string, string>;
     layoutRecipes: Record<string, { useWhen: string; regions: string }>;
   };
