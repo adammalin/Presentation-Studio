@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-13.14-semantic-atoms",
+  "version": "2026-08-13.15-web-composition",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -125,13 +125,16 @@
       "ornl-title-content",
       "ornl-title-two-column",
       "ornl-title-card-grid",
+      "ornl-title-objective-columns",
+      "ornl-title-steps-evidence",
+      "ornl-title-labeled-figure-grid",
       "ornl-title-table",
       "ornl-title-figure-grid",
       "template-layout"
     ]
   },
   "componentSystem": {
-    "version": 4,
+    "version": 5,
     "principle": "Compose slides from shared ORNL page, typography, content-region, figure, table, and footer components. Do not redraw each slide as an unrelated one-off canvas.",
     "page": {
       "leftInches": 0.47,
@@ -180,6 +183,9 @@
       "twoColumn": "Two content regions with equal optical top edges and a 0.38-inch gutter; images use contain behavior unless an intentional crop is approved.",
       "diagram": "One relationship-preserving group for nodes, connectors, and labels; edit the system rather than isolated shapes.",
       "figureFrame": "One undistorted source visual with a consistent caption gap and no ornamental border unless it communicates grouping.",
+      "objectiveColumns": "Two to four exact objective atoms arranged as equal-weight columns with one full-width ORNL accent rule per column; do not invent headings or numbers.",
+      "stepsEvidence": "An ordered step stack paired with one contained source visual or evidence region; keep each heading and body relationship explicit and preserve exact wording.",
+      "labeledFigureGrid": "Two to four source figures paired with their exact labels and captions in a stable reading order; use consistent frames, gaps, and caption baselines.",
       "glossary": "A compact Aptos caption block below primary content with no decorative empty column.",
       "tableStandard": "The standard editable ORNL table variant with a Hale Navy header, Aptos type, measured padding, alternating neutral rows, and minimal horizontal rules.",
       "tableDenseTechnical": "The dense editable ORNL table variant using the same palette and structure with compact measured type and padding."
@@ -208,6 +214,18 @@
       "title-figure-grid": {
         "useWhen": "Two or more figures form the evidence.",
         "regions": "titleBar plus a consistent figureFrame grid with shared caption baselines and contained aspect ratios."
+      },
+      "title-objective-columns": {
+        "useWhen": "Two to four peer objective or outcome atoms are the slide's communication job.",
+        "regions": "titleBar plus equal objectiveColumns; use full-width green, aqua, and orange rules to establish rhythm without adding unapproved copy."
+      },
+      "title-steps-evidence": {
+        "useWhen": "Two to five ordered instruction or process atoms need one visual evidence region.",
+        "regions": "titleBar plus a compact left stepsEvidence stack and one larger contained source figure on the right."
+      },
+      "title-labeled-figure-grid": {
+        "useWhen": "Two to four source figures have explicit labels or captions that must stay bound to the correct visual.",
+        "regions": "titleBar plus a labeledFigureGrid with labels above, contained images in the middle, and exact captions below on shared baselines."
       },
       "title-references": {
         "useWhen": "The slide contains references or another long enumerated list.",

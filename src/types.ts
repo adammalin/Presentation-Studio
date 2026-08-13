@@ -178,6 +178,9 @@ export interface TableCellInventoryItem {
   horizontalMergeContinuation: boolean;
   verticalMergeContinuation: boolean;
   text: string;
+  textRuns?: string[];
+  paragraphRunCounts?: number[];
+  runBreaksBefore?: Array<"none" | "line" | "paragraph">;
   textHash: string;
   characterCount: number;
   paragraphCount: number;
@@ -295,7 +298,7 @@ export const PRESENTATION_SCENE_VERSION = 3 as const;
 export const PRESERVATION_ENVELOPE_SCHEMA = "presentation-studio/preservation-envelope" as const;
 export const PRESERVATION_ENVELOPE_VERSION = 1 as const;
 export const STUDIO_WEB_SCENE_SCHEMA = "presentation-studio/web-scene" as const;
-export const STUDIO_WEB_SCENE_VERSION = 3 as const;
+export const STUDIO_WEB_SCENE_VERSION = 4 as const;
 
 export type SceneFidelityState = "editable-native" | "preserved-native" | "conversion-required" | "unsupported-blocking";
 export type SceneSemanticRole = "title" | "body" | "caption" | "label" | "image" | "table" | "chart" | "connector" | "group" | "decoration" | "other";
@@ -451,9 +454,9 @@ export interface PresentationScene {
   preservationEnvelope: PowerPointPreservationEnvelope;
 }
 
-export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "template-layout";
+export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "template-layout";
 export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
-export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "footer-logo" | "footer-meta";
+export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "objective-body" | "step-heading" | "step-body" | "figure-label" | "figure-caption" | "footer-logo" | "footer-meta";
 
 export interface StudioWebFrame {
   x: number;
@@ -467,18 +470,29 @@ export interface StudioWebNode {
   id: string;
   sourceObjectId: string;
   sourceShapeId: string;
+  sourceBinding: "editable-object" | "catalog-derived" | "semantic-atom";
   name: string;
   kind: StudioWebNodeKind;
   role: SceneSemanticRole;
   sourceFrame: StudioWebFrame;
   frame: StudioWebFrame;
   zIndex: number;
+  sourceTextOrder: number;
   visible: boolean;
   locked: boolean;
   exactContent: boolean;
   text?: string;
   textHash?: string;
   sourceParagraphs?: TextParagraphInventoryItem[];
+  sourceAtom?: {
+    sourceNodeId: string;
+    sourceObjectId: string;
+    paragraphStart: number;
+    paragraphEnd: number;
+    ordinal: number;
+    count: number;
+    aggregateSourceTextHash?: string;
+  };
   tableId?: string;
   table?: {
     rows: number;
@@ -490,6 +504,9 @@ export interface StudioWebNode {
       rowSpan: number;
       columnSpan: number;
       text: string;
+      textRuns?: string[];
+      paragraphRunCounts?: number[];
+      runBreaksBefore?: Array<"none" | "line" | "paragraph">;
       fill?: string;
       semanticColorRole?: string;
     }>;

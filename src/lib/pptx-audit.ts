@@ -16,7 +16,7 @@ import type {
 } from "../types";
 import { normalizeCellFillToken, semanticColorRoleForToken } from "./semantic-visuals";
 
-export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 3;
+export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 4;
 import { sha256Text } from "./hash";
 
 const MAX_PACKAGE_FILES = 25_000;
@@ -65,6 +65,31 @@ function slideNumberForPart(path: string): number | undefined {
 
 function extractTextRuns(xml: string): string[] {
   return [...xml.matchAll(TEXT_RUN_RE)].map((match) => decodeXml(match[1] ?? ""));
+}
+
+function extractTableCellRuns(xml: string): { textRuns: string[]; paragraphRunCounts: number[]; runBreaksBefore: Array<"none" | "line" | "paragraph"> } {
+  const textRuns: string[] = [];
+  const paragraphRunCounts: number[] = [];
+  const runBreaksBefore: Array<"none" | "line" | "paragraph"> = [];
+  const paragraphs = [...xml.matchAll(/<a:p\b[^>]*>([\s\S]*?)<\/a:p>/g)];
+  for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+    const paragraphXml = paragraphs[paragraphIndex][1] ?? "";
+    let count = 0;
+    let pendingBreak: "none" | "line" | "paragraph" = paragraphIndex > 0 ? "paragraph" : "none";
+    const items = [...paragraphXml.matchAll(/<a:br\b[^>]*(?:\/>|>[\s\S]*?<\/a:br>)|<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)];
+    for (const item of items) {
+      if (item[0].startsWith("<a:br")) {
+        pendingBreak = "line";
+        continue;
+      }
+      textRuns.push(decodeXml(item[1] ?? ""));
+      runBreaksBefore.push(pendingBreak);
+      pendingBreak = "none";
+      count += 1;
+    }
+    paragraphRunCounts.push(count);
+  }
+  return { textRuns, paragraphRunCounts, runBreaksBefore };
 }
 
 function extractFonts(xml: string): string[] {
@@ -159,7 +184,8 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
           return Number.isFinite(value) ? value : fallback;
         };
         const spanAttribute = (name: string) => Math.max(1, Number(attributeValue(cellAttributes, name)) || 1);
-        const text = extractTextRuns(cellXml).join("");
+        const { textRuns, paragraphRunCounts, runBreaksBefore } = extractTableCellRuns(cellXml);
+        const text = textRuns.join(" ").replace(/\s+/g, " ").trim();
         const fillToken = directCellFillToken(cellXml);
         const semanticColorRole = semanticColorRoleForToken(fillToken);
         const fontSizes = uniqueSorted([...cellXml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
@@ -173,6 +199,9 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
           horizontalMergeContinuation: attributeValue(cellAttributes, "hMerge") === "1",
           verticalMergeContinuation: attributeValue(cellAttributes, "vMerge") === "1",
           text,
+          textRuns,
+          paragraphRunCounts,
+          runBreaksBefore,
           textHash: await sha256Text(text),
           characterCount: text.length,
           paragraphCount: Math.max(1, xmlCount(cellXml, /<a:p\b/g)),
@@ -191,7 +220,10 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
         });
       }
     }
-    const contentHash = await sha256Text(JSON.stringify(cellBlocks.map((cell) => extractTextRuns(cell))));
+    const contentHash = await sha256Text(JSON.stringify(cellBlocks.map((cell) => {
+      const content = extractTableCellRuns(cell);
+      return { textRuns: content.textRuns, breaksBefore: content.runBreaksBefore.map((value) => value === "none" ? "none" : "break") };
+    })));
     const structureHash = await sha256Text(JSON.stringify({
       rows: [...block.matchAll(/<a:tr\b[^>]*>([\s\S]*?)<\/a:tr>/g)].map((row) => [...row[1].matchAll(/<a:tc\b([^>]*)>[\s\S]*?<\/a:tc>/g)].map((cell) => ({
         gridSpan: attributeValue(cell[1] ?? "", "gridSpan") ?? null,

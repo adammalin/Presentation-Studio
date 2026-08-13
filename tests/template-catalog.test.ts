@@ -40,6 +40,11 @@ test("builds current slide previews with inherited title geometry and native tab
   assert.ok(title);
   assert.equal(title.x, 900000);
   assert.equal(title.fontFamily, "Aptos Display");
+  assert.equal(title.origin, "slide");
+  assert.equal(title.sourcePart, "ppt/slides/slide1.xml");
+  assert.equal(title.sourceShapeId, "2");
+  assert.match(title.textHash ?? "", /^[0-9a-f]{64}$/);
+  assert.deepEqual(title.sourceParagraphs?.map((paragraph) => paragraph.text), ["Current slide title"]);
   assert.ok(catalog.slides[0].elements.some((element) => element.kind === "text" && element.text === "Header A"));
   assert.ok(catalog.slides[0].elements.some((element) => element.kind === "shape" && element.name.includes("cell")));
 });

@@ -36,26 +36,56 @@ function margins(node: StudioWebNode): [number, number, number, number] {
   return [node.style.paddingPt.top, node.style.paddingPt.right, node.style.paddingPt.bottom, node.style.paddingPt.left];
 }
 
+function editableText(node: StudioWebNode): string | PptxGenJS.TextProps[] {
+  const text = node.text ?? "";
+  if (!/[\uE000-\uF8FF]/.test(text)) return text;
+  return text.split(/([\uE000-\uF8FF])/).filter(Boolean).map((value) => ({ text: value, options: /[\uE000-\uF8FF]/.test(value) ? { fontFace: "Wingdings" } : { fontFace: "Aptos" } }));
+}
+
+function editableTableText(cell: NonNullable<StudioWebNode["table"]>["cells"][number]): string | PptxGenJS.TextProps[] {
+  const runs = cell.textRuns?.length ? cell.textRuns : undefined;
+  if (!runs) return cell.text;
+  const paragraphStarts = new Set<number>();
+  if (!cell.runBreaksBefore) {
+    let cursor = 0;
+    for (const count of cell.paragraphRunCounts ?? []) {
+      if (cursor > 0 && count > 0) paragraphStarts.add(cursor);
+      cursor += count;
+    }
+  }
+  return runs.map((text, index) => ({
+    text,
+    options: {
+      // PptxGenJS applies breakLine after the current run. Our inventory stores
+      // a break before the following run, so consult index + 1 here.
+      breakLine: cell.runBreaksBefore ? cell.runBreaksBefore[index + 1] !== undefined && cell.runBreaksBefore[index + 1] !== "none" : paragraphStarts.has(index + 1),
+      fontFace: /[\uE000-\uF8FF]/.test(text) ? "Wingdings" : "Aptos",
+    },
+  }));
+}
+
 function tableRows(node: StudioWebNode): PptxGenJS.TableRow[] {
   if (!node.table) return [];
-  const rows: PptxGenJS.TableRow[] = Array.from({ length: node.table.rows }, () => Array.from({ length: node.table!.columns }, () => ({ text: "" })));
-  for (const cell of node.table.cells) {
+  const rows: PptxGenJS.TableRow[] = Array.from({ length: node.table.rows }, () => []);
+  for (const cell of [...node.table.cells].sort((a, b) => a.row - b.row || a.column - b.column)) {
     const row = Math.max(0, cell.row - 1);
-    const column = Math.max(0, cell.column - 1);
-    if (!rows[row]?.[column]) continue;
+    if (!rows[row]) continue;
     const header = cell.row === 1;
-    rows[row][column] = {
-      text: cell.text,
+    // PptxGenJS synthesizes hMerge/vMerge continuation cells for colspan/rowspan.
+    // Supplying placeholder cells for those occupied grid positions creates an
+    // extra physical column and silently shifts later content to the right.
+    rows[row].push({
+      text: editableTableText(cell),
       options: {
         rowspan: Math.max(1, cell.rowSpan),
         colspan: Math.max(1, cell.columnSpan),
         bold: header,
-        color: header ? "FFFFFF" : hex(node.style.color, PRESENTATION_DESIGN_STANDARD.defaults.palette.darkMatter),
-        fill: { color: header ? "00454D" : hex(cell.fill, cell.row % 2 === 0 ? "#F0F2F1" : "#FFFFFF") },
+        color: header && !cell.semanticColorRole ? "FFFFFF" : hex(node.style.color, PRESENTATION_DESIGN_STANDARD.defaults.palette.darkMatter),
+        fill: { color: cell.semanticColorRole ? hex(cell.fill, "#FFFFFF") : header ? "00454D" : hex(cell.fill, cell.row % 2 === 0 ? "#F0F2F1" : "#FFFFFF") },
         valign: "middle",
         margin: [4, 6, 4, 6],
       },
-    };
+    });
   }
   return rows;
 }
@@ -110,7 +140,11 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
       });
       generatedComponentCount += 1;
     }
-    for (const node of [...sourceSlide.nodes].sort((left, right) => left.zIndex - right.zIndex)) {
+    const orderedNodes = [...sourceSlide.nodes].sort((left, right) => {
+      const layer = (node: StudioWebNode) => node.kind === "image" ? 0 : node.kind === "text" || node.kind === "table" ? 1 : 2;
+      return layer(left) - layer(right) || (layer(left) === 1 ? left.sourceTextOrder - right.sourceTextOrder : left.zIndex - right.zIndex);
+    });
+    for (const node of orderedNodes) {
       if (!node.visible || unsupportedContentNode(node)) continue;
       const x = inches(node.frame.x);
       const y = inches(node.frame.y);
@@ -121,7 +155,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
         continue;
       }
       if (node.kind === "text" && node.text !== undefined) {
-        slide.addText(node.text, {
+        slide.addText(editableText(node), {
           x, y, w, h,
           objectName: node.name,
           fontFace: "Aptos",

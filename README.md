@@ -6,7 +6,7 @@ The application never overwrites an imported deck. It embeds source bytes in a s
 
 ## Current working slice
 
-- A persisted `presentation-studio/web-scene` design model that normalizes imported content onto a canonical 13.333 × 7.5-inch React/HTML/CSS canvas while retaining source-coordinate bindings; shared ORNL title/content, two-column, repeated comparison-card, table, figure-grid, footer, and installed-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and side-by-side source reference; MCP scene inspection, fresh-composition preview, and preservation staging; plus dual editable-PowerPoint compilers for preservation overlays and true fresh composition from native text, vectors, images, and tables. Exact visible-copy and table-structure round trips are tested in both modes.
+- A persisted `presentation-studio/web-scene` version-4 design model that normalizes imported content onto a canonical 13.333 × 7.5-inch React/HTML/CSS canvas while retaining source-coordinate bindings and explicit editable/catalog/semantic-atom provenance; shared ORNL title/content, two-column, repeated comparison-card, objective-column, steps/evidence, labeled-figure-grid, table, figure-grid, footer, and installed-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and side-by-side source reference; MCP scene inspection, fresh-composition preview, and preservation staging; plus dual editable-PowerPoint compilers for preservation overlays and true fresh composition from native text, vectors, images, and tables. Exact visible-copy, source-order, table-grid, merged-cell, semantic-color, and cell-break round trips are tested in both modes.
 - Multi-file `.pptx` import with bounded OOXML preflight, unsafe-path checks, and expanded-size/compression-ratio limits.
 - App-wide drag-and-drop and Resources file-picker intake for presentations, documents, data, images, audio, video, and SVG assets.
 - Versioned first-run onboarding walkthrough with keyboard navigation, deterministic spotlights, persisted completion, and an always-available Tour replay control.
@@ -69,6 +69,12 @@ npm ci
 npm test
 npm run build
 npm start
+```
+
+To qualify representative slides through fresh composition and Microsoft PowerPoint-native rendering without adding the source deck to the repository:
+
+```sh
+npm run benchmark:studio-web -- --source /absolute/path/source.pptx --slides 2,6,21 --output /tmp/presentation-studio-web-benchmark
 ```
 
 To run the MCP server manually:

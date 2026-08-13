@@ -111,20 +111,30 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
     rowSpan: cell.rowSpan,
     columnSpan: cell.columnSpan,
     text: cell.text,
+    textRuns: cell.textRuns,
+    paragraphRunCounts: cell.paragraphRunCounts,
+    runBreaksBefore: cell.runBreaksBefore,
     fill: cell.fillToken,
     semanticColorRole: cell.semanticColorRole,
   }));
   const normalizedSourceFrame = scaleFrame(sourceFrame(object.geometry), audit.slideSize, studioSlideSize);
+  const style = roleStyle(sceneObject.semanticRole, preview, textBox);
+  if (table) {
+    const dense = table.columnCount >= 6 || table.rowCount >= 9 || table.totalCellCharacterCount >= 900 || table.maximumCellCharacterCount >= 180;
+    style.fontSizePt = dense ? PRESENTATION_DESIGN_STANDARD.tableVariants.denseTechnical.bodyFontSizePt : PRESENTATION_DESIGN_STANDARD.tableVariants.standard.bodyFontSizePt;
+  }
   return {
     id: `studio-${object.id}`,
     sourceObjectId: object.id,
     sourceShapeId: object.shapeId,
+    sourceBinding: "editable-object",
     name: object.name,
     kind,
     role: sceneObject.semanticRole,
     sourceFrame: normalizedSourceFrame,
     frame: normalizedSourceFrame,
     zIndex: sceneObject.zIndex,
+    sourceTextOrder: 0,
     visible: true,
     locked: sceneObject.protected || sceneObject.fidelityState === "unsupported-blocking" || sceneObject.fidelityState === "conversion-required",
     exactContent: Boolean(textBox?.text || table),
@@ -134,12 +144,75 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
     tableId: table?.id,
     table: table ? { rows: table.rowCount, columns: table.columnCount, cells: tableCells ?? [] } : undefined,
     mediaPart: preview?.mediaId,
-    style: roleStyle(sceneObject.semanticRole, preview, textBox),
+    style,
   };
+}
+
+function roleForCatalogElement(element: TemplatePreviewElement, slideSize: { width: number; height: number }): SceneSemanticRole {
+  if (element.kind === "image") return "image";
+  if (["title", "ctrTitle"].includes(element.placeholderType ?? "")) return "title";
+  const normalizedName = element.name.toLowerCase();
+  if (element.y < slideSize.height * .2 && (element.fontSize ?? 0) >= 20) return "title";
+  if ((element.text?.length ?? 0) <= 42 && (normalizedName.includes("label") || normalizedName.includes("placeholder"))) return "label";
+  return "body";
+}
+
+function compileCatalogDerivedNodes(deck: DeckJob, slideNumber: number, studioSlideSize: { width: number; height: number }, nodes: StudioWebNode[], catalog?: SlideRenderCatalog): StudioWebNode[] {
+  const previewSlide = catalog?.slides.find((item) => item.number === slideNumber);
+  if (!previewSlide || !catalog) return [];
+  const mappedShapeIds = new Set(nodes.map((node) => node.sourceShapeId));
+  return previewSlide.elements.flatMap((element, index): StudioWebNode[] => {
+    if (element.origin !== "slide" || !element.sourceShapeId || mappedShapeIds.has(element.sourceShapeId) || !["text", "image"].includes(element.kind)) return [];
+    if (element.kind === "text" && !element.text?.trim()) return [];
+    if (element.kind === "image" && !element.mediaId) return [];
+    const role = roleForCatalogElement(element, { width: catalog.slideWidth, height: catalog.slideHeight });
+    const normalizedFrame = scaleFrame(sourceFrame(element), { width: catalog.slideWidth, height: catalog.slideHeight }, studioSlideSize);
+    const text = element.kind === "text" ? normalizedVisibleText(element.text ?? "") : undefined;
+    return [{
+      id: `studio-catalog-${slideNumber}-${element.sourceShapeId}-${index}`,
+      sourceObjectId: `catalog:${previewSlide.sourcePart}:${element.sourceShapeId}:${index}`,
+      sourceShapeId: element.sourceShapeId,
+      sourceBinding: "catalog-derived",
+      name: element.name,
+      kind: element.kind,
+      role,
+      sourceFrame: normalizedFrame,
+      frame: normalizedFrame,
+      zIndex: index,
+      sourceTextOrder: 0,
+      visible: true,
+      locked: false,
+      exactContent: true,
+      text,
+      textHash: element.textHash,
+      sourceParagraphs: element.sourceParagraphs,
+      mediaPart: element.mediaId,
+      style: roleStyle(role, element, undefined),
+    }];
+  });
 }
 
 function normalizedVisibleText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function textTokenSignature(value: string): string {
+  return normalizedVisibleText(value).split(" ").filter(Boolean).sort((left, right) => left.localeCompare(right)).join("\n");
+}
+
+function assignSourceTextOrder(nodes: StudioWebNode[], sourceText: string): StudioWebNode[] {
+  const normalizedSource = normalizedVisibleText(sourceText);
+  const occurrences = new Map<string, number>();
+  return nodes.map((node) => {
+    const text = normalizedVisibleText(nodeVisibleText(node));
+    if (!text) return { ...node, sourceTextOrder: normalizedSource.length + 10_000 + node.zIndex };
+    const start = occurrences.get(text) ?? 0;
+    const found = normalizedSource.indexOf(text, start);
+    const fallback = normalizedSource.indexOf(text);
+    const sourceTextOrder = found >= 0 ? found : fallback >= 0 ? fallback : normalizedSource.length + node.zIndex;
+    occurrences.set(text, sourceTextOrder + text.length);
+    return { ...node, sourceTextOrder };
+  });
 }
 
 function nodeVisibleText(node: StudioWebNode): string {
@@ -161,6 +234,8 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
     const sourceSlide = deck.audit!.slides.find((item) => item.number === slide.number);
     const preview = catalog?.slides.find((item) => item.number === slide.number);
     let nodes = slide.objectIds.map((objectId) => compileNode(deck, objectId, studioSlideSize, catalog)).filter((node): node is StudioWebNode => Boolean(node));
+    nodes = [...nodes, ...compileCatalogDerivedNodes(deck, slide.number, studioSlideSize, nodes, catalog)];
+    nodes = assignSourceTextOrder(nodes, sourceSlide?.text ?? "");
     if (!nodes.some((node) => node.role === "title")) {
       const inferredTitle = nodes
         .filter((node) => node.kind === "text" && Boolean(node.text?.trim()) && node.sourceFrame.y < inches(1.3))
@@ -176,7 +251,7 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
     const mappedTextNodes = nodes.filter((node) => Boolean(nodeVisibleText(node)));
     const sourceText = normalizedVisibleText(sourceSlide?.text ?? "");
     const mappedText = normalizedVisibleText(mappedTextNodes.map(nodeVisibleText).join(" "));
-    const exactTextMapped = sourceText === mappedText;
+    const exactTextMapped = textTokenSignature(sourceText) === textTokenSignature(mappedText);
     const sourceObjects = deck.scene!.objects.filter((object) => object.slideNumber === slide.number);
     return {
       id: `studio-${slide.id}`,
@@ -236,7 +311,7 @@ function styleForDesignedNode(node: StudioWebNode): StudioWebNode["style"] {
   const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
   if (node.role === "title") return { ...node.style, fontFamily: "Aptos", fontSizePt: 29.25, fontWeight: 700, lineHeight: 1.02, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
   if (node.role === "caption" || node.role === "label") return { ...node.style, fontFamily: "Aptos", fontSizePt: 14, fontWeight: 400, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
-  if (node.kind === "table") return { ...node.style, fontFamily: "Aptos", fontSizePt: 16, fontWeight: 400, lineHeight: 1.05, color: palette.darkMatter, background: palette.polar, borderColor: palette.graphite, borderWidthPt: .75, textAlign: "left", verticalAlign: "middle", paddingPt: { top: 4, right: 6, bottom: 4, left: 6 } };
+  if (node.kind === "table") return { ...node.style, fontFamily: "Aptos", fontSizePt: node.style.fontSizePt, fontWeight: 400, lineHeight: 1.05, color: palette.darkMatter, background: palette.polar, borderColor: palette.graphite, borderWidthPt: .75, textAlign: "left", verticalAlign: "middle", paddingPt: { top: 4, right: 6, bottom: 4, left: 6 } };
   return { ...node.style, fontFamily: "Aptos", fontSizePt: Math.max(16, Math.min(22, node.style.fontSizePt)), fontWeight: node.style.fontWeight === 700 ? 600 : node.style.fontWeight, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: node.kind === "image" ? "contain" : node.style.objectFit };
 }
 
@@ -247,9 +322,93 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "card-kicker") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1, color: [palette.ornlGreen, palette.infinity, palette.hydro, palette.darkMatter][node.component.ordinal ?? 0] ?? palette.ornlGreen };
   if (node.component?.role === "card-heading") return { ...base, fontSizePt: 13.5, fontWeight: 400, lineHeight: 1.05, color: "#666B68" };
   if (node.component?.role === "card-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.13, color: palette.darkMatter };
+  if (node.component?.role === "objective-body") return { ...base, fontSizePt: 18, fontWeight: 400, lineHeight: 1.16, color: palette.darkMatter };
+  if (node.component?.role === "step-heading") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen };
+  if (node.component?.role === "step-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.14, color: palette.darkMatter };
+  if (node.component?.role === "figure-label") return { ...base, fontSizePt: 14, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen, verticalAlign: "middle" };
+  if (node.component?.role === "figure-caption") return { ...base, fontSizePt: 14, fontWeight: 400, lineHeight: 1.12, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "footer-logo") return { ...base, paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: "contain" };
   if (node.component?.role === "footer-meta") return { ...base, fontSizePt: 9, fontWeight: 400, lineHeight: 1, color: "#6B716E", textAlign: "right", verticalAlign: "middle" };
   return base;
+}
+
+function splitVertical(value: StudioWebFrame, weights: number[], ordinal: number): StudioWebFrame {
+  const total = Math.max(1, weights.reduce((sum, weight) => sum + weight, 0));
+  const before = weights.slice(0, ordinal).reduce((sum, weight) => sum + weight, 0);
+  const current = weights[ordinal] ?? 1;
+  const y = value.y + Math.round(value.height * before / total);
+  const bottom = value.y + Math.round(value.height * (before + current) / total);
+  return { x: value.x, y, width: value.width, height: Math.max(inches(.1), bottom - y), rotation: value.rotation };
+}
+
+function restoreSemanticAtoms(scene: StudioWebScene, slideNumber: number): StudioWebScene {
+  const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
+  if (!slide?.nodes.some((node) => node.sourceBinding === "semantic-atom")) return scene;
+  const sourceNodeIds = new Set(slide.nodes.flatMap((node) => node.sourceAtom ? [node.sourceAtom.sourceNodeId] : []));
+  const now = new Date().toISOString();
+  return {
+    ...scene,
+    revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
+    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : {
+      ...item,
+      contentCoverage: { ...item.contentCoverage, mappedTextNodeCount: item.nodes.filter((node) => node.sourceBinding !== "semantic-atom" && (sourceNodeIds.has(node.id) || (node.visible && Boolean(nodeVisibleText(node))))).length },
+      nodes: item.nodes.filter((node) => node.sourceBinding !== "semantic-atom").map((node) => sourceNodeIds.has(node.id) ? { ...node, visible: true } : node),
+      updatedAt: now,
+    }),
+  };
+}
+
+export function atomizeStudioWebSlide(scene: StudioWebScene, slideNumber: number, sourceNodeIds?: string[]): StudioWebScene {
+  const restored = restoreSemanticAtoms(scene, slideNumber);
+  const slide = restored.slides.find((item) => item.slideNumber === slideNumber);
+  if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+  const requested = sourceNodeIds ? new Set(sourceNodeIds) : undefined;
+  const atoms: StudioWebNode[] = [];
+  const atomized = new Set<string>();
+  for (const node of slide.nodes) {
+    const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? [];
+    if (node.kind !== "text" || node.role === "title" || paragraphs.length < 2 || (requested && !requested.has(node.id))) continue;
+    atomized.add(node.id);
+    const weights = paragraphs.map((paragraph) => Math.max(24, paragraph.characterCount));
+    paragraphs.forEach((paragraph, ordinal) => {
+      atoms.push({
+        ...node,
+        id: `${node.id}-atom-${paragraph.index}`,
+        sourceShapeId: `${node.sourceShapeId}#p${paragraph.index}`,
+        sourceBinding: "semantic-atom",
+        name: `${node.name} · paragraph ${paragraph.index}`,
+        sourceFrame: splitVertical(node.sourceFrame, weights, ordinal),
+        frame: splitVertical(node.frame, weights, ordinal),
+        zIndex: node.zIndex * 100 + ordinal,
+        sourceTextOrder: node.sourceTextOrder + paragraphs.slice(0, ordinal).reduce((sum, candidate) => sum + candidate.characterCount + 1, 0),
+        visible: true,
+        text: paragraph.text,
+        textHash: paragraph.textHash,
+        sourceParagraphs: [paragraph],
+        sourceAtom: {
+          sourceNodeId: node.id,
+          sourceObjectId: node.sourceObjectId,
+          paragraphStart: paragraph.index,
+          paragraphEnd: paragraph.index,
+          ordinal,
+          count: paragraphs.length,
+          aggregateSourceTextHash: node.textHash,
+        },
+      });
+    });
+  }
+  if (atoms.length === 0) return restored;
+  const now = new Date().toISOString();
+  return {
+    ...restored,
+    revision: `${restored.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
+    slides: restored.slides.map((item) => item.slideNumber !== slideNumber ? item : {
+      ...item,
+      contentCoverage: { ...item.contentCoverage, mappedTextNodeCount: item.contentCoverage.mappedTextNodeCount - atomized.size + atoms.length },
+      nodes: [...item.nodes.map((node) => atomized.has(node.id) ? { ...node, visible: false } : node), ...atoms],
+      updatedAt: now,
+    }),
+  };
 }
 
 function contained(node: StudioWebNode, target: StudioWebFrame): StudioWebFrame {
@@ -304,12 +463,17 @@ function grid(nodes: StudioWebNode[], target: StudioWebFrame, columns = 2, gapPt
 export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutRecipe {
   const nodes = activeNodes(slide);
   if (nodes.some((node) => node.kind === "table")) return "ornl-title-table";
+  const eligibleParagraphs = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).reduce((sum, node) => sum + Math.max(1, node.sourceParagraphs?.length ?? 1), 0);
   const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
   const labelCount = nodes.filter((node) => node.kind === "text" && node.role === "label" && !footerNode(node)).length;
   if (bodyCount >= 3 && bodyCount <= 6 && labelCount >= bodyCount) return "ornl-title-card-grid";
   const images = nodes.filter(meaningfulImage).length;
+  const explanatoryLabels = nodes.filter((node) => node.kind === "text" && ["label", "caption"].includes(node.role) && !footerNode(node)).length;
+  if (images >= 2 && explanatoryLabels >= images) return "ornl-title-labeled-figure-grid";
   if (images >= 2) return "ornl-title-figure-grid";
+  if (images === 1 && eligibleParagraphs >= 2 && eligibleParagraphs <= 5) return "ornl-title-steps-evidence";
   if (images === 1) return "ornl-title-two-column";
+  if (images === 0 && eligibleParagraphs >= 2 && eligibleParagraphs <= 4) return "ornl-title-objective-columns";
   return "ornl-title-content";
 }
 
@@ -341,6 +505,25 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
   const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
   const hasEyebrow = slide.nodes.some((node) => node.component?.role === "eyebrow");
   const components: StudioGeneratedComponent[] = [{ id: `studio-title-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, hasEyebrow ? 1.10 : .93, hasEyebrow ? .62 : .96, .035), fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }];
+  if (slide.recipe === "ornl-title-objective-columns") {
+    const groups = slide.nodes.filter((node) => node.component?.role === "objective-body");
+    groups.forEach((node, ordinal) => {
+      components.push({ id: `${node.component!.groupId}-accent`, kind: "rect", frame: { x: node.frame.x, y: node.frame.y - points(9), width: node.frame.width, height: points(3), rotation: 0 }, fillColor: [palette.ornlGreen, palette.aqua, palette.forge, palette.infinity][ordinal] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
+    });
+    return components;
+  }
+  if (slide.recipe === "ornl-title-steps-evidence") {
+    slide.nodes.filter((node) => node.component?.role === "step-heading").forEach((node) => components.push({ id: `${node.component!.groupId}-rail`, kind: "rect", frame: { x: node.frame.x - points(12), y: node.frame.y, width: points(3), height: node.frame.height, rotation: 0 }, fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }));
+    return components;
+  }
+  if (slide.recipe === "ornl-title-labeled-figure-grid") {
+    const groups = [...new Set(slide.nodes.filter((node) => node.component?.role === "figure-label").map((node) => node.component!.groupId))];
+    groups.slice(1).forEach((groupId) => {
+      const node = slide.nodes.find((candidate) => candidate.component?.groupId === groupId);
+      if (node) components.push({ id: `${groupId}-separator`, kind: "rect", frame: { x: .47 * EMU_PER_INCH, y: node.frame.y - points(10), width: 12.39 * EMU_PER_INCH, height: points(.75), rotation: 0 }, fillColor: palette.graphite, lineWidthPt: 0, behindContent: true });
+    });
+    return components;
+  }
   if (slide.recipe !== "ornl-title-card-grid") return components;
   const groups = [...new Set(slide.nodes.filter((node) => node.component?.role === "card-body").map((node) => node.component!.groupId))];
   const accents = [palette.ornlGreen, palette.aqua, palette.infinity, palette.forge, palette.plasma, palette.pulsar];
@@ -372,9 +555,12 @@ function templatePlacements(nodes: StudioWebNode[], layout: TemplateLayoutPrevie
 }
 
 export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: number, requestedRecipe?: StudioLayoutRecipe, layout?: TemplateLayoutPreview, rationale?: string): StudioWebScene {
-  const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
-  if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
-  const recipe = requestedRecipe ?? recommendedStudioRecipe(slide);
+  const originalSlide = scene.slides.find((item) => item.slideNumber === slideNumber);
+  if (!originalSlide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+  const recipe = requestedRecipe ?? recommendedStudioRecipe(originalSlide);
+  const atomRecipes: StudioLayoutRecipe[] = ["ornl-title-objective-columns", "ornl-title-steps-evidence"];
+  const workingScene = atomRecipes.includes(recipe) ? atomizeStudioWebSlide(scene, slideNumber) : restoreSemanticAtoms(scene, slideNumber);
+  const slide = workingScene.slides.find((item) => item.slideNumber === slideNumber)!;
   if (recipe === "template-layout" && !layout?.semantic) throw new Error("Choose an installed template layout with semantic regions before applying template-layout.");
   const nodes = activeNodes(slide);
   const title = nodes.find((node) => node.role === "title");
@@ -414,6 +600,81 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const remaining = content.filter((node) => node.kind !== "image");
     for (const [id, value] of grid(visuals, frame(.47, 1.15, 12.39, 4.70), visuals.length <= 2 ? 2 : 3, 18)) placements.set(id, value);
     for (const [id, value] of stack([...remaining, ...captions], frame(.47, 5.98, 12.39, .64), 8)) placements.set(id, value);
+  } else if (recipe === "ornl-title-objective-columns") {
+    const objectives = content.filter((node) => node.kind === "text").sort((left, right) => left.zIndex - right.zIndex);
+    const count = Math.max(1, objectives.length);
+    const gap = .34;
+    const width = (12.39 - gap * (count - 1)) / count;
+    objectives.forEach((node, ordinal) => {
+      placements.set(node.id, frame(.47 + ordinal * (width + gap), 1.52, width, 4.78));
+      components.set(node.id, { groupId: `studio-objective-${slideNumber}-${ordinal + 1}`, role: "objective-body", ordinal });
+    });
+    for (const [id, value] of stack(captions, frame(.47, 6.42, 12.39, .28), 4)) placements.set(id, value);
+  } else if (recipe === "ornl-title-steps-evidence") {
+    const visual = content.find((node) => meaningfulImage(node) || node.kind === "table");
+    const steps = content.filter((node) => node.id !== visual?.id && node.kind === "text").sort((left, right) => left.zIndex - right.zIndex);
+    if (steps.length === 2) {
+      placements.set(steps[0].id, frame(.64, 1.42, 4.58, .72));
+      placements.set(steps[1].id, frame(.64, 2.28, 4.58, 2.18));
+      components.set(steps[0].id, { groupId: `studio-step-${slideNumber}-1`, role: "step-heading", ordinal: 0 });
+      components.set(steps[1].id, { groupId: `studio-step-${slideNumber}-2`, role: "step-body", ordinal: 1 });
+    } else {
+      const gap = .22;
+      const rowHeight = Math.max(.78, Math.min(2.15, (5.18 - gap * Math.max(0, steps.length - 1)) / Math.max(1, steps.length)));
+      steps.forEach((node, ordinal) => {
+        placements.set(node.id, frame(.64, 1.34 + ordinal * (rowHeight + gap), 4.58, rowHeight));
+        components.set(node.id, { groupId: `studio-step-${slideNumber}-${ordinal + 1}`, role: ordinal === 0 || node.style.fontWeight >= 600 ? "step-heading" : "step-body", ordinal });
+      });
+    }
+    if (visual) placements.set(visual.id, contained(visual, frame(5.70, 1.20, 7.16, 5.42)));
+    for (const [id, value] of stack(captions, frame(5.70, 6.48, 7.16, .24), 4)) placements.set(id, value);
+  } else if (recipe === "ornl-title-labeled-figure-grid") {
+    const visuals = content.filter(meaningfulImage).sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x);
+    const labels = captions.filter((node) => node.kind === "text");
+    const unused = new Set(labels.map((node) => node.id));
+    const distance = (node: StudioWebNode, visual: StudioWebNode) => Math.abs((node.sourceFrame.y + node.sourceFrame.height / 2) - (visual.sourceFrame.y + visual.sourceFrame.height / 2));
+    const takeNearest = (visual: StudioWebNode, role: "label" | "caption") => {
+      const node = labels.filter((candidate) => unused.has(candidate.id) && candidate.role === role).sort((left, right) => distance(left, visual) - distance(right, visual))[0];
+      if (node) unused.delete(node.id);
+      return node;
+    };
+    if (visuals.length === 2) {
+      visuals.forEach((visual, ordinal) => {
+        const x = ordinal === 0 ? .47 : 6.78;
+        const groupId = `studio-figure-${slideNumber}-${ordinal + 1}`;
+        const label = takeNearest(visual, "label");
+        const caption = takeNearest(visual, "caption");
+        placements.set(visual.id, contained(visual, frame(x, 1.58, 5.61, 3.88)));
+        if (label) {
+          placements.set(label.id, frame(x, 1.18, 5.61, .26));
+          components.set(label.id, { groupId, role: "figure-label", ordinal });
+        }
+        if (caption) {
+          placements.set(caption.id, frame(x, 5.68, 5.61, .72));
+          components.set(caption.id, { groupId, role: "figure-caption", ordinal });
+        }
+      });
+    } else {
+      const rowGap = .24;
+      const rowHeight = Math.max(1.05, (5.42 - rowGap * Math.max(0, visuals.length - 1)) / Math.max(1, visuals.length));
+      visuals.forEach((visual, ordinal) => {
+        const y = 1.18 + ordinal * (rowHeight + rowGap);
+        const groupId = `studio-figure-${slideNumber}-${ordinal + 1}`;
+        const label = takeNearest(visual, "label");
+        const caption = takeNearest(visual, "caption");
+        placements.set(visual.id, contained(visual, frame(2.16, y, 6.10, rowHeight)));
+        if (label) {
+          placements.set(label.id, frame(.47, y, 1.44, rowHeight));
+          components.set(label.id, { groupId, role: "figure-label", ordinal });
+        }
+        if (caption) {
+          placements.set(caption.id, frame(8.55, y, 4.31, rowHeight));
+          components.set(caption.id, { groupId, role: "figure-caption", ordinal });
+        }
+      });
+    }
+    for (const [id, value] of stack(labels.filter((node) => unused.has(node.id)), frame(8.55, 1.18, 4.31, 5.42), 8)) placements.set(id, value);
+    for (const [id, value] of stack(content.filter((node) => !meaningfulImage(node)), frame(.47, 6.64, 12.39, .18), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-card-grid") {
     const bodies = content.filter((node) => node.kind === "text" && node.role === "body").sort((left, right) => left.zIndex - right.zIndex);
     const groupNodeIds = new Set<string>();
@@ -472,7 +733,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     }),
     updatedAt: now,
   };
-  return { ...scene, revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`, slides: scene.slides.map((item) => item.slideNumber === slideNumber ? nextSlide : item) };
+  return { ...workingScene, revision: `${workingScene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`, slides: workingScene.slides.map((item) => item.slideNumber === slideNumber ? nextSlide : item) };
 }
 
 export function updateStudioWebNodeFrame(scene: StudioWebScene, slideNumber: number, nodeId: string, nextFrame: StudioWebFrame): StudioWebScene {
@@ -524,7 +785,7 @@ export function studioGeometryRequests(deck: DeckJob, scene: StudioWebScene, sli
   if (scene.deckId !== deck.id || scene.sourceSha256 !== deck.sourceSha256) throw new Error("The Studio Web Scene is stale for this deck.");
   const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
   if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
-  return slide.nodes.filter((node) => node.visible && !node.locked && frameChanged(node.sourceFrame, node.frame)).map((node) => ({
+  return slide.nodes.filter((node) => node.sourceBinding === "editable-object" && node.visible && !node.locked && frameChanged(node.sourceFrame, node.frame)).map((node) => ({
     objectId: node.sourceObjectId,
     target: scaleFrame(node.frame, scene.slideSize, scene.sourceSlideSize),
     rationale: `${slide.designRationale} Compile the web-computed frame for ${node.name} back to its editable PowerPoint object.`.slice(0, 700),
@@ -536,7 +797,7 @@ export function studioGeometryRequests(deck: DeckJob, scene: StudioWebScene, sli
 export function studioVisualDesignRequest(scene: StudioWebScene, slideNumber: number, author: "human" | "ai" = "ai"): VisualDesignRequest {
   const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
   if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
-  const textStyles = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "text").map((node) => ({
+  const textStyles = slide.nodes.filter((node) => node.sourceBinding === "editable-object" && node.visible && !node.locked && node.kind === "text").map((node) => ({
     objectId: node.sourceObjectId,
     fontSizePt: node.style.fontSizePt,
     bold: node.style.fontWeight >= 600,

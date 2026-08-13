@@ -8,11 +8,11 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { atomizeStudioWebSlide, compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
-import { sha256 } from "../src/lib/hash";
-import type { DeckJob, StudioWebNode } from "../src/types";
+import { sha256, sha256Text } from "../src/lib/hash";
+import type { DeckJob, StudioWebNode, StudioWebScene } from "../src/types";
 
 async function fixture() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-web-scene-"));
@@ -99,6 +99,48 @@ test("comparison-card recipe ignores footer furniture and composes repeated sema
   assert.deepEqual(slide.nodes.map((node) => node.text).filter(Boolean).sort(), nodes.map((node) => node.text).filter(Boolean).sort());
 });
 
+test("semantic atomization turns one exact multi-paragraph source box into reusable objective columns", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const title = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const paragraphText = [
+    "Understand the EMT simulation workflow.",
+    "Build and run representative power-system models.",
+    "Interpret the resulting technical evidence.",
+  ];
+  const paragraphs = await Promise.all(paragraphText.map(async (text, index) => ({ index: index + 1, text, textHash: await sha256Text(text), characterCount: text.length, bullet: false, bulletConfidence: "direct" as const, level: 0, fontFamilies: ["Aptos"], fontSizes: [18] })));
+  const bodyText = paragraphText.join(" ");
+  const body: StudioWebNode = {
+    ...title,
+    id: "objective-source",
+    sourceObjectId: "slide-1-object-objective",
+    sourceShapeId: "objective",
+    sourceBinding: "editable-object",
+    name: "Objectives",
+    role: "body",
+    zIndex: title.zIndex + 1,
+    text: bodyText,
+    textHash: await sha256Text(bodyText),
+    sourceParagraphs: paragraphs,
+    sourceFrame: { x: 500_000, y: 1_500_000, width: 11_000_000, height: 4_500_000, rotation: 0 },
+    frame: { x: 500_000, y: 1_500_000, width: 11_000_000, height: 4_500_000, rotation: 0 },
+  };
+  const objectiveTitle: StudioWebNode = { ...title, role: "title", text: "Training Objectives", textHash: await sha256Text("Training Objectives"), sourceParagraphs: [{ ...paragraphs[0], text: "Training Objectives", textHash: await sha256Text("Training Objectives"), characterCount: 19 }] };
+  const objectiveSource: StudioWebScene = { ...scene, slides: [{ ...sourceSlide, nodes: [objectiveTitle, body], contentCoverage: { exactTextMapped: true, sourceCharacterCount: 19 + 1 + bodyText.length, mappedCharacterCount: 19 + 1 + bodyText.length, sourceTextBoxCount: 2, mappedTextNodeCount: 2, groupedOrUnsupportedTextPresent: false } }] };
+  assert.equal(recommendedStudioRecipe(objectiveSource.slides[0]), "ornl-title-objective-columns");
+  const atomized = atomizeStudioWebSlide(objectiveSource, 1);
+  assert.equal(atomized.slides[0].nodes.find((node) => node.id === body.id)?.visible, false);
+  assert.deepEqual(atomized.slides[0].nodes.filter((node) => node.sourceBinding === "semantic-atom").map((node) => node.text), paragraphText);
+  const designed = recomposeStudioWebSlide(objectiveSource, 1, "ornl-title-objective-columns");
+  const atoms = designed.slides[0].nodes.filter((node) => node.sourceBinding === "semantic-atom");
+  assert.equal(atoms.length, 3);
+  assert.equal(atoms.every((node) => node.component?.role === "objective-body"), true);
+  assert.equal(studioGeneratedComponents(designed.slides[0]).filter((component) => component.id.includes("objective")).length, 3);
+  assert.equal(studioGeometryRequests(deck, designed, 1).some((request) => atoms.some((node) => node.sourceObjectId === request.objectId)), false);
+  assert.equal(studioVisualDesignRequest(designed, 1).textStyles.some((request) => atoms.some((node) => node.sourceObjectId === request.objectId)), false);
+});
+
 test("a Studio web composition round-trips to editable PowerPoint without changing exact content", async () => {
   const { bytes, deck, catalog } = await fixture();
   const source = compileStudioWebScene(deck, catalog);
@@ -138,6 +180,31 @@ test("fresh-composition mode builds a new editable native deck from the web scen
   assert.equal(after.fonts.some((font) => font.family === "Aptos"), true);
   assert.equal(after.textBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos")), true);
   assert.equal(after.tables.every((table) => table.cellFonts.every((family) => family === "Aptos")), true);
+});
+
+test("fresh table composition preserves an explicit visible cell break in the editable PowerPoint grid", async () => {
+  const { deck, catalog } = await fixture();
+  let scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides.find((slide) => slide.nodes.some((node) => node.kind === "table" && node.table));
+  const sourceTable = sourceSlide?.nodes.find((node) => node.kind === "table" && node.table);
+  const sourceCell = sourceTable?.table?.cells.find((cell) => cell.text.length > 0);
+  assert.ok(sourceSlide && sourceTable?.table && sourceCell);
+  const updatedText = "First Second";
+  const updatedCell: typeof sourceCell = { ...sourceCell, text: updatedText, textRuns: ["First", "Second"], paragraphRunCounts: [2], runBreaksBefore: ["none", "line"] };
+  scene = {
+    ...scene,
+    slides: scene.slides.map((slide) => slide.slideNumber !== sourceSlide.slideNumber ? slide : {
+      ...slide,
+      nodes: slide.nodes.map((node) => node.id !== sourceTable.id || !node.table ? node : { ...node, table: { ...node.table, cells: node.table.cells.map((cell) => cell.id === sourceCell.id ? updatedCell : cell) } }),
+    }),
+  };
+  for (const slide of scene.slides) scene = recomposeStudioWebSlide(scene, slide.slideNumber);
+  const rebuilt = await buildStudioCompositionPptx(scene, { catalog, title: "Table line-break round trip" });
+  const after = await auditPptx(rebuilt.bytes);
+  const rebuiltCell = after.tables.find((table) => table.slideNumber === sourceSlide.slideNumber)?.cells?.find((cell) => cell.row === sourceCell.row && cell.column === sourceCell.column);
+  assert.equal(rebuiltCell?.text, updatedText);
+  assert.equal(rebuiltCell?.runBreaksBefore?.some((value) => value !== "none"), true);
+  assert.deepEqual(after.tables.map((table) => table.structureHash), deck.audit?.tables.map((table) => table.structureHash));
 });
 
 test("fresh composition stops before writing a slide whose grouped or unsupported text is not completely mapped", async () => {

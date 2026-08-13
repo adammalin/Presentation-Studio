@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
-import { sha256 } from "./hash";
+import { sha256, sha256Text } from "./hash";
 import { deriveLayoutSemantics, type TemplateLayoutSemantics } from "./layout-semantics";
 
 const parser = new XMLParser({
@@ -37,6 +37,21 @@ export interface TemplatePreviewElement {
   placeholderType?: string;
   placeholderIndex?: string;
   mediaId?: string;
+  sourcePart?: string;
+  sourceShapeId?: string;
+  origin?: "master" | "layout" | "slide";
+  textHash?: string;
+  sourceParagraphs?: Array<{
+    index: number;
+    text: string;
+    textHash: string;
+    characterCount: number;
+    bullet: boolean;
+    bulletConfidence: "direct" | "inherited-possible";
+    level: number;
+    fontFamilies: string[];
+    fontSizes: number[];
+  }>;
 }
 
 export interface TemplateLayoutPreview {
@@ -298,10 +313,12 @@ function shapeElements(shape: XmlRecord, context: GroupContext, theme: Theme, in
   const geometry = geometryName === "ellipse" ? "ellipse" : geometryName === "line" ? "line" : "rect";
   const name = shapeName(shape);
   const placeholder = placeholderInfo(shape);
+  const sourceShapeId = String(record(record(shape.nvSpPr).cNvPr)["@id"] ?? index);
   const base: TemplatePreviewElement = {
-    id: `shape-${index}-${String(record(record(shape.nvSpPr).cNvPr)["@id"] ?? index)}`,
+    id: `shape-${index}-${sourceShapeId}`,
     kind: "shape",
     name,
+    sourceShapeId,
     ...mapped,
     geometry,
     fill: fill.color,
@@ -375,7 +392,7 @@ function graphicFrameElements(frame: XmlRecord, context: GroupContext, theme: Th
         const height = mapped.height * (rowHeights[rowIndex] / totalHeight);
         const cellFill = fillFor(properties, theme).color ?? "#FFFFFF";
         const cellId = `table-${index}-${frameId}-${rowIndex}-${cellIndex}`;
-        elements.push({ id: `${cellId}-cell`, kind: "shape", name: `${graphicFrameName(frame)} cell`, x, y, width, height, rotation: 0, geometry: "rect", fill: cellFill, stroke: "#DBDCDB", strokeWidth: 9000, opacity: 1 });
+        elements.push({ id: `${cellId}-cell`, kind: "shape", name: `${graphicFrameName(frame)} cell`, sourceShapeId: frameId, x, y, width, height, rotation: 0, geometry: "rect", fill: cellFill, stroke: "#DBDCDB", strokeWidth: 9000, opacity: 1 });
         const txBody = record(cell.txBody);
         const text = paragraphText(txBody);
         if (text) {
@@ -387,7 +404,7 @@ function graphicFrameElements(frame: XmlRecord, context: GroupContext, theme: Th
           const marginRight = numeric(properties["@marR"], 72000);
           const marginTop = numeric(properties["@marT"], 36000);
           const marginBottom = numeric(properties["@marB"], 36000);
-          elements.push({ id: `${cellId}-text`, kind: "text", name: `${graphicFrameName(frame)} cell text`, x: x + marginLeft, y: y + marginTop, width: Math.max(1, width - marginLeft - marginRight), height: Math.max(1, height - marginTop - marginBottom), rotation: 0, geometry: "rect", text, textColor: runFill.color ?? theme.colors.tx1 ?? "#373A36", fontFamily: resolvedTypeface, fontSize: Math.max(7, numeric(run["@sz"], 1400) / 100), fontWeight: String(run["@b"] ?? "0") === "1" || rowIndex === 0 ? 700 : 400, textAlign: "left", verticalAlign: "center", opacity: 1 });
+          elements.push({ id: `${cellId}-text`, kind: "text", name: `${graphicFrameName(frame)} cell text`, sourceShapeId: frameId, x: x + marginLeft, y: y + marginTop, width: Math.max(1, width - marginLeft - marginRight), height: Math.max(1, height - marginTop - marginBottom), rotation: 0, geometry: "rect", text, textColor: runFill.color ?? theme.colors.tx1 ?? "#373A36", fontFamily: resolvedTypeface, fontSize: Math.max(7, numeric(run["@sz"], 1400) / 100), fontWeight: String(run["@b"] ?? "0") === "1" || rowIndex === 0 ? 700 : 400, textAlign: "left", verticalAlign: "center", opacity: 1 });
         }
         columnIndex += span;
       });
@@ -396,8 +413,8 @@ function graphicFrameElements(frame: XmlRecord, context: GroupContext, theme: Th
   }
   const kind = data.chart !== undefined ? "Chart" : data.diagram !== undefined || data.relIds !== undefined ? "Diagram" : "Embedded object";
   return [
-    { id: `graphic-${index}-${frameId}`, kind: "shape", name: graphicFrameName(frame), ...mapped, geometry: "rect", fill: "#F4F6F5", stroke: "#A8B5AE", strokeWidth: 12700, opacity: 1 },
-    { id: `graphic-${index}-${frameId}-text`, kind: "text", name: `${kind} label`, ...mapped, geometry: "rect", text: kind, textColor: "#68736E", fontFamily: theme.minorFont, fontSize: 14, fontWeight: 700, textAlign: "center", verticalAlign: "center", opacity: 1 },
+    { id: `graphic-${index}-${frameId}`, kind: "shape", name: graphicFrameName(frame), sourceShapeId: frameId, ...mapped, geometry: "rect", fill: "#F4F6F5", stroke: "#A8B5AE", strokeWidth: 12700, opacity: 1 },
+    { id: `graphic-${index}-${frameId}-text`, kind: "text", name: `${kind} label`, sourceShapeId: frameId, ...mapped, geometry: "rect", text: kind, textColor: "#68736E", fontFamily: theme.minorFont, fontSize: 14, fontWeight: 700, textAlign: "center", verticalAlign: "center", opacity: 1 },
   ];
 }
 
@@ -407,7 +424,8 @@ function connectorElements(connector: XmlRecord, context: GroupContext, theme: T
   if (!transform) return [];
   const line = record(spPr.ln);
   const stroke = fillFor(line, theme).color ?? theme.colors.tx1 ?? "#373A36";
-  return [{ id: `connector-${index}`, kind: "shape", name: "Connector", ...mapTransform(transform, context), geometry: "line", stroke, strokeWidth: numeric(line["@w"], 12700), opacity: 1 }];
+  const sourceShapeId = String(record(record(connector.nvCxnSpPr).cNvPr)["@id"] ?? index);
+  return [{ id: `connector-${index}`, kind: "shape", name: "Connector", sourceShapeId, ...mapTransform(transform, context), geometry: "line", stroke, strokeWidth: numeric(line["@w"], 12700), opacity: 1 }];
 }
 
 function pictureElements(picture: XmlRecord, context: GroupContext, relationships: Relationship[], index: number): TemplatePreviewElement[] {
@@ -416,14 +434,38 @@ function pictureElements(picture: XmlRecord, context: GroupContext, relationship
   const relationshipId = String(record(record(picture.blipFill).blip)["@embed"] ?? "");
   const relationship = findRelationship(relationships, relationshipId);
   if (!relationship) return [];
+  const sourceShapeId = String(record(record(picture.nvPicPr).cNvPr)["@id"] ?? index);
   return [{
-    id: `picture-${index}-${String(record(record(picture.nvPicPr).cNvPr)["@id"] ?? index)}`,
+    id: `picture-${index}-${sourceShapeId}`,
     kind: "image",
     name: shapeName(picture, true),
+    sourceShapeId,
     ...mapTransform(transform, context),
     geometry: "rect",
     mediaId: relationship.target,
   }];
+}
+
+async function enrichTextMetadata(elements: TemplatePreviewElement[]): Promise<TemplatePreviewElement[]> {
+  return Promise.all(elements.map(async (element) => {
+    if (element.kind !== "text" || !element.text?.trim()) return element;
+    const paragraphs = element.text.split(/\r?\n/).map((text) => text.replace(/\s+/g, " ").trim()).filter(Boolean);
+    return {
+      ...element,
+      textHash: await sha256Text(element.text.replace(/\s+/g, " ").trim()),
+      sourceParagraphs: await Promise.all(paragraphs.map(async (text, index) => ({
+        index: index + 1,
+        text,
+        textHash: await sha256Text(text),
+        characterCount: text.length,
+        bullet: false,
+        bulletConfidence: "inherited-possible" as const,
+        level: 0,
+        fontFamilies: element.fontFamily ? [element.fontFamily] : [],
+        fontSizes: element.fontSize ? [element.fontSize] : [],
+      }))),
+    };
+  }));
 }
 
 function flattenTree(spTree: XmlRecord, context: GroupContext, theme: Theme, relationships: Relationship[], prefix = "root"): TemplatePreviewElement[] {
@@ -512,7 +554,7 @@ export async function buildTemplateCatalog(bytes: Uint8Array, sourceName: string
     const commonSlideData = record(masterXml.cSld);
     const context: GroupContext = { x: 0, y: 0, width: slideWidth, height: slideHeight, childX: 0, childY: 0, childWidth: slideWidth, childHeight: slideHeight };
     const loaded = {
-      elements: flattenTree(record(commonSlideData.spTree), context, theme, relationships, part).filter((element) => !element.placeholderType),
+      elements: (await enrichTextMetadata(flattenTree(record(commonSlideData.spTree), context, theme, relationships, part))).filter((element) => !element.placeholderType).map((element) => ({ ...element, sourcePart: part, origin: "master" as const })),
       background: backgroundFor(commonSlideData, theme),
       theme,
       relationships,
@@ -531,7 +573,7 @@ export async function buildTemplateCatalog(bytes: Uint8Array, sourceName: string
     const layoutXml = record((await readXml(zip, layoutPart)).sldLayout);
     const commonSlideData = record(layoutXml.cSld);
     const context: GroupContext = { x: 0, y: 0, width: slideWidth, height: slideHeight, childX: 0, childY: 0, childWidth: slideWidth, childHeight: slideHeight };
-    const layoutElements = flattenTree(record(commonSlideData.spTree), context, master.theme, relationships, layoutPart);
+    const layoutElements = (await enrichTextMetadata(flattenTree(record(commonSlideData.spTree), context, master.theme, relationships, layoutPart))).map((element) => ({ ...element, sourcePart: layoutPart, origin: "layout" as const }));
     const showMasterShapes = String(layoutXml["@showMasterSp"] ?? "1") !== "0";
     const elements = [...(showMasterShapes ? master.elements : []), ...layoutElements];
     for (const element of elements) if (element.mediaId) mediaParts.add(element.mediaId);
@@ -641,7 +683,7 @@ export async function buildSlideRenderCatalog(bytes: Uint8Array, sourceName: str
     const theme = themeRelationship && zip.file(themeRelationship.target) ? parseTheme(await readXml(zip, themeRelationship.target)) : defaultTheme;
     const masterXml = record((await readXml(zip, part)).sldMaster);
     const common = record(masterXml.cSld);
-    const loaded = { elements: flattenTree(record(common.spTree), rootContext, theme, relationships, part).filter((element) => !element.placeholderType), background: backgroundFor(common, theme), theme };
+    const loaded = { elements: (await enrichTextMetadata(flattenTree(record(common.spTree), rootContext, theme, relationships, part))).filter((element) => !element.placeholderType).map((element) => ({ ...element, sourcePart: part, origin: "master" as const })), background: backgroundFor(common, theme), theme };
     masterCache.set(part, loaded);
     return loaded;
   }
@@ -654,7 +696,7 @@ export async function buildSlideRenderCatalog(bytes: Uint8Array, sourceName: str
     const master = await loadMaster(masterPart);
     const layoutXml = record((await readXml(zip, part)).sldLayout);
     const common = record(layoutXml.cSld);
-    const layoutElements = flattenTree(record(common.spTree), rootContext, master.theme, relationships, part);
+    const layoutElements = (await enrichTextMetadata(flattenTree(record(common.spTree), rootContext, master.theme, relationships, part))).map((element) => ({ ...element, sourcePart: part, origin: "layout" as const }));
     const placeholders = layoutElements.filter((element) => Boolean(element.placeholderType));
     const showMasterShapes = String(layoutXml["@showMasterSp"] ?? "1") !== "0";
     const loaded = { elements: [...(showMasterShapes ? master.elements : []), ...layoutElements.filter((element) => !element.placeholderType)], placeholders, background: Object.keys(record(common.bg)).length ? backgroundFor(common, master.theme) : master.background, theme: master.theme };
@@ -670,7 +712,7 @@ export async function buildSlideRenderCatalog(bytes: Uint8Array, sourceName: str
     const layout = await loadLayout(layoutPart);
     const slideXml = record((await readXml(zip, slidePart)).sld);
     const common = record(slideXml.cSld);
-    const slideElements = flattenSlideTree(record(common.spTree), rootContext, layout.theme, relationships, layout.placeholders, slidePart);
+    const slideElements = (await enrichTextMetadata(flattenSlideTree(record(common.spTree), rootContext, layout.theme, relationships, layout.placeholders, slidePart))).map((element) => ({ ...element, sourcePart: slidePart, origin: "slide" as const }));
     const elements = [...layout.elements, ...slideElements];
     for (const element of elements) if (element.mediaId) mediaParts.add(element.mediaId);
     const titleElement = slideElements.find((element) => element.kind === "text" && ["title", "ctrTitle"].includes(element.placeholderType ?? "") && element.text?.trim()) ?? slideElements.find((element) => element.kind === "text" && element.text?.trim());

@@ -136,11 +136,15 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(studioSceneTool?.description ?? "", /actual composition decision/i);
     assert.equal(studioSceneTool?.annotations?.readOnlyHint, true);
     const studioStageTool = result.tools.find((tool) => tool.name === "stage_studio_web_design");
-    assert.match(studioStageTool?.description ?? "", /compile its web-computed frames/i);
+    assert.match(studioStageTool?.description ?? "", /fresh-composition/i);
+    assert.match(studioStageTool?.description ?? "", /source-bound-overlay/i);
+    assert.match(studioStageTool?.description ?? "", /PowerPoint-native visual QA/i);
     assert.match(studioStageTool?.description ?? "", /substantive layout decision/i);
-    assert.match(studioStageTool?.description ?? "", /Current\/Proposal/i);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-two-column/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-card-grid/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-objective-columns/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-steps-evidence/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-labeled-figure-grid/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /fresh-composition/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeFrames/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeStyles/);
