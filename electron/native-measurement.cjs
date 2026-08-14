@@ -109,9 +109,25 @@ const POWERPOINT_MEASUREMENT_SCRIPT = `on run argv
     set measurementStage to "open source copy"
     try
       open sourceFile
-      set measurementStage to "bind active presentation"
-      set targetPresentation to active presentation
-      if full name of targetPresentation is not sourcePath then error "PowerPoint did not activate the requested measurement copy."
+      set measurementStage to "bind exact presentation"
+      repeat with bindAttempt from 1 to 40
+        repeat with presentationIndex from 1 to (count of presentations)
+          set candidatePresentation to presentation presentationIndex
+          try
+            if (full name of candidatePresentation as text) is sourcePath then
+              set targetPresentation to candidatePresentation
+              exit repeat
+            end if
+          end try
+        end repeat
+        if targetPresentation is not missing value then exit repeat
+        delay 0.1
+      end repeat
+      if targetPresentation is missing value then error "PowerPoint did not open the requested measurement copy."
+      -- Keep measurement synchronized with the authoritative render path.
+      -- PowerPoint may bind the presentation before it has completed the
+      -- initial text/image layout pass for a freshly generated PPTX.
+      delay 1
 ${POWERPOINT_MEASUREMENT_BODY}
       set measurementStage to "close measured presentation"
       close targetPresentation saving no

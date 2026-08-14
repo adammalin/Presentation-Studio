@@ -19,6 +19,22 @@ test("one versioned design standard drives project defaults and MCP", () => {
   assert.match(packagedStandard.componentSystem.patterns.technicalFigure, /preserve.*source-locked evidence unit/i);
   assert.match(packagedStandard.studioWebDesign.requiredLoop.join(" "), /Found issues.*Fixing.*Rechecking original intent/i);
   assert.match(packagedStandard.studioWebDesign.antiPatterns.join(" "), /Blindly redrawing screenshots, code, technical diagrams/i);
+  assert.match(packagedStandard.studioWebDesign.nativeTemplateBase, /PowerPoint-native layout render/i);
+  assert.match(packagedStandard.studioWebDesign.constraintOperations.align, /rendered text starts/i);
+  assert.match(packagedStandard.studioWebDesign.figureModel.redrawGate, /verified information and relationships/i);
+  assert.match(packagedStandard.studioWebDesign.designMemory, /recorded ready/i);
+  assert.match(packagedStandard.componentSystem.layoutRecipes["title-challenges-evidence"].regions, /three equal.*evidence/i);
+  assert.match(packagedStandard.componentSystem.layoutRecipes["title-process-flow"].regions, /source relationship and z-order/i);
+  assert.match(packagedStandard.tableRules.join(" "), /PowerPoint-native cell clearance/i);
+  assert.match(packagedStandard.studioWebDesign.conceptReference.role, /art direction/i);
+  assert.match(packagedStandard.studioWebDesign.conceptReference.reconstruction, /Do not auto-trace/i);
+  assert.equal(packagedStandard.studioWebDesign.visualNeedWorkflow.defaultDisclosure, "abstract-structure-only");
+  assert.match(packagedStandard.studioWebDesign.visualNeedWorkflow.executionContract, /exactly one raster.*ONLY ALLOWED TEXT.*LOGO.*OMIT/i);
+  assert.match(packagedStandard.studioWebDesign.visualNeedWorkflow.brandExpressionPass, /affirmative.*restrained.*balanced.*expressive/i);
+  assert.match(packagedStandard.studioWebDesign.visualNeedWorkflow.reconstruction, /reconstruct_studio_concept.*typography-only/i);
+  assert.match(packagedStandard.ornlRules.join(" "), /Do not equate ORNL branding.*green and navy panels/i);
+  assert.match(packagedStandard.studioWebDesign.requiredLoop.join(" "), /at most three passes/i);
+  assert.match(packagedStandard.ornlRules.join(" "), /existing populated ORNL title slide as sacred.*Do not recompose, restyle, move, resize, add to, remove from, or replace it/i);
 });
 
 test("older project metadata adopts design defaults without inventing review threads", () => {

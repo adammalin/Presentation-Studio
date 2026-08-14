@@ -29,7 +29,7 @@ function measurement(shapes: NativeShapeMeasurement[]): NativeMeasurementResult 
 }
 
 test("fresh-composition QA ignores empty decoration frames and normal glyph overhang", () => {
-  assert.deepEqual(nativeTextOverflows(measurement([shape("empty rule", 0, 125), shape("right aligned footer", 10, 102)])), []);
+  assert.deepEqual(nativeTextOverflows(measurement([shape("empty rule", 0, 125), shape("PowerPoint empty rule", 1, 125), shape("right aligned footer", 10, 102)])), []);
 });
 
 test("fresh-composition QA reports material PowerPoint-native text overflow", () => {

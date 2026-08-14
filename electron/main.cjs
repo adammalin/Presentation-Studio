@@ -145,10 +145,14 @@ function dispatchMcpCommand(operation, input) {
   const id = randomUUID();
   return new Promise((resolve, reject) => {
     const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation);
+    // A central Studio build deliberately renders and measures every slide in
+    // PowerPoint before it becomes the Slides/export authority. Large decks
+    // therefore need a deck-scale timeout rather than the single-slide guard.
+    const timeoutMs = operation === "build_studio_presentation" ? 600_000 : nativeRenderOperation ? 195_000 : 15_000;
     const timer = setTimeout(() => {
       pendingMcpCommands.delete(id);
       reject(new Error("Presentation Studio did not answer the MCP request in time."));
-    }, nativeRenderOperation ? 195_000 : 15_000);
+    }, timeoutMs);
     pendingMcpCommands.set(id, { resolve, reject, timer });
     mainWindow.webContents.send("mcp:command", { id, operation, input });
   });

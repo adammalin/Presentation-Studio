@@ -24,7 +24,8 @@ const { POWERPOINT_MEASUREMENT_SCRIPT, parsePowerPointMeasurement, nativeMeasure
 };
 
 test("native measurement automation closes its exact temporary presentation after success or failure", () => {
-  assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /set targetPresentation to active presentation/i);
+  assert.doesNotMatch(POWERPOINT_MEASUREMENT_SCRIPT, /set targetPresentation to active presentation/i);
+  assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /full name of candidatePresentation as text/i);
   assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /count of slides of targetPresentation/i);
   assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /on error measurementError number measurementErrorNumber/i);
   assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /close targetPresentation saving no/i);

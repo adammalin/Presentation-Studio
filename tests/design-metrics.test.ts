@@ -60,3 +60,47 @@ test("design metrics exclude intentional full-bleed brand bands but retain real 
   assert.equal(metrics.safeRegionViolationCount, 2);
   assert.equal(metrics.offSlideObjectCount, 0);
 });
+
+test("design metrics tolerate PowerPoint bullet glyph overhang without hiding ordinary text overflow", () => {
+  const objects = [sceneObject("bullet", "body"), sceneObject("plain", "body")];
+  const deck = {
+    id: "bullet-metrics",
+    name: "bullet-metrics.pptx",
+    sourceResourceId: "source",
+    sourceSha256: "b".repeat(64),
+    operationScope: "reflow",
+    templateClassification: "custom",
+    status: "ready-for-cleanup",
+    protectedSlideNumbers: [],
+    audit: {
+      slideSize: { width: 720 * 12_700, height: 405 * 12_700 },
+      editableObjects: objects.map((object) => ({ id: object.id, slideNumber: 1, shapeId: object.shapeId, name: object.name })),
+      textBoxes: objects.map((object) => ({ slideNumber: 1, shapeId: object.shapeId, bulletParagraphCount: object.id === "bullet" ? 1 : 0 })),
+    },
+    scene: { objects },
+  } as unknown as DeckJob;
+  const measured = (objectId: string) => ({
+    objectId,
+    shapeId: objectId,
+    slideNumber: 1,
+    sourceGeometryPt: { left: 100, top: objectId === "bullet" ? 100 : 180, width: 200, height: 60 },
+    measuredGeometryPt: { left: 100, top: objectId === "bullet" ? 100 : 180, width: 200, height: 60 },
+    text: { marginsPt: { left: 0, right: 0, top: 0, bottom: 0 }, renderedBoundsPt: { left: 118, top: objectId === "bullet" ? 100 : 180, width: 184.1, height: 30 }, coordinateSpace: "slide" as const, textLength: 80, lineCount: 2, verticalAnchor: "anchor top" },
+    binding: { method: "shape-id" as const, confidence: "high" as const },
+    provenance: { authority: "powerpoint-native" as const, adapter: "macos-powerpoint-applescript", confidence: "high" as const, note: "test" },
+  });
+  const packet = {
+    schema: "presentation-studio/native-measurement-packet",
+    version: 1,
+    status: "ready",
+    revision: "r2",
+    sourceSha256: deck.sourceSha256,
+    adapter: "macos-powerpoint-applescript",
+    authority: "powerpoint-native",
+    generatedAt: "2026-08-14T00:00:00.000Z",
+    warnings: [],
+    objects: [measured("bullet"), measured("plain")],
+  } as NativeMeasurementPacket;
+
+  assert.equal(calculateSlideDesignMetrics(deck, packet, 1).textOverflowCount, 1);
+});

@@ -130,8 +130,17 @@ function tableMetrics(objects: BoundObjectMeasurement[]) {
   };
 }
 
-function textOverflows(object: BoundObjectMeasurement) {
-  return calculateNativeTextOverflowEdges(object, GEOMETRY_TOLERANCE_PT).length > 0;
+function textOverflowTolerance(deck: DeckJob, object: BoundObjectMeasurement) {
+  const sourceObject = deck.audit?.editableObjects.find((candidate) => candidate.id === object.objectId);
+  const textBox = sourceObject ? deck.audit?.textBoxes.find((candidate) => candidate.slideNumber === object.slideNumber && candidate.shapeId === sourceObject.shapeId) : undefined;
+  // PowerPoint's native TextRange2 bounds include a small right-side glyph
+  // overhang for bulleted paragraphs. A 3 pt allowance suppresses that known
+  // measurement artifact while still reporting material wrap or clipping.
+  return (textBox?.bulletParagraphCount ?? 0) > 0 ? 3 : GEOMETRY_TOLERANCE_PT;
+}
+
+function textOverflows(deck: DeckJob, object: BoundObjectMeasurement) {
+  return calculateNativeTextOverflowEdges(object, textOverflowTolerance(deck, object)).length > 0;
 }
 
 function isIntentionalEdgeDecoration(deck: DeckJob, object: BoundObjectMeasurement, slideWidthPt: number, slideHeightPt: number) {
@@ -190,7 +199,7 @@ export function calculateSlideDesignMetrics(deck: DeckJob, packet: NativeMeasure
     verticalGapMadPt: gaps.length > 1 ? rounded(mad(gaps)!) : undefined,
     safeRegionViolationCount: safeViolations.length,
     offSlideObjectCount: offSlide.length,
-    textOverflowCount: textObjects.filter(textOverflows).length,
+    textOverflowCount: textObjects.filter((object) => textOverflows(deck, object)).length,
     minimumTableCellClearancePt: tables.minimumClearance === undefined ? undefined : rounded(tables.minimumClearance),
     minimumTableHorizontalClearancePt: tables.minimumHorizontalClearance === undefined ? undefined : rounded(tables.minimumHorizontalClearance),
     minimumTableVerticalClearancePt: tables.minimumVerticalClearance === undefined ? undefined : rounded(tables.minimumVerticalClearance),

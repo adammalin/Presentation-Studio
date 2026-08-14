@@ -19,6 +19,7 @@
     "test:canary:create": "tsx scripts/create-design-canary.ts",
     "test:canary:native": "tsx scripts/run-design-canary.ts",
     "benchmark:studio-web": "tsx scripts/qualify-studio-web-benchmark.ts",
+    "benchmark:private-golden": "tsx scripts/qualify-private-golden.ts",
     "desktop:smoke": "node scripts/electron-smoke.mjs",
     "mcp": "node mcp/server.mjs",
     "guide": "python3 scripts/build-install-guide.py",

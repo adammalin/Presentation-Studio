@@ -1,13 +1,13 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-13.16-figure-intent-loop",
+  "version": "2026-08-14.23-responsive-semantic-recipes",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
   "defaultMode": {
     "name": "designer-cleanup",
-    "behavior": "Adopt the resolved project profile once, inspect the PowerPoint-native source, import exact content into the canonical Studio Web Scene, choose a shared ORNL recipe or approved Template Pack layout, compose visibly, compile to editable PowerPoint, and iterate without asking for routine per-slide approvals.",
-    "definitionOfDone": "Every slide has been visually reviewed in an independent export render and has no known clipping, overflow, accidental overlap, off-slide content, unreadable text, or unbalanced placement."
+    "behavior": "Treat Resources as immutable inputs and the persisted Studio Web Scene as the one current presentation. Inspect the PowerPoint-native source, import exact content, choose a shared ORNL recipe or ranked converted Template Pack layout, compose visibly, build the same scene into editable PowerPoint, and iterate without routine per-slide approvals.",
+    "definitionOfDone": "Every slide has one current Studio revision, one matching PowerPoint-native result visible in Slides, and no known clipping, overflow, accidental overlap, off-slide content, unreadable text, unbalanced placement, missing media, or divergent alternate design."
   },
   "defaults": {
     "profileId": "ornl-presentation-default",
@@ -89,31 +89,53 @@
       "atomic multi-region scene fitting to one approved layout with bounded proportional scaling",
       "PowerPoint-measured text fitting without clipping or type-floor regression",
       "cell-level table fitting",
-      "approved-layout semantic recomposition"
+      "approved-layout semantic recomposition",
+      "Studio-scene optical alignment, equal-gap distribution, deck-grid snapping, and relationship-preserving safe-region fitting"
     ],
     "solverPolicy": "The AI chooses design intent and objects. A deterministic minimum-movement solver computes point geometry, enforces safe-region and collision constraints, and returns infeasible with concrete space recommendations instead of guessing, clipping, or silently shrinking type.",
     "nativeRevisionLoop": "Inspect, diagnose, solve, materialize, render in PowerPoint, remeasure, compare metrics, critique pixels, revise, and reject any regression with a bounded iteration count.",
     "exportAcceptance": "Before a PPTX can be saved as a completed review copy, independently rerender and remeasure the exact export bytes, verify visible-copy and table-structure hashes, compare every staged/export raster hash, and reject any native-geometry mismatch."
   },
   "studioWebDesign": {
-    "version": 2,
-    "principle": "Use the constrained semantic HTML/CSS Studio Web Scene as the shared design authority for AI and human composition. Use the imported PPTX as the preservation envelope, and use Microsoft PowerPoint-native rendering and measurement as final appearance authority.",
+    "version": 5,
+    "principle": "Use the constrained semantic HTML/CSS Studio Web Scene as the single shared presentation authority for AI and human composition. Resources are immutable inputs, converted ORNL Template Pack layouts are design vocabulary inside that scene, and Microsoft PowerPoint-native rendering and measurement are final appearance authority.",
     "authority": {
       "content": "Exact source-bound text, table cells, data, media, notes, and technical meaning from the imported PowerPoint.",
-      "composition": "The persisted Studio Web Scene: semantic roles, component recipe, template-layout binding, computed frames, hierarchy, type tokens, image-fit behavior, and intentional visual relationships.",
-      "appearance": "The independently rendered and remeasured PowerPoint proposal and final export. Browser similarity alone is not acceptance."
+      "composition": "The one persisted Studio Web Scene: semantic roles, shared component recipe, converted template-layout binding, computed frames, hierarchy, type tokens, image-fit behavior, intentional visual relationships, and exact slide revision.",
+      "appearance": "The independently rendered and remeasured editable PowerPoint built from that exact Studio revision. Slides, comments, build, and export must not refer to divergent source, proposal, or browser-only designs."
+    },
+    "conceptReference": {
+      "role": "A generated or human-supplied concept may provide art direction for composition, hierarchy, negative space, color balance, figure concept, image treatment, or visual rhythm. It is never the final slide or content authority.",
+      "requiredStatus": "concept-only",
+      "contentAuthority": "All wording, logos, marks, data, claims, scientific details, technical relationships, and approved assets must come from the source PowerPoint or another explicitly authorized Resource—not from generated pixels.",
+      "reconstruction": "Analyze the approved visual characteristics into a normalized semantic blueprint, then reconstruct them from named editable Studio components. Do not auto-trace the raster, copy generated typography, or embed the concept as a flattened final slide.",
+      "review": "Compare original versus editable reconstruction for exact meaning, concept versus reconstruction for approved visual character, and the native PowerPoint result versus the ORNL/template/production rules."
+    },
+    "visualNeedWorkflow": {
+      "purpose": "When a weak slide would materially benefit from art direction, record a source-hash-bound local need instead of silently calling one image provider or inventing a one-off prompt.",
+      "states": ["brief-ready", "concept-attached", "reconstruction-ready", "resolved", "held"],
+      "defaultDisclosure": "abstract-structure-only",
+      "brandExpressionPass": "Choose an affirmative restrained, balanced, or expressive recipe with a deliberate pattern or pattern-free motif, one purposeful secondary/accent role when useful, no generated typography, and a reason tied to the communication job. Rotate eligible motifs instead of repeating a generic green/navy panel treatment.",
+      "executionContract": "Every concept prompt requests exactly one raster, sets ONLY ALLOWED TEXT to NONE and LOGO to OMIT, closes allowed visuals to abstract structure, reserves editable Aptos/source-content zones, and forbids generated words, data, claims, methods, fake UI, screenshots, notes, footers, CTAs, and official marks.",
+      "providerBoundary": "The queue creates a model-independent prompt package only. It never calls an image provider, automatically attaches output, or grants source-content disclosure. Exact-content-approved requires a separately bounded approved summary.",
+      "reconstruction": "Import the result as an embedded image Resource with explicit Preview permission, attach it as concept-only direction, analyze it into normalized semantic zones, and call reconstruct_studio_concept to map those zones to exact editable source-bound content. A visual need cannot advance when design impact is unchanged, typography-only, or a small cleanup instead of its required material layout, image, figure, or verified-diagram reconstruction. Resolve only after PowerPoint-native review passes."
     },
     "requiredLoop": [
       "Inspect the PowerPoint-native Current render and exact source-bound content; report Found issues with evidence before changing the slide.",
       "Read or create the Studio Web Scene and diagnose the slide's communication job.",
+      "When a concept-only reference is attached, read its approved influences and semantic blueprint, ignore all generated wording, logos, data, claims, and technical details, and reconstruct only the approved visual character from editable Studio components.",
+      "Require material design impact before advancing a visual need: type-only edits and small cleanup movements do not satisfy a requested layout, image, figure, or diagram reconstruction.",
       "For every weak figure or schematic, inventory its information and relationships, then choose preserve-as-unit, preserve-and-frame, hybrid-rebuild, or redraw-candidate. Do not silently redraw technical evidence.",
-      "Choose one shared ORNL web recipe or one compatible approved Template Pack layout.",
+      "Treat figures as first-class relationship groups with explicit crop, focal point, aspect lock, captions, labels, callouts, connectors, and verification status; move the group without breaking internal meaning.",
+      "Read deterministic layout compatibility, then choose one shared ORNL web recipe or one compatible converted Template Pack layout as design vocabulary inside the same scene.",
+      "Reuse any matching ready-rated deck design-memory pattern and the shared deck rhythm before inventing a one-off composition.",
       "Enter Fixing and recompose the whole semantic slide; do not preserve weak source coordinates by default.",
-      "Use bounded node frame and style refinements only after the composition choice.",
-      "Choose source-bound-overlay when native source internals must survive, or fresh-composition when weak source geometry should be replaced by a new canonical 16:9 composition.",
-      "Compile supported web nodes to editable PowerPoint text, native tables, extracted images, and restrained ORNL vectors.",
-      "Enter Rechecking original intent: inspect and remeasure the written artifact in Microsoft PowerPoint, compare it with Current, and revise or reject any visual, geometry, content, source-identity, or relationship regression.",
-      "Leave the proposal for human acceptance; never silently apply or export it."
+      "Use optical alignment, equal-gap distribution, safe-region fitting, snapping, and relationship-preserving groups after the composition choice; do not ask the AI to calculate raw correction coordinates when a semantic constraint exists.",
+      "Persist the edit to the existing central Studio slide revision; do not create a separate proposal design authority.",
+      "Compile supported web nodes and converted template artwork to editable PowerPoint text, native tables, extracted images, and restrained ORNL vectors.",
+      "Enter Rechecking original intent: inspect and remeasure the written artifact in Microsoft PowerPoint, compare it with the source reference, and revise or reject any visual, geometry, content, source-identity, or relationship regression.",
+      "Run the bounded Found issues, Fixing, Rechecking loop for at most three passes. A ready verdict is withheld while native blocker or major issues remain; unresolved pass three becomes a human-review hold.",
+      "Build every converted slide into one central editable deck, show those exact results in Slides, bind comments to their Studio revisions, and leave external export as a separate user action."
     ],
     "antiPatterns": [
       "Changing only type size or font family when the layout remains weak.",
@@ -121,9 +143,24 @@
       "Drawing every slide as an unrelated one-off canvas instead of shared components.",
       "Using arbitrary CSS effects that cannot compile to editable PowerPoint.",
       "Judging final quality from the browser canvas without PowerPoint-native comparison.",
+      "Maintaining separate Studio, Slides, Review, and export designs from the same source instead of one central scene revision.",
       "Blindly redrawing screenshots, code, technical diagrams, labels, values, arrows, or causality because the source graphic looks unattractive.",
-      "Treating a dense meaning-bearing composite as unrelated decorative fragments instead of one evidence unit."
+      "Treating a dense meaning-bearing composite as unrelated decorative fragments instead of one evidence unit.",
+      "Treating an Image Gen concept as a finished slide, tracing its pixels, or trusting its generated text, logos, data, claims, or technical relationships."
     ],
+    "nativeTemplateBase": "For converted Template Pack layouts, use the authoritative PowerPoint-native layout render as the Studio editor and exported artwork base so inherited master imagery, marks, fills, and strokes stay exact. Keep Studio text, tables, figures, and diagrams editable above that immutable brand base.",
+    "constraintOperations": {
+      "align": "Align structural edges/centers or PowerPoint-native rendered text starts/tops. Prefer optical-left and optical-top for visible typography.",
+      "distribute": "Create exact horizontal or vertical equal gaps among nodes or declared relationship groups while preserving internal geometry.",
+      "snap": "Use the deck rhythm grid, safe area, slide centers, and peer edges/centers; persist deliberate constraints instead of untracked coordinate nudges.",
+      "safeRegion": "Move a whole component by the minimum amount required; reject off-canvas geometry, new overlap, or infeasible oversized groups."
+    },
+    "figureModel": {
+      "fields": ["group frame", "normalized crop", "normalized focal point", "aspect lock", "caption-for", "label-for", "callout-for", "connector endpoints", "information inventory", "invariants", "verification status"],
+      "default": "Preserve a complex technical figure as one source-locked evidence unit. Crop only to verified active content, keep aspect ratio, and design around it.",
+      "redrawGate": "Editable redraw requires verified information and relationships. Otherwise retain the original pixels and expose the uncertainty for human review."
+    },
+    "designMemory": "When a PowerPoint-native Studio result is recorded ready, remember its content signature, recipe or approved layout, and deck rhythm. Reuse that pattern for matching slides to improve deck-level consistency.",
     "supportedRecipes": [
       "ornl-title-content",
       "ornl-title-two-column",
@@ -193,6 +230,8 @@
       "objectiveColumns": "Two to four exact objective atoms arranged as equal-weight columns with one full-width ORNL accent rule per column; do not invent headings or numbers.",
       "stepsEvidence": "An ordered step stack paired with one contained source visual or evidence region; keep each heading and body relationship explicit and preserve exact wording.",
       "labeledFigureGrid": "Two to four source figures paired with their exact labels and captions in a stable reading order; use consistent frames, gaps, and caption baselines.",
+      "challengeEvidence": "One exact assertion, one short orienting line, three peer challenge cards, and up to two source-locked evidence regions. Preserve dense technical diagrams as one verified unit when their internal meaning cannot be safely reconstructed.",
+      "processFlow": "Four source-bound inputs in a consistent two-by-two card system, followed by ordered stage and output bands plus exact supporting copy. Pair icons and labels by source relationship and z-order rather than page position.",
       "glossary": "A compact Aptos caption block below primary content with no decorative empty column.",
       "tableStandard": "The standard editable ORNL table variant with a Hale Navy header, Aptos type, measured padding, alternating neutral rows, and minimal horizontal rules.",
       "tableDenseTechnical": "The dense editable ORNL table variant using the same palette and structure with compact measured type and padding."
@@ -233,6 +272,14 @@
       "title-labeled-figure-grid": {
         "useWhen": "Two to four source figures have explicit labels or captions that must stay bound to the correct visual.",
         "regions": "titleBar plus a labeledFigureGrid with labels above, contained images in the middle, and exact captions below on shared baselines."
+      },
+      "title-challenges-evidence": {
+        "useWhen": "One assertion introduces three peer technical challenges and the source contains a dense schematic, screenshot, or related evidence that must remain exact.",
+        "regions": "titleBar, challenge assertion, orienting line, three equal challengeEvidence cards, and a lower evidence band that preserves verified source relationships and gives each external caption its own readable baseline."
+      },
+      "title-process-flow": {
+        "useWhen": "Four input artifacts feed two ordered process stages and one output while exact explanatory copy remains necessary.",
+        "regions": "titleBar plus a left processFlow system and a right supporting-copy region. Input/output pairing follows source relationship and z-order; it never guesses from vertical position alone."
       },
       "title-references": {
         "useWhen": "The slide contains references or another long enumerated list.",
@@ -364,13 +411,16 @@
     "Preserve exact cell text, row and column order, merged-cell topology, notes, and semantic color meaning unless the user explicitly authorizes a change.",
     "Resolve table typography, padding, borders, fills, alignment, captions, and source treatment from one versioned table profile for all compatible tables.",
     "Measure every cell with the final font and width. Check wrapping, clipping, minimum readable type, padding, row height, column balance, merge constraints, contrast, and separation from adjacent objects.",
+    "Require PowerPoint-native cell clearance after the editable candidate is written; a browser-canvas fit or OOXML estimate alone cannot qualify a table.",
     "Do not solve an oversized table by hiding rows, dropping cells, rasterizing it, or shrinking below the rule-profile minimum. Propose a compatible table layout or a continuation slide with repeated header semantics.",
     "Verify exact cell-content and structure hashes before Apply and after editable PowerPoint export, then inspect the independently rendered export for optical quality."
   ],
   "ornlRules": [
     "Use the current authorized ORNL Template Pack and an approved layout carried by that pack.",
+    "Treat an existing populated ORNL title slide as sacred: preserve its native composition, approved marks, artwork, photography, legal copy, placeholder geometry, and master/layout relationships exactly. Do not recompose, restyle, move, resize, add to, remove from, or replace it. For a new presentation, use an approved ORNL title layout and edit only its intended placeholders.",
     "Use Aptos for editable presentation text unless an approved template role requires another typeface.",
     "Use ORNL Green as the primary anchor, approved supporting colors with sufficient contrast, and square-cornered geometry.",
+    "Choose restrained, balanced, or expressive treatment from the slide's communication job. Do not equate ORNL branding with filling every slide with green and navy panels or repeated card grids.",
     "Preserve authentic ORNL marks and template artwork; do not redraw or approximate the logo.",
     "Treat every result as a draft until the appropriate ORNL content owner and brand reviewer approve it."
   ],

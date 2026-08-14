@@ -86,7 +86,7 @@ server.registerTool("get_slide_scene", {
 
 server.registerTool("get_studio_web_scene", {
   title: "Read one slide as a Studio web-design scene",
-  description: "Read the canonical semantic HTML/CSS scene at 13.333 × 7.5 inches for one imported PowerPoint slide: complete source text, exact locked node text and table cells, paragraph-level semantic atom candidates, content-mapping coverage, editable-object/catalog-derived/semantic-atom binding provenance, source and current frames in inches, repeated-component roles, media bindings, source-locked figure treatments, ORNL design tokens, separate source-slide dimensions, and the recommended shared layout recipe. Objective columns split 2–4 exact paragraphs into a flat ORNL column system; steps + evidence binds 2–5 exact instruction atoms to one source visual; labeled figures pair source labels and captions with multiple source images. If coverage is incomplete, fresh composition is held instead of silently omitting content. This is the AI and human design surface—make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
+  description: "Read the canonical semantic HTML/CSS scene at 13.333 × 7.5 inches for one imported PowerPoint slide: complete source text, exact locked node text and table cells, paragraph-level semantic atom candidates, content-mapping coverage, editable-object/catalog-derived/semantic-atom binding provenance, source and current frames in inches, repeated-component roles, media bindings, source-locked figure treatments, ORNL design tokens, separate source-slide dimensions, and the recommended shared layout recipe. HARD RULE: an existing populated ORNL title slide is sacred and remains source-preserved exactly; never recompose or alter its approved marks, artwork, photography, legal copy, geometry, master, or layout. Objective columns split 2–4 exact paragraphs into a flat ORNL column system; challenge + evidence composes one assertion and three peer challenges above source-locked technical evidence; process flow pairs four source inputs to two stages and one output by source relationship and z-order; steps + evidence binds 2–5 exact instruction atoms to one source visual; labeled figures pair source labels and captions with multiple source images. Treat bottom-of-slide technical objects as content unless footer identity is explicit. If coverage is incomplete, fresh composition is held instead of silently omitting content. This is the AI and human design surface—make an actual composition decision instead of merely shrinking fonts or preserving weak source coordinates. The source PowerPoint remains the preservation envelope and its native render remains final visual authority.",
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_studio_web_scene", input, (result) => `Read ${result.slide.nodes.length} semantic web nodes for slide ${result.slide.slideNumber} of ${result.deck.name}; recommended recipe: ${result.slide.recommendedRecipe}.`));
@@ -102,12 +102,131 @@ server.registerTool("preview_studio_fresh_composition", {
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => callImage("preview_studio_fresh_composition", input, (result) => `Built a fresh editable PowerPoint composition for slide ${result.slide.number} of ${result.deck.name}, passed exact-copy guards, and rendered the written artifact authoritatively in Microsoft PowerPoint. Nothing was applied, saved, exported, or overwritten.`));
 
+server.registerTool("get_studio_slide_critique", {
+  title: "Find issues in the exact Studio export result",
+  description: "Return the original PowerPoint slide and the exact current Studio export result as authoritative images, plus any explicitly preview-authorized concept-only references and deterministic PowerPoint-native overflow, safe-region, optical-alignment, spacing, hierarchy, density, and figure checks. Use this after building the exact slide revision. Compare message intent, labels, values, arrows, grouping, and causality to the original; compare only approved visual influences to a concept; then either refine with high-level Studio operations or record a bounded visual critique. This is the Found issues step and never changes, saves, or exports content.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), expectedSceneRevision: z.string().min(1).max(500) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImages("get_studio_slide_critique", input, (result) => `Found ${result.critique.issues.length} objective issue${result.critique.issues.length === 1 ? "" : "s"} on Studio slide ${result.slideNumber}; compare the original and export-result images before recording pass ${result.critique.iteration.currentPass}/3.`));
+
+server.registerTool("record_studio_visual_critique", {
+  title: "Record a bounded Studio visual-quality pass",
+  description: "Record the AI's visual judgment for the exact Studio scene revision and PowerPoint raster returned by get_studio_slide_critique. Supply only concrete visible issues after comparing original and export-result pixels. A ready verdict is withheld when native blocker or major issues remain, or when the AI reports blocker/major issues. Passes are capped at three; unresolved pass 3 becomes hold for human review. Recording critique metadata does not change slide design geometry, save a project, or export PowerPoint.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), expectedSceneRevision: z.string().min(1).max(500), slideNumber: z.number().int().min(1), rasterSha256: z.string().length(64),
+    verdict: z.enum(["ready", "revise", "hold"]), rationale: z.string().min(1).max(1_000),
+    visualIssues: z.array(z.object({ category: z.enum(["alignment", "spacing", "hierarchy", "figure", "brand", "legibility", "consistency", "other"]), severity: z.enum(["blocker", "major", "minor"]), nodeIds: z.array(z.string().min(1).max(180)).max(30).default([]), message: z.string().min(1).max(1_000), recommendation: z.string().min(1).max(1_000), autoFixable: z.boolean().default(false) })).max(30).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("record_studio_visual_critique", input, (result) => `Recorded Studio visual pass ${result.review.pass}/3 as ${result.review.recordedVerdict}. ${result.review.recordedVerdict === "ready" ? "The exact slide revision is ready for human review." : result.review.recordedVerdict === "revise" ? "Use the issue ledger for one materially different refinement." : "The bounded loop is held for human review."}`));
+
+server.registerTool("build_studio_presentation", {
+  title: "Build the central Studio presentation",
+  description: "Build every slide from the one persisted Studio Web Scene, including converted ORNL Template Pack artwork, into one editable PowerPoint candidate. The operation rejects source-only slides, incomplete exact-content mapping, missing media, unsupported native internals, changed text/table content, PowerPoint text overflow, or non-authoritative rendering. On success, the Slides tab, comments, and later export all point to this same scene revision. This prepares but does not save or export a file.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("build_studio_presentation", input, (result) => `Built and PowerPoint-validated all ${result.slideCount} slides in the central Studio presentation for ${result.deck.name}. Slides and export now reference scene ${result.sceneRevision}. No file was saved or exported.`));
+
 server.registerTool("list_resources", {
   title: "List authorized project Resources",
   description: "List metadata for project Resources that a person explicitly shared for the current app session. Requires AI session access. Never returns original file bytes or extracted document text.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => call("list_resources", {}, (result) => `Read metadata for ${result.resources.length} of ${result.totalResourceCount} project Resource${result.totalResourceCount === 1 ? "" : "s"} authorized for this session.`));
+
+server.registerTool("get_resource_preview", {
+  title: "View an explicitly shared image Resource",
+  description: "Return one bounded image preview only when the person explicitly changed that embedded Resource's AI-session permission to Preview. Use this for approved source imagery, visual references, or concept-only Image Gen drafts. The original file remains local and is never modified; metadata-only Resources do not expose pixels.",
+  inputSchema: { resourceId: z.string().min(1).max(180) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImage("get_resource_preview", input, (result) => `Viewed the explicitly shared ${result.resource.roleLabel} image Resource ${result.resource.name}. Treat concept-only pixels as visual direction, never as authority for text, logos, data, claims, or technical relationships.`));
+
+server.registerTool("create_studio_visual_need", {
+  title: "Create a governed visual-direction brief",
+  description: "Add one model-independent visual need to a non-protected Studio slide when layout art direction, a figure concept, image treatment, supporting visual, or diagram-rebuild concept could materially improve communication. The default brief exposes abstract structure only and contains no source wording or pixels. Exact-content disclosure requires an explicitly bounded approved summary. This creates a local prompt package but does not call an image model, attach pixels, redesign, build, save, or export anything.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), slideNumber: z.number().int().min(1),
+    type: z.enum(["layout-concept", "figure-concept", "image-treatment", "supporting-visual", "diagram-rebuild"]),
+    reason: z.string().min(1).max(1_000), communicationJob: z.string().min(1).max(1_000),
+    expression: z.enum(["restrained", "balanced", "expressive"]).default("balanced"),
+    approvedInfluences: z.array(z.enum(["composition", "visual-hierarchy", "negative-space", "color-balance", "figure-concept", "image-treatment", "visual-rhythm"])).min(1).max(7).optional(),
+    disclosurePolicy: z.enum(["abstract-structure-only", "exact-content-approved"]).default("abstract-structure-only"),
+    approvedContentSummary: z.string().min(1).max(800).optional(),
+    targetSlot: z.object({ role: z.enum(["whole-slide", "primary-visual", "supporting-evidence", "figure", "background-treatment"]).optional(), aspectRatio: z.enum(["16:9", "4:3", "1:1", "free"]).optional(), placementNotes: z.string().min(1).max(500).optional() }).optional(),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("create_studio_visual_need", input, (result) => `Created a ${result.need.type.replaceAll("-", " ")} brief for Studio slide ${result.slideNumber}. Disclosure is ${result.need.disclosurePolicy}; no image model was called and no source or presentation file was changed.`));
+
+server.registerTool("list_studio_visual_needs", {
+  title: "List the Studio visual-needs queue",
+  description: "List local visual-direction requests, lifecycle state, source-content binding, target slot, and whether an approved concept is linked. This returns no slide text, source pixels, concept pixels, prompts, or presentation bytes.",
+  inputSchema: { deckId: z.string().min(1).max(120).optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("list_studio_visual_needs", input, (result) => `Read ${result.needs.length} visual need${result.needs.length === 1 ? "" : "s"} from the local Studio queue.`));
+
+server.registerTool("get_studio_visual_need_brief", {
+  title: "Read a governed visual-direction prompt package",
+  description: "Read one source-hash-bound visual brief with abstract structure inventory, approved ORNL expression, target slot, positive prompt, negative prompt, and disclosure boundary. The default prompt never contains source wording or source pixels. Use any image generator only within that boundary, then import its result as an image Resource and attach it as concept-only art direction.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), visualNeedId: z.string().min(1).max(180) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_studio_visual_need_brief", input, (result) => `Read the governed ${result.need.type.replaceAll("-", " ")} brief for slide ${result.slideNumber}. Follow its ${result.need.disclosurePolicy} boundary before using any external image model.`));
+
+server.registerTool("hold_studio_visual_need", {
+  title: "Hold a Studio visual need",
+  description: "Move one visual need out of the active queue while preserving its brief and provenance. Use this when a concept is unnecessary, unsafe, ambiguous, or should wait for human/content-owner direction. This does not delete Resources, concepts, slides, or source files.",
+  inputSchema: { deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), slideNumber: z.number().int().min(1), visualNeedId: z.string().min(1).max(180), note: z.string().min(1).max(1_000) },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("hold_studio_visual_need", input, (result) => `Held visual need ${result.visualNeedId} on slide ${result.slideNumber}. Its local brief remains available and no source file changed.`));
+
+server.registerTool("attach_studio_concept_reference", {
+  title: "Attach a concept-only visual reference to a Studio slide",
+  description: "Attach an explicitly preview-shared image Resource as non-authoritative art direction for one non-protected Studio slide. Record only the approved characteristics to follow and a normalized composition blueprint. Generated text, logos, data, claims, and technical details are always untrusted; exact source content and approved assets remain authoritative. This changes design input only—it does not trace pixels, redesign, build, save, or export the slide.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), slideNumber: z.number().int().min(1), resourceId: z.string().min(1).max(180),
+    origin: z.enum(["imagegen", "human-reference", "other"]),
+    approvedInfluences: z.array(z.enum(["composition", "visual-hierarchy", "negative-space", "color-balance", "figure-concept", "image-treatment", "visual-rhythm"])).min(1).max(7),
+    blueprint: z.object({
+      summary: z.string().min(1).max(1_000),
+      zones: z.array(z.object({ id: z.string().min(1).max(120), role: z.enum(["title", "primary-visual", "supporting-evidence", "caption", "footer-safe", "other"]), x: z.number().min(0).max(1), y: z.number().min(0).max(1), width: z.number().positive().max(1), height: z.number().positive().max(1) })).max(20).default([]),
+      styleNotes: z.array(z.string().min(1).max(500)).max(20).default([]),
+      reconstructionNotes: z.array(z.string().min(1).max(500)).max(20).default([]),
+    }),
+    provenance: z.object({ model: z.string().min(1).max(180).optional(), promptSummary: z.string().min(1).max(1_000).optional(), generatedAt: z.string().datetime({ offset: true }).optional() }).optional(),
+    visualNeedId: z.string().min(1).max(180).optional(),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("attach_studio_concept_reference", input, (result) => `Attached ${result.reference.origin} concept ${result.reference.id} to Studio slide ${result.slideNumber}. Use it for ${result.reference.approvedInfluences.join(", ")} only; reconstruct with exact source content, then build and inspect the native PowerPoint result.`));
+
+server.registerTool("get_studio_concept_reference", {
+  title: "View a slide's concept reference and reconstruction blueprint",
+  description: "Return the bounded concept-only image plus its approved visual influences, normalized blueprint, source-content binding, provenance, and mandatory untrusted-element list. Use it alongside get_studio_web_scene and the original PowerPoint render; never copy generated wording, logos, data, claims, or technical details into the editable reconstruction.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), referenceId: z.string().min(1).max(180) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImage("get_studio_concept_reference", input, (result) => `Viewed concept-only reference ${result.reference.id} for slide ${result.slideNumber}. The source PowerPoint remains authoritative for all content and technical meaning.`));
+
+server.registerTool("reconstruct_studio_concept", {
+  title: "Reconstruct approved concept zones as editable Studio content",
+  description: "Convert one linked concept-only reference's normalized semantic zones into a material editable Studio composition using exact source-bound text, tables, media, and technical evidence. This is the deterministic bridge from concept art direction to the central design scene: it never traces the raster, copies generated typography, uses generated claims, changes the sacred ORNL title slide, builds PowerPoint, saves, or exports. A visual need advances only when the result changes actual layout or figure treatment rather than merely shrinking type.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    referenceId: z.string().min(1).max(180),
+    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("reconstruct_studio_concept", input, (result) => `Reconstructed concept ${result.referenceId} into ${result.mappedNodeIds.length} editable source-bound element${result.mappedNodeIds.length === 1 ? "" : "s"} on Studio slide ${result.slideNumber}. Build and inspect the PowerPoint-native result before review; nothing was saved or exported.`));
+
+server.registerTool("remove_studio_concept_reference", {
+  title: "Detach a concept reference from a Studio slide",
+  description: "Remove one concept-only reference from the slide's design inputs without deleting its embedded Resource or changing the source PowerPoint. The concept remains available in Resources until the person removes it separately.",
+  inputSchema: { deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), slideNumber: z.number().int().min(1), referenceId: z.string().min(1).max(180) },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("remove_studio_concept_reference", input, (result) => `Detached concept ${result.referenceId} from Studio slide ${result.slideNumber}; the embedded Resource and source PowerPoint remain unchanged.`));
 
 server.registerTool("get_template_layout_catalog", {
   title: "Read the active Template Pack layout system",
@@ -270,13 +389,13 @@ server.registerTool("get_design_thread", {
 
 server.registerTool("stage_studio_web_design", {
   title: "Recompose a slide in Studio and stage editable PowerPoint",
-  description: "Choose one shared Studio HTML/CSS layout recipe—or a real installed Template Pack layout—and make a substantive layout decision that atomically recomposes the slide's exact content. For weak figures, record one source-locked treatment: preserve as one technical evidence unit, preserve and frame it, propose a hybrid rebuild that retains source screenshots/data while replacing only presentation annotations, or mark a full redraw candidate for content verification. Never redraw meaning-bearing UI, code, labels, values, arrows, sequence, or causality from visual guesswork. Redraw candidates remain source-preserved until a verified replacement workflow exists. Select fresh-composition to persist a genuinely new canonical 16:9 web composition, or source-bound-overlay when native internals must survive, then inspect the result through PowerPoint-native visual QA. Optional nodeFrames are deliberate final refinements, not a substitute for a coherent recipe. Nothing is applied, saved, exported, or overwritten.",
+  description: "Update the one canonical Studio presentation by making a substantive layout decision with a shared HTML/CSS recipe or a compatible converted Template Pack layout and recomposing the slide's exact content through fresh-composition. HARD RULE: an existing populated ORNL title slide is sacred and may only use the source recipe; never recompose, restyle, move, resize, add to, remove from, or replace its approved marks, artwork, photography, legal copy, geometry, master, or layout. The converted ORNL layouts are design vocabulary inside this same scene, not alternate proposals. For weak figures, record one source-locked treatment: preserve as one technical evidence unit, preserve and frame it, propose a hybrid rebuild that retains source screenshots/data while replacing only presentation annotations, or mark a full redraw candidate for content verification. Never redraw meaning-bearing UI, code, labels, values, arrows, sequence, or causality from visual guesswork. Optional nodeFrames are deliberate final refinements, not a substitute for a coherent layout choice. Then build the slide or full presentation and judge only the result through PowerPoint-native visual QA. Nothing is saved, exported, or overwritten.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "template-layout"]),
-    compilerMode: z.enum(["source-bound-overlay", "fresh-composition"]).default("fresh-composition"),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    compilerMode: z.literal("fresh-composition").default("fresh-composition"),
     layoutId: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
     nodeFrames: z.array(z.object({
@@ -305,11 +424,50 @@ server.registerTool("stage_studio_web_design", {
       informationInventory: z.array(z.string().min(1).max(500)).min(1).max(40),
       invariants: z.array(z.string().min(1).max(500)).min(1).max(40),
       rationale: z.string().min(1).max(1_000),
+      relationships: z.array(z.object({
+        fromNodeId: z.string().min(1).max(180),
+        toNodeId: z.string().min(1).max(180),
+        kind: z.enum(["caption-for", "label-for", "callout-for", "connects-from", "connects-to", "contained-by"]),
+      })).max(80).default([]),
+      groupFrame: z.object({
+        xInches: z.number().min(0).max(20),
+        yInches: z.number().min(0).max(20),
+        widthInches: z.number().min(.1).max(20),
+        heightInches: z.number().min(.1).max(20),
+        rotation: z.number().min(-360).max(360).default(0),
+      }).optional(),
+      focalPoint: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).optional(),
+      crop: z.object({ left: z.number().min(0).max(.99), top: z.number().min(0).max(.99), right: z.number().min(0).max(.99), bottom: z.number().min(0).max(.99) }).optional(),
+      relationshipPolicy: z.enum(["preserve-internal", "reflow-annotations", "editable-diagram"]).optional(),
+      lockAspectRatio: z.boolean().optional(),
     })).max(8).default([]),
+    visualNeedIds: z.array(z.string().min(1).max(180)).max(8).default([]),
     addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, (input) => call("stage_studio_web_design", input, (result) => result.compilerMode === "fresh-composition" ? `Recomposed slide ${result.slide.number} with ${result.slide.recipe} in the canonical Studio web scene for fresh editable-PowerPoint compilation. No source-overlay proposal was created and nothing was applied, saved, exported, or overwritten.` : `Recomposed slide ${result.slide.number} with ${result.slide.recipe} and staged ${result.proposal.geometryCount} source-bound PowerPoint geometry edits for native Current/Proposal review. Nothing was applied, saved, exported, or overwritten.`));
+}, (input) => call("stage_studio_web_design", input, (result) => `Recomposed slide ${result.slide.number} with ${result.slide.recipe} in the one canonical Studio presentation. Build its current revision and judge the PowerPoint-native result; nothing was saved, exported, or overwritten.`));
+
+server.registerTool("refine_studio_layout", {
+  title: "Refine Studio layout with optical constraints",
+  description: "Apply 1–20 high-level layout constraints to the canonical Studio HTML/CSS scene without guessing PowerPoint coordinates. Align uses structural edges or PowerPoint-native rendered text bounds for optical-left/optical-top when the exact current slide build exists; distribute creates equal gaps; snap-to-grid uses the deck rhythm; fit-safe-region moves an intact group minimally. Supply relationship-preserving groups for figures, diagrams, captions, cards, and labels so their internal geometry moves together. The solver rejects new overlaps, off-canvas results, locked objects, and infeasible groups. Build the exact slide afterward and repeat an optical pass when evidenceAuthority is scene-estimate. The sacred ORNL title slide cannot be refined.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    constraints: z.array(z.object({
+      kind: z.enum(["align", "distribute", "snap-to-grid", "fit-safe-region"]),
+      mode: z.enum(["left", "optical-left", "center", "right", "top", "optical-top", "middle", "bottom", "horizontal-equal-gap", "vertical-equal-gap", "both"]),
+      nodeIds: z.array(z.string().min(1).max(180)).min(1).max(60),
+      groups: z.array(z.array(z.string().min(1).max(180)).min(1).max(30)).min(1).max(30).optional(),
+      anchorNodeId: z.string().min(1).max(180).optional(),
+      gridPt: z.number().min(1).max(72).optional(),
+      rationale: z.string().min(1).max(1_000),
+    })).min(1).max(20),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("refine_studio_layout", input, (result) => `Applied ${result.constraints.length} high-level Studio layout constraint${result.constraints.length === 1 ? "" : "s"} to slide ${result.slideNumber} using ${result.evidenceAuthority} evidence. Build and inspect the exact current revision; nothing was saved or exported.`));
 
 server.registerTool("stage_font_cleanup", {
   title: "Stage conservative font cleanup",

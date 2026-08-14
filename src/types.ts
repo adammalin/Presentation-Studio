@@ -24,6 +24,7 @@ export type ResourceRole =
   | "import-origin"
   | "prior-approved-revision"
   | "style-exemplar"
+  | "concept-reference"
   | "grounding-source"
   | "slide-media"
   | "chart-data"
@@ -454,11 +455,22 @@ export interface PresentationScene {
   preservationEnvelope: PowerPointPreservationEnvelope;
 }
 
-export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "template-layout";
+export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "ornl-title-challenges-evidence" | "ornl-title-process-flow" | "template-layout";
 export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
-export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "objective-body" | "step-heading" | "step-body" | "figure-label" | "figure-caption" | "footer-logo" | "footer-meta";
+export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "objective-body" | "step-heading" | "step-body" | "figure-label" | "figure-caption" | "challenge-assertion" | "challenge-intro" | "challenge-body" | "process-icon" | "process-input" | "process-stage" | "process-output" | "supporting-copy" | "footer-logo" | "footer-meta";
 export type StudioFigureTreatmentMode = "preserve-as-unit" | "preserve-and-frame" | "hybrid-rebuild" | "redraw-candidate";
 export type StudioFigureVerificationStatus = "source-locked" | "needs-content-review" | "verified";
+export type StudioFigureRelationshipKind = "caption-for" | "label-for" | "callout-for" | "connects-from" | "connects-to" | "contained-by";
+export type StudioConceptInfluence = "composition" | "visual-hierarchy" | "negative-space" | "color-balance" | "figure-concept" | "image-treatment" | "visual-rhythm";
+export type StudioConceptUntrustedElement = "generated-text" | "generated-logos" | "generated-data" | "generated-technical-details" | "generated-claims";
+export type StudioVisualNeedType = "layout-concept" | "figure-concept" | "image-treatment" | "supporting-visual" | "diagram-rebuild";
+export type StudioVisualNeedStatus = "brief-ready" | "concept-attached" | "reconstruction-ready" | "resolved" | "held";
+export type StudioVisualExpression = "restrained" | "balanced" | "expressive";
+export type StudioVisualDisclosurePolicy = "abstract-structure-only" | "exact-content-approved";
+export type StudioVisualMotif = "pattern-free" | "modular-square-grid" | "directional-rule" | "editorial-layering" | "green-motion-gradient" | "subordinate-hex-system";
+export type StudioVisualAccent = "none" | "Energy" | "Mist" | "Biome" | "Aqua" | "Infinity" | "Hydro" | "Forge" | "Spark" | "Plasma" | "Pulsar";
+export type StudioConstraintKind = "align" | "distribute" | "snap-to-grid" | "fit-safe-region";
+export type StudioConstraintMode = "left" | "optical-left" | "center" | "right" | "top" | "optical-top" | "middle" | "bottom" | "horizontal-equal-gap" | "vertical-equal-gap" | "both";
 
 export interface StudioWebFrame {
   x: number;
@@ -466,6 +478,75 @@ export interface StudioWebFrame {
   width: number;
   height: number;
   rotation: number;
+}
+
+export interface StudioDeckRhythm {
+  safeMarginPt: number;
+  gridPt: number;
+  compactGapPt: number;
+  normalGapPt: number;
+  primaryGapPt: number;
+  captionGapPt: number;
+  titleContentGapPt: number;
+}
+
+export interface StudioOpticalInsets {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  authority: "scene-frame" | "source-estimate" | "powerpoint-native";
+  basis: "shape" | "rendered-text" | "active-image-content";
+}
+
+export interface StudioLayoutConstraint {
+  id: string;
+  kind: StudioConstraintKind;
+  mode: StudioConstraintMode;
+  nodeIds: string[];
+  groups?: string[][];
+  anchorNodeId?: string;
+  gridPt?: number;
+  rationale: string;
+  author: "human" | "ai";
+  evidenceAuthority: "scene-estimate" | "powerpoint-native";
+  appliedAt: string;
+}
+
+export interface StudioQualityIssue {
+  id: string;
+  category: "overflow" | "alignment" | "spacing" | "safe-region" | "hierarchy" | "figure" | "brand" | "legibility" | "consistency" | "other";
+  severity: "blocker" | "major" | "minor";
+  source: "powerpoint-native" | "scene" | "ai-visual";
+  nodeIds: string[];
+  message: string;
+  recommendation: string;
+  autoFixable: boolean;
+}
+
+export interface StudioQualityReview {
+  sceneRevision: string;
+  slideUpdatedAt: string;
+  rasterSha256: string;
+  pass: number;
+  maxPasses: 3;
+  requestedVerdict: "ready" | "revise" | "hold";
+  recordedVerdict: "ready" | "revise" | "hold";
+  rationale: string;
+  objectiveIssues: StudioQualityIssue[];
+  visualIssues: StudioQualityIssue[];
+  recordedAt: string;
+}
+
+export interface StudioDesignMemoryEntry {
+  contentSignature: string;
+  recipe: StudioLayoutRecipe;
+  targetLayoutId?: string;
+  targetLayoutName?: string;
+  rhythm: StudioDeckRhythm;
+  adoptedFromSlideNumber: number;
+  qualityRasterSha256: string;
+  recordedAt: string;
 }
 
 export interface StudioWebNode {
@@ -515,6 +596,7 @@ export interface StudioWebNode {
   };
   mediaPart?: string;
   component?: { groupId: string; role: StudioComponentRole; ordinal?: number };
+  opticalInsets?: StudioOpticalInsets;
   style: {
     fontFamily: "Aptos";
     fontSizePt: number;
@@ -541,6 +623,85 @@ export interface StudioFigureTreatment {
   invariants: string[];
   rationale: string;
   replacementResourceId?: string;
+  relationships?: Array<{ fromNodeId: string; toNodeId: string; kind: StudioFigureRelationshipKind }>;
+  groupFrame?: StudioWebFrame;
+  focalPoint?: { x: number; y: number };
+  crop?: { left: number; top: number; right: number; bottom: number };
+  relationshipPolicy?: "preserve-internal" | "reflow-annotations" | "editable-diagram";
+  lockAspectRatio?: boolean;
+}
+
+export interface StudioConceptReference {
+  id: string;
+  resourceId: string;
+  resourceSha256: string;
+  sourceTextHash: string;
+  status: "concept-only";
+  origin: "imagegen" | "human-reference" | "other";
+  approvedInfluences: StudioConceptInfluence[];
+  untrustedElements: StudioConceptUntrustedElement[];
+  blueprint: {
+    summary: string;
+    zones: Array<{
+      id: string;
+      role: "title" | "primary-visual" | "supporting-evidence" | "caption" | "footer-safe" | "other";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+    styleNotes: string[];
+    reconstructionNotes: string[];
+  };
+  provenance?: {
+    model?: string;
+    promptSummary?: string;
+    generatedAt?: string;
+  };
+  visualNeedId?: string;
+  attachedAt: string;
+}
+
+export interface StudioVisualNeed {
+  id: string;
+  type: StudioVisualNeedType;
+  status: StudioVisualNeedStatus;
+  sourceTextHash: string;
+  reason: string;
+  communicationJob: string;
+  expression: StudioVisualExpression;
+  approvedInfluences: StudioConceptInfluence[];
+  disclosurePolicy: StudioVisualDisclosurePolicy;
+  approvedContentSummary?: string;
+  brandExpression: {
+    motif: StudioVisualMotif;
+    accent: StudioVisualAccent;
+    accentRole: string;
+    typographyStrategy: "no-generated-type-reserve-editable-aptos-zones";
+    rationale: string;
+  };
+  structureInventory: {
+    titleCount: number;
+    textGroupCount: number;
+    imageCount: number;
+    tableCount: number;
+    figureCount: number;
+    calloutCount: number;
+  };
+  targetSlot: {
+    role: "whole-slide" | "primary-visual" | "supporting-evidence" | "figure" | "background-treatment";
+    aspectRatio: "16:9" | "4:3" | "1:1" | "free";
+    placementNotes: string;
+  };
+  promptPackage: {
+    prompt: string;
+    negativePrompt: string;
+    contentSafety: string;
+  };
+  linkedConceptReferenceId?: string;
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface StudioWebSlide {
@@ -564,6 +725,10 @@ export interface StudioWebSlide {
   status: "imported" | "designed";
   designRationale: string;
   figureTreatments: StudioFigureTreatment[];
+  conceptReferences?: StudioConceptReference[];
+  visualNeeds?: StudioVisualNeed[];
+  constraints?: StudioLayoutConstraint[];
+  qualityReview?: StudioQualityReview;
   nodes: StudioWebNode[];
   updatedAt: string;
 }
@@ -576,6 +741,8 @@ export interface StudioWebScene {
   sourceSha256: string;
   slideSize: { width: number; height: number };
   sourceSlideSize: { width: number; height: number };
+  rhythm?: StudioDeckRhythm;
+  designMemory?: StudioDesignMemoryEntry[];
   designSystem: {
     id: "ornl-presentation-web-v1";
     standardVersion: string;

@@ -45,7 +45,8 @@ test("native rasterizer readiness resolves symlinks and proves the executable ca
 });
 
 test("native render automation closes its exact temporary presentation after success or failure", () => {
-  assert.match(POWERPOINT_RENDER_SCRIPT, /set targetPresentation to active presentation/i);
+  assert.doesNotMatch(POWERPOINT_RENDER_SCRIPT, /set targetPresentation to active presentation/i);
+  assert.match(POWERPOINT_RENDER_SCRIPT, /full name of candidatePresentation as text/i);
   assert.match(POWERPOINT_RENDER_SCRIPT, /save targetPresentation/i);
   assert.match(POWERPOINT_RENDER_SCRIPT, /on error renderError number renderErrorNumber/i);
   assert.match(POWERPOINT_RENDER_SCRIPT, /close targetPresentation saving no/i);

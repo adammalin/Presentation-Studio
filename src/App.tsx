@@ -48,6 +48,8 @@ import type {
   SlideEditableObject,
   StudioLayoutRecipe,
   StudioFigureTreatment,
+  StudioQualityIssue,
+  StudioVisualNeed,
   StudioWebFrame,
   StudioWebNode,
   StudioWebScene,
@@ -58,7 +60,7 @@ import type { LocalPresentationFont, NativeMeasurementResult, NativeRenderResult
 import { decryptProjectPackage, encryptProjectPackage, isEncryptedProject } from "./lib/encryption";
 import { auditPptx, PPTX_AUDIT_SEMANTIC_VISUAL_VERSION } from "./lib/pptx-audit";
 import { createProject, touchProject } from "./lib/project";
-import { removeAddressedDesignThreads, removeAddressedDesignThreadsForSlides, removeCompletedDesignThreads, removeDesignThread } from "./lib/design-threads";
+import { markSubmittedThreadsForReanchor, removeAddressedDesignThreads, removeAddressedDesignThreadsForSlides, removeCompletedDesignThreads, removeDesignThread } from "./lib/design-threads";
 import { compilePresentationScene, sceneNeedsRebuild } from "./lib/scene-graph";
 import { semanticRecompositionRequests, type SemanticSlotBinding } from "./lib/recomposition";
 import { compareNativeSlideRenders, type PixelComparisonMetrics } from "./lib/render-comparison";
@@ -90,9 +92,18 @@ import { decideVisualIteration } from "./lib/visual-iteration";
 import { buildDesignRepairLedger } from "./lib/design-repair-loop";
 import { sha256 } from "./lib/hash";
 import { cleanFileStem, projectSaveDefaultName } from "./lib/file-names";
-import { compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioVisualDesignRequest, updateStudioFigureTreatment, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
+import { compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioSlideContentSignature, translateStudioFigureTreatment, updateStudioFigureTreatment, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
+import { applyStudioLayoutConstraints, type StudioConstraintRequest } from "./lib/studio-layout-constraints";
 import { buildStudioCompositionPptx, type StudioCompositionExportResult } from "./lib/studio-composition-export";
 import { nativeTextOverflows } from "./lib/fresh-composition-qa";
+import { composeLatestStudioNativeRender } from "./lib/studio-design-result";
+import { analyzeStudioDesignImpact } from "./lib/studio-design-impact";
+import { critiqueStudioSlide } from "./lib/studio-visual-critic";
+import { attachStudioConceptReference, removeStudioConceptReference } from "./lib/studio-concept-reference";
+import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
+import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
+import { assertSacredOrnlTitleSlideIntegrity, isSacredOrnlTitleSlide, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
+import { preserveNativeSlide } from "./lib/native-slide-preservation";
 import {
   ONBOARDING_TOUR_STORAGE_KEY,
   ONBOARDING_TOUR_VERSION,
@@ -105,8 +116,9 @@ type McpActivityState = { id: string; operation: string; state: "active" | "comp
 
 function mcpPhaseForOperation(operation: string, input: Record<string, unknown>): McpActivityPhase {
   if (operation === "get_slide_inspection_packet") return input.representation === "proposal" ? "rechecking" : "inspecting";
-  if (operation === "preview_studio_fresh_composition" || operation === "record_proposal_visual_critique" || operation === "get_slide_render_comparison") return "rechecking";
-  if (operation.startsWith("stage_") || operation.startsWith("solve_") || operation === "fit_scene_to_layout") return "fixing";
+  if (operation === "get_studio_slide_critique") return "inspecting";
+  if (operation === "preview_studio_fresh_composition" || operation === "record_proposal_visual_critique" || operation === "record_studio_visual_critique" || operation === "get_slide_render_comparison") return "rechecking";
+  if (operation.startsWith("stage_") || operation.startsWith("solve_") || operation === "fit_scene_to_layout" || operation === "refine_studio_layout" || operation === "reconstruct_studio_concept") return "fixing";
   return "working";
 }
 
@@ -120,7 +132,8 @@ function mcpActivityCopy(activity: McpActivityState) {
   return { title: activity.state === "active" ? "AI is using Presentation Studio" : "AI operation completed", detail: `${activity.operation.replaceAll("_", " ")} · ${activity.state}` };
 }
 type SlideWorkspaceRequest = { id: string; deckId: string; slideNumber: number; mode: "review" | "edit" | "comment"; representation: "current" | "proposal" };
-type StudioFreshPreview = Omit<StudioCompositionExportResult, "bytes"> & { bytes: Uint8Array; deckId: string; sourceSlideNumber: number; sceneRevision: string; nativeRender?: NativeRenderResult; nativeMeasurement?: NativeMeasurementResult };
+type StudioFreshPreview = Omit<StudioCompositionExportResult, "bytes"> & { bytes: Uint8Array; deckId: string; sourceSlideNumber: number; sceneRevision: string; slideUpdatedAt: string; nativeRender?: NativeRenderResult; nativeMeasurement?: NativeMeasurementResult };
+type StudioDeckBuild = Omit<StudioCompositionExportResult, "bytes"> & { bytes: Uint8Array; deckId: string; sceneRevision: string; slideUpdatedAts: Record<number, string>; nativeRender: NativeRenderResult; nativeMeasurement: NativeMeasurementResult };
 const MAX_PROJECT_PACKAGE_BYTES = 1_500_000_000;
 
 function requestedAddressedThreadIds(input: { addressedThreadIds?: unknown }): string[] {
@@ -167,6 +180,20 @@ function bytesToBase64(value: Uint8Array): string {
   const chunkSize = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize)));
   return btoa(binary);
+}
+
+async function boundedResourceImagePreview(resource: ProjectResource, maximumDimension = 1_600) {
+  if (resource.kind !== "image" || !resource.mediaType.startsWith("image/") || !resource.bytes?.byteLength) throw new Error("This Resource is not an embedded previewable image.");
+  const bitmap = await createImageBitmap(new Blob([bytesFrom(resource.bytes).slice().buffer], { type: resource.mediaType }));
+  const scale = Math.min(1, maximumDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Presentation Studio could not encode the Resource preview.")), "image/png"));
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return { bytes, mimeType: "image/png" as const, width: canvas.width, height: canvas.height, sha256: await sha256(bytes) };
 }
 
 async function inspectionRasterEvidence(slide: NativeSlideRender, regions: InspectionCropRegion[]) {
@@ -267,9 +294,9 @@ function EmptyWorkspace({ onAdd }: { onAdd: () => void }) {
   return (
     <section className="empty-workspace">
       <div className="empty-icon"><PresentationChart size={34} weight="light" /></div>
-      <p className="eyebrow">Conservative cleanup first</p>
-      <h1>Bring order to a large presentation batch.</h1>
-      <p className="empty-copy">Add PowerPoint decks for a read-only structural audit. Presentation Studio copies each source into the project, identifies template and font inconsistencies, and waits for human review before changing anything.</p>
+      <p className="eyebrow">Source-faithful design</p>
+      <h1>Turn a presentation into one coherent design system.</h1>
+      <p className="empty-copy">Add PowerPoint decks to preserve their source content, extract reusable evidence and media, and rebuild each slide in the ORNL design language. Studio keeps the original untouched while you and the AI review the finished, exportable result.</p>
       <button className="button primary large" onClick={onAdd}><CirclesThreePlus size={19} />Add PowerPoint decks</button>
       <div className="promise-row">
         <span><ShieldCheck size={17} />Originals stay untouched</span>
@@ -380,7 +407,7 @@ function DeckAuditView({ deck, onConfirm, onStage, onStartOrnlCleanup, onMarkExe
   );
 }
 
-function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, openRequest, onSaveThread, onDeleteThread, onStageGeometry }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; loading: boolean; revision: string; threads: DesignThread[]; openRequest?: SlideWorkspaceRequest; onSaveThread: (slide: SlideRenderPreview, anchor: DesignThread["anchor"], comment: string, submit: boolean) => void; onDeleteThread: (threadId: string) => void; onStageGeometry: (object: SlideEditableObject, target: { x: number; y: number; width: number; height: number }, rationale: string) => void }) {
+function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, openRequest, deckBuildReady, onSaveThread, onDeleteThread, onStageGeometry, onOpenStudioSlide, onSaveDeck }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; loading: boolean; revision: string; threads: DesignThread[]; openRequest?: SlideWorkspaceRequest; deckBuildReady: boolean; onSaveThread: (slide: SlideRenderPreview, anchor: DesignThread["anchor"], comment: string, submit: boolean) => void; onDeleteThread: (threadId: string) => void; onStageGeometry: (object: SlideEditableObject, target: { x: number; y: number; width: number; height: number }, rationale: string) => void; onOpenStudioSlide: (slideNumber: number) => void; onSaveDeck: () => void }) {
   const [selectedNumber, setSelectedNumber] = useState<number>();
   const [mode, setMode] = useState<"review" | "edit" | "comment">("review");
   const [draftAnchor, setDraftAnchor] = useState<DesignThread["anchor"]>();
@@ -410,6 +437,10 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
 
   const proposalWorkspace = openRequest?.deckId === deck.id && openRequest.representation === "proposal";
   const selected = catalog?.slides.find((slide) => slide.number === selectedNumber);
+  const selectedStudioSlide = deck.studioScene?.slides.find((slide) => slide.slideNumber === selectedNumber);
+  const centralDesignActive = Boolean(deck.studioScene && !proposalWorkspace);
+  const selectedSacredTitle = Boolean(selectedNumber && isSacredOrnlTitleSlide(deck, selectedNumber));
+  const selectedConverted = Boolean(selectedStudioSlide?.status === "designed" && selectedStudioSlide.recipe !== "source");
   const selectedThreads = threads.filter((thread) => thread.deckId === deck.id && thread.slideNumber === selectedNumber);
   const acceptedGeometry = new Map((proposalWorkspace || deck.proposal?.status === "applied") && deck.proposal ? deck.proposal.changes.filter((change) => change.selected && change.kind === "geometry").flatMap((change) => change.geometryCommands ?? []).map((command) => [command.objectId, command.target]) : []);
   const slideObjects = (deck.audit.editableObjects ?? []).filter((object) => object.slideNumber === selectedNumber).map((object) => acceptedGeometry.has(object.id) ? { ...object, geometry: { ...object.geometry, ...acceptedGeometry.get(object.id)! } } : object);
@@ -421,6 +452,8 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
   const commentMode = mode === "comment";
   const editMode = mode === "edit";
   const nativeReady = nativeRender?.status === "ready" && nativeRender.authoritative;
+  const selectedNativeReady = nativeReady && Boolean(nativeRender.slides.find((slide) => slide.number === selectedNumber));
+  const resultCount = centralDesignActive ? nativeRender?.slides.length ?? 0 : nativeRender?.slideCount ?? nativeRender?.slides.length ?? 0;
   function baseGeometry(object: SlideEditableObject) { const { x, y, width, height } = object.geometry; return { x, y, width, height }; }
   function activeGeometry(object: SlideEditableObject) { return object.id === selectedObjectId && draftGeometry ? draftGeometry : baseGeometry(object); }
   function selectObject(object: SlideEditableObject) { setSelectedObjectId(object.id); setDraftGeometry(baseGeometry(object)); setEditRationale(""); }
@@ -502,27 +535,27 @@ function SlidesView({ deck, catalog, nativeRender, loading, revision, threads, o
   }
 
   return <div className="view-stack slides-view">
-    <header className="view-header compact"><div><p className="eyebrow">{proposalWorkspace ? "Proposed slide designs" : "Current slide designs"}</p><h1>{deck.name}</h1><p>{nativeReady ? `Faithful, revision-bound ${proposalWorkspace ? "proposal" : "current"} pixels rendered locally by Microsoft PowerPoint.` : "PowerPoint-native rendering is unavailable; the visible slide is a labeled structural approximation."}</p></div><span className="render-status"><span className={loading ? "loading" : nativeReady ? "ready" : catalog ? "fallback" : ""} />{loading ? "Rendering in PowerPoint…" : nativeReady ? `${nativeRender.slideCount} PowerPoint-native previews` : catalog ? `${catalog.slides.length} approximate previews` : "Preview unavailable"}</span></header>
+    <header className="view-header compact"><div><p className="eyebrow">{proposalWorkspace ? "Proposed slide designs" : centralDesignActive ? "Latest converted presentation" : "Source presentation"}</p><h1>{deck.name}</h1><p>{centralDesignActive ? "This is the single current Studio design. Source slides remain unchanged until redesigned; recipe and converted ORNL layout choices update this same presentation." : nativeReady ? `Faithful, revision-bound ${proposalWorkspace ? "proposal" : "source"} pixels rendered locally by Microsoft PowerPoint.` : "PowerPoint-native rendering is unavailable; the visible slide is a labeled structural approximation."}</p></div><div className="header-actions"><span className="render-status"><span className={loading ? "loading" : nativeReady ? "ready" : catalog ? "fallback" : ""} />{loading ? "Rendering in PowerPoint…" : centralDesignActive ? `${resultCount}/${deck.audit.slideCount} latest results built` : nativeReady ? `${nativeRender?.slideCount ?? nativeRender?.slides.length ?? 0} PowerPoint-native previews` : catalog ? `${catalog.slides.length} approximate previews` : "Preview unavailable"}</span>{centralDesignActive && <button className="button primary small" disabled={!deckBuildReady} title={deckBuildReady ? "Save the exact central design shown here as editable PowerPoint." : "Convert and build every slide in Studio before exporting the central presentation."} onClick={onSaveDeck}><FileArrowDown size={16} />Export presentation</button>}</div></header>
     {selected && catalog && <section className="slide-review panel">
-      <div className="slide-review-toolbar"><div><button className="button ghost small" onClick={() => setSelectedNumber(undefined)}><ArrowLeft size={15} />Gallery</button><span><strong>Slide {selected.number}</strong><small>{proposalWorkspace ? "Proposal" : "Current"} · revision {revision.slice(0, 19).replace("T", " ")}</small></span></div><div><button className="button ghost small" disabled={selected.number <= 1} onClick={() => setSelectedNumber(selected.number - 1)}><ArrowLeft size={15} />Previous</button><button className="button ghost small" disabled={selected.number >= catalog.slides.length} onClick={() => setSelectedNumber(selected.number + 1)}>Next<ArrowRight size={15} /></button><button className={`button small ${editMode ? "primary" : "secondary"}`} onClick={() => { setMode(editMode ? "review" : "edit"); setDraftAnchor(undefined); }}><Crosshair size={16} />{editMode ? "Editing objects" : "Edit objects"}</button><button className={`button small ${commentMode ? "primary" : "secondary"}`} onClick={() => { setMode(commentMode ? "review" : "comment"); setDraftAnchor(undefined); }}><ChatCircleDots size={16} />{commentMode ? "Select a region" : "Comment"}</button></div></div>
+      <div className="slide-review-toolbar"><div><button className="button ghost small" onClick={() => setSelectedNumber(undefined)}><ArrowLeft size={15} />Gallery</button><span><strong>Slide {selected.number}</strong><small>{proposalWorkspace ? "Proposal" : centralDesignActive ? selectedSacredTitle ? "sacred ORNL title · native source preserved" : `${selectedStudioSlide?.recipe.replaceAll("-", " ") ?? "converted design"} · ${selectedNativeReady ? "built" : "build required"}` : `Current · revision ${revision.slice(0, 19).replace("T", " ")}`}</small></span></div><div><button className="button ghost small" disabled={selected.number <= 1} onClick={() => setSelectedNumber(selected.number - 1)}><ArrowLeft size={15} />Previous</button><button className="button ghost small" disabled={selected.number >= catalog.slides.length} onClick={() => setSelectedNumber(selected.number + 1)}>Next<ArrowRight size={15} /></button>{centralDesignActive ? <button className={`button ${selectedSacredTitle ? "secondary" : "primary"} small`} disabled={selectedSacredTitle} title={selectedSacredTitle ? "The approved ORNL title composition is source-preserved and cannot be redesigned." : undefined} onClick={() => onOpenStudioSlide(selected.number)}>{selectedSacredTitle ? <ShieldCheck size={16} /> : <SquaresFour size={16} />}{selectedSacredTitle ? "ORNL title locked" : "Choose layout or edit"}</button> : <button className={`button small ${editMode ? "primary" : "secondary"}`} onClick={() => { setMode(editMode ? "review" : "edit"); setDraftAnchor(undefined); }}><Crosshair size={16} />{editMode ? "Editing objects" : "Edit objects"}</button>}<button className={`button small ${commentMode ? "primary" : "secondary"}`} disabled={centralDesignActive && !selectedNativeReady} title={centralDesignActive && !selectedNativeReady ? "Build this exact Studio revision before anchoring comments to its finished result." : undefined} onClick={() => { setMode(commentMode ? "review" : "comment"); setDraftAnchor(undefined); }}><ChatCircleDots size={16} />{commentMode ? "Select a region" : "Comment"}</button></div></div>
       <div className="slide-review-body">
         <div className="slide-review-stage">
-          <div className="slide-review-canvas" ref={editorCanvas}><SlideDesignCanvas nativeRender={nativeRender} slideNumber={selected.number} catalog={catalog} layout={selected} label={`${proposalWorkspace ? "Proposed" : "Current"} design for slide ${selected.number}: ${selected.title}`} /><div className={`slide-anchor-layer ${commentMode ? "active" : ""}`} aria-label={commentMode ? "Drag over the exact slide region to comment" : "Slide comment anchors"} onPointerDown={beginAnchor} onPointerMove={moveAnchor} onPointerUp={finishAnchor}>
+          <div className="slide-review-canvas" ref={editorCanvas}><SlideDesignCanvas nativeRender={nativeRender} slideNumber={selected.number} catalog={catalog} layout={selected} requireNative={centralDesignActive} label={`${proposalWorkspace ? "Proposed" : centralDesignActive ? "Latest converted" : "Current"} design for slide ${selected.number}: ${selected.title}`} /><div className={`slide-anchor-layer ${commentMode ? "active" : ""}`} aria-label={commentMode ? "Drag over the exact slide region to comment" : "Slide comment anchors"} onPointerDown={beginAnchor} onPointerMove={moveAnchor} onPointerUp={finishAnchor}>
             {selectedThreads.map((thread, index) => <span key={thread.id} className={`thread-anchor ${thread.status}`} style={{ left: `${thread.anchor.x * 100}%`, top: `${thread.anchor.y * 100}%`, width: `${thread.anchor.width * 100}%`, height: `${thread.anchor.height * 100}%` }} title={thread.comment}><i>{index + 1}</i></span>)}
             {draftAnchor && <span className="thread-anchor draft" style={{ left: `${draftAnchor.x * 100}%`, top: `${draftAnchor.y * 100}%`, width: `${draftAnchor.width * 100}%`, height: `${draftAnchor.height * 100}%` }} />}
-          </div>{editMode && <div className="slide-object-layer" onPointerMove={moveObject} onPointerUp={finishObjectDrag} onPointerCancel={finishObjectDrag}>{slideObjects.map((object) => { const geometry = activeGeometry(object); const sceneObject = sceneObjectById.get(object.id); const movable = sceneObject?.operations.move ?? object.canMove; return <button key={object.id} className={`slide-object-box ${selectedObjectId === object.id ? "selected" : ""} ${!movable ? "locked" : ""} ${sceneObject?.fidelityState ?? ""}`} style={{ left: `${geometry.x / slideSize.width * 100}%`, top: `${geometry.y / slideSize.height * 100}%`, width: `${geometry.width / slideSize.width * 100}%`, height: `${geometry.height / slideSize.height * 100}%`, zIndex: Math.min(100, (sceneObject?.zIndex ?? 0) + 1) }} onPointerDown={(event) => beginObjectDrag(event, object)} onClick={(event) => { event.stopPropagation(); selectObject(object); }} title={`${object.name} · ${object.kind} · ${sceneObject ? fidelityLabels[sceneObject.fidelityState] : "legacy object"}`}><span>{sceneObject?.semanticRole ?? object.kind} · {sceneObject ? fidelityLabels[sceneObject.fidelityState] : "legacy"}</span></button>; })}</div>}</div>
-          <div className={`slide-representation-note ${nativeReady ? "native" : "fallback"}`}><ShieldCheck size={15} /><span><strong>{editMode ? "Non-destructive object editor" : nativeReady ? "PowerPoint-native representation" : "Approximate OOXML fallback"}</strong> {editMode ? "Drag a highlighted object, use measured controls, then stage it into Current/Proposal review. Imported slide bytes stay untouched." : nativeReady ? "These pixels came from Microsoft PowerPoint. Structured editable-object overlays remain bound to the same source revision." : nativeRender?.warnings[0] ?? "This diagnostic reconstruction is not authoritative for wrapping, masters, tables, equations, or crop behavior."}</span></div>
+          </div>{editMode && !centralDesignActive && <div className="slide-object-layer" onPointerMove={moveObject} onPointerUp={finishObjectDrag} onPointerCancel={finishObjectDrag}>{slideObjects.map((object) => { const geometry = activeGeometry(object); const sceneObject = sceneObjectById.get(object.id); const movable = sceneObject?.operations.move ?? object.canMove; return <button key={object.id} className={`slide-object-box ${selectedObjectId === object.id ? "selected" : ""} ${!movable ? "locked" : ""} ${sceneObject?.fidelityState ?? ""}`} style={{ left: `${geometry.x / slideSize.width * 100}%`, top: `${geometry.y / slideSize.height * 100}%`, width: `${geometry.width / slideSize.width * 100}%`, height: `${geometry.height / slideSize.height * 100}%`, zIndex: Math.min(100, (sceneObject?.zIndex ?? 0) + 1) }} onPointerDown={(event) => beginObjectDrag(event, object)} onClick={(event) => { event.stopPropagation(); selectObject(object); }} title={`${object.name} · ${object.kind} · ${sceneObject ? fidelityLabels[sceneObject.fidelityState] : "legacy object"}`}><span>{sceneObject?.semanticRole ?? object.kind} · {sceneObject ? fidelityLabels[sceneObject.fidelityState] : "legacy"}</span></button>; })}</div>}</div>
+          <div className={`slide-representation-note ${selectedNativeReady ? "native" : "fallback"}`}><ShieldCheck size={15} /><span><strong>{centralDesignActive ? selectedNativeReady ? "Central Studio design · PowerPoint native" : "Central Studio design · build required" : editMode ? "Non-destructive object editor" : nativeReady ? "PowerPoint-native representation" : "Approximate OOXML fallback"}</strong> {centralDesignActive ? selectedNativeReady ? "This is the latest built result from the shared Studio scene. Comments and layout edits target this exact slide revision." : selectedConverted ? "The design changed. Build the current revision in Studio before judging or commenting on its finished result." : "The untouched source slide remains the current result until a Studio recipe or ORNL layout is chosen." : editMode ? "Drag a highlighted object, use measured controls, then stage it into Current/Proposal review. Imported slide bytes stay untouched." : nativeReady ? "These pixels came from Microsoft PowerPoint. Structured editable-object overlays remain bound to the same source revision." : nativeRender?.warnings[0] ?? "This diagnostic reconstruction is not authoritative for wrapping, masters, tables, equations, or crop behavior."}</span></div>
         </div>
-        <aside className="slide-thread-panel">{editMode ? <><div className="thread-panel-heading"><Crosshair size={19} /><div><strong>Object editor</strong><small>{slideObjects.length} source-bound objects{slideScene?.preservationRequired ? " · preservation active" : ""}</small></div></div>{!selectedObject || !draftGeometry ? <div className="thread-empty"><Crosshair size={24} /><strong>Select an object</strong><span>Every source-bound slide object is outlined with its fidelity state.</span></div> : (() => { const sceneObject = sceneObjectById.get(selectedObject.id); return <div className="object-editor-panel"><div className="object-editor-identity"><span>{sceneObject?.semanticRole ?? selectedObject.kind}</span><strong>{selectedObject.name}</strong><small>ID {selectedObject.id}</small>{sceneObject && <em className={`fidelity-badge ${sceneObject.fidelityState}`}>{fidelityLabels[sceneObject.fidelityState]}</em>}</div>{sceneObject && <p className="fidelity-reason">{sceneObject.fidelityReason}</p>}<div className="geometry-grid">{(["x", "y", "width", "height"] as const).map((field) => <label key={field}><span>{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()} (in)</span><input type="number" min="0" step="0.05" value={(draftGeometry[field] / 914_400).toFixed(2)} disabled={(field === "width" || field === "height") ? !(sceneObject?.operations.resize ?? selectedObject.canResize) : !(sceneObject?.operations.move ?? selectedObject.canMove)} onChange={(event) => setInches(field, event.target.value)} /></label>)}</div><div className="nudge-grid"><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: value.y - 45_720 }))}>↑</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: value.x - 45_720 }))}>←</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: value.x + 45_720 }))}>→</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: value.y + 45_720 }))}>↓</button></div><span className="field-label">Align to 0.5-inch safe area</span><div className="align-grid"><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: 457_200 }))}>Left</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: Math.round((slideSize.width - value.width) / 2) }))}>Center</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: slideSize.width - 457_200 - value.width }))}>Right</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: 457_200 }))}>Top</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: Math.round((slideSize.height - value.height) / 2) }))}>Middle</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: slideSize.height - 457_200 - value.height }))}>Bottom</button></div><label className="edit-rationale"><span className="field-label">Design intent</span><textarea value={editRationale} maxLength={700} onChange={(event) => setEditRationale(event.target.value)} placeholder="Example: Align the caption to the figure edge and establish a consistent lower margin." /></label><button className="button primary object-stage-button" disabled={!(sceneObject?.operations.move || sceneObject?.operations.resize || !sceneObject) || JSON.stringify(draftGeometry) === JSON.stringify(baseGeometry(selectedObject))} onClick={() => onStageGeometry(selectedObject, draftGeometry, editRationale)}><Sparkle size={16} />Stage in Current / Proposal</button><small className="object-editor-note">Text, table content, slide count, unsupported native internals, and source bytes are validation-locked.</small></div>; })()}</> : <><div className="thread-panel-heading"><ChatCircleDots size={19} /><div><strong>Design comments</strong><small>{selectedThreads.length} on this slide</small></div></div>
+        <aside className="slide-thread-panel">{editMode && !centralDesignActive ? <><div className="thread-panel-heading"><Crosshair size={19} /><div><strong>Object editor</strong><small>{slideObjects.length} source-bound objects{slideScene?.preservationRequired ? " · preservation active" : ""}</small></div></div>{!selectedObject || !draftGeometry ? <div className="thread-empty"><Crosshair size={24} /><strong>Select an object</strong><span>Every source-bound slide object is outlined with its fidelity state.</span></div> : (() => { const sceneObject = sceneObjectById.get(selectedObject.id); return <div className="object-editor-panel"><div className="object-editor-identity"><span>{sceneObject?.semanticRole ?? selectedObject.kind}</span><strong>{selectedObject.name}</strong><small>ID {selectedObject.id}</small>{sceneObject && <em className={`fidelity-badge ${sceneObject.fidelityState}`}>{fidelityLabels[sceneObject.fidelityState]}</em>}</div>{sceneObject && <p className="fidelity-reason">{sceneObject.fidelityReason}</p>}<div className="geometry-grid">{(["x", "y", "width", "height"] as const).map((field) => <label key={field}><span>{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()} (in)</span><input type="number" min="0" step="0.05" value={(draftGeometry[field] / 914_400).toFixed(2)} disabled={(field === "width" || field === "height") ? !(sceneObject?.operations.resize ?? selectedObject.canResize) : !(sceneObject?.operations.move ?? selectedObject.canMove)} onChange={(event) => setInches(field, event.target.value)} /></label>)}</div><div className="nudge-grid"><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: value.y - 45_720 }))}>↑</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: value.x - 45_720 }))}>←</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: value.x + 45_720 }))}>→</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: value.y + 45_720 }))}>↓</button></div><span className="field-label">Align to 0.5-inch safe area</span><div className="align-grid"><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: 457_200 }))}>Left</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: Math.round((slideSize.width - value.width) / 2) }))}>Center</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, x: slideSize.width - 457_200 - value.width }))}>Right</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: 457_200 }))}>Top</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: Math.round((slideSize.height - value.height) / 2) }))}>Middle</button><button disabled={!(sceneObject?.operations.move ?? selectedObject.canMove)} onClick={() => updateDraft((value) => ({ ...value, y: slideSize.height - 457_200 - value.height }))}>Bottom</button></div><label className="edit-rationale"><span className="field-label">Design intent</span><textarea value={editRationale} maxLength={700} onChange={(event) => setEditRationale(event.target.value)} placeholder="Example: Align the caption to the figure edge and establish a consistent lower margin." /></label><button className="button primary object-stage-button" disabled={!(sceneObject?.operations.move || sceneObject?.operations.resize || !sceneObject) || JSON.stringify(draftGeometry) === JSON.stringify(baseGeometry(selectedObject))} onClick={() => onStageGeometry(selectedObject, draftGeometry, editRationale)}><Sparkle size={16} />Stage in Current / Proposal</button><small className="object-editor-note">Text, table content, slide count, unsupported native internals, and source bytes are validation-locked.</small></div>; })()}</> : <><div className="thread-panel-heading"><ChatCircleDots size={19} /><div><strong>Design comments</strong><small>{selectedThreads.length} on this slide</small></div></div>
           {commentMode && <div className="thread-composer"><span className="field-label">1. Drag or click the exact area</span><div className={`anchor-readout ${draftAnchor ? "ready" : ""}`}>{draftAnchor ? <><Check size={14} />Region selected</> : <><Crosshair size={14} />Waiting for a region</>}</div><label><span className="field-label">2. Describe the adjustment</span><textarea ref={commentInput} autoFocus value={draftComment} maxLength={4000} onChange={(event) => setDraftComment(event.target.value)} placeholder="Example: Align this caption with the image edge and give it more breathing room." /></label><div className="thread-composer-actions"><button className="button ghost small" disabled={!draftAnchor || !draftComment.trim()} onClick={() => saveThread(false)}>Save note</button><button className="button primary small" disabled={!draftAnchor || !draftComment.trim()} onClick={() => saveThread(true)}><PaperPlaneTilt size={15} />Submit to AI</button></div><small>Submitting keeps this slide open for additional comments and creates a scoped thread for MCP. It does not apply or export a change.</small></div>}
           <div className="thread-list">{selectedThreads.length === 0 && <div className="thread-empty"><ChatCircleDots size={24} /><strong>No comments yet</strong><span>Select Comment on slide, then point to the exact area.</span></div>}{selectedThreads.map((thread, index) => <article key={thread.id} className="thread-item"><span>{index + 1}</span><div><strong>{thread.status === "submitted" ? "Ready for AI" : thread.status.replaceAll("-", " ")}</strong><p>{thread.comment}</p><small>Region {Math.round(thread.anchor.x * 100)}%, {Math.round(thread.anchor.y * 100)}% · {new Date(thread.createdAt).toLocaleString()}</small></div><button className="thread-delete" type="button" onClick={() => onDeleteThread(thread.id)} aria-label={`Delete comment ${index + 1}`} title="Delete comment"><Trash size={15} /></button></article>)}</div>
         </>}</aside>
       </div>
     </section>}
-    {!selected && <section className="current-slide-gallery panel"><div className="panel-heading"><div><h2>Slides</h2><p>Select any {proposalWorkspace ? "proposed" : "current"} design for a closer, zoomable review and location-anchored comments.</p></div><span className="quiet-label">{proposalWorkspace ? "Proposal" : "Current"} · {PRESENTATION_DESIGN_STANDARD.defaults.slide.aspectRatio} target</span></div>
+    {!selected && <section className="current-slide-gallery panel"><div className="panel-heading"><div><h2>{centralDesignActive ? "Central converted design" : "Slides"}</h2><p>{centralDesignActive ? "Every thumbnail is either the preserved source slide or the latest PowerPoint-native build of its shared Studio revision. Choose a slide to review, comment, or select a converted ORNL layout." : `Select any ${proposalWorkspace ? "proposed" : "current"} design for a closer, zoomable review and location-anchored comments.`}</p></div><span className="quiet-label">{proposalWorkspace ? "Proposal" : centralDesignActive ? "One presentation" : "Current"} · {PRESENTATION_DESIGN_STANDARD.defaults.slide.aspectRatio} target</span></div>
       {loading && <div className="slide-gallery-loading"><ArrowsClockwise className="spinner" size={25} /><strong>Building local slide previews</strong><span>Reading the embedded source, master, layouts, media, and native table structure.</span></div>}
       {!loading && !catalog && <div className="slide-gallery-loading"><Warning size={25} /><strong>Current designs could not be rendered</strong><span>The structural audit remains available; review the reported preview limitation before cleanup.</span></div>}
-      {catalog && <div className="slide-grid">{catalog.slides.map((slide) => { const inventory = deck.audit?.slides.find((item) => item.number === slide.number); const count = threads.filter((thread) => thread.deckId === deck.id && thread.slideNumber === slide.number).length; return <button className="slide-card" key={slide.id} onClick={() => setSelectedNumber(slide.number)}><span className="slide-canvas actual"><SlideDesignCanvas nativeRender={nativeRender} slideNumber={slide.number} catalog={catalog} layout={slide} label={`Open current slide ${slide.number}: ${slide.title}`} />{count > 0 && <span className="slide-comment-count"><ChatCircleDots size={12} />{count}</span>}</span><span className="slide-meta"><span>{slide.number}</span><span><strong>{inventory?.title ?? slide.title}</strong><small>{inventory?.tableCount ? `${inventory.tableCount} table${inventory.tableCount === 1 ? "" : "s"} · ` : ""}{inventory?.pictureCount ? `${inventory.pictureCount} image${inventory.pictureCount === 1 ? "" : "s"} · ` : ""}{inventory?.fonts.length ?? 0} fonts</small></span></span></button>; })}</div>}
+      {catalog && <div className="slide-grid">{catalog.slides.map((slide) => { const inventory = deck.audit?.slides.find((item) => item.number === slide.number); const studioSlide = deck.studioScene?.slides.find((item) => item.slideNumber === slide.number); const built = Boolean(nativeRender?.slides.find((item) => item.number === slide.number)); const count = threads.filter((thread) => thread.deckId === deck.id && thread.slideNumber === slide.number).length; return <button className="slide-card" key={slide.id} onClick={() => setSelectedNumber(slide.number)}><span className="slide-canvas actual"><SlideDesignCanvas nativeRender={nativeRender} slideNumber={slide.number} catalog={catalog} layout={slide} requireNative={centralDesignActive} label={`Open ${centralDesignActive ? "central converted" : "current"} slide ${slide.number}: ${slide.title}`} />{count > 0 && <span className="slide-comment-count"><ChatCircleDots size={12} />{count}</span>}</span><span className="slide-meta"><span>{slide.number}</span><span><strong>{inventory?.title ?? slide.title}</strong><small>{centralDesignActive ? `${studioSlide?.recipe.replaceAll("-", " ") ?? "source"} · ${built ? "result ready" : "build required"}` : <>{inventory?.tableCount ? `${inventory.tableCount} table${inventory.tableCount === 1 ? "" : "s"} · ` : ""}{inventory?.pictureCount ? `${inventory.pictureCount} image${inventory.pictureCount === 1 ? "" : "s"} · ` : ""}{inventory?.fonts.length ?? 0} fonts</>}</small></span></span></button>; })}</div>}
     </section>}
   </div>;
 }
@@ -564,7 +597,7 @@ function TemplatePreviewElementView({ element, catalog, scale }: { element: Temp
     const textHeight = lines.length * lineHeight;
     const textX = element.textAlign === "center" ? x + width / 2 : element.textAlign === "right" ? x + width : x;
     const textY = element.verticalAlign === "center" ? y + Math.max(0, (height - textHeight) / 2) : element.verticalAlign === "bottom" ? y + Math.max(0, height - textHeight) : y;
-    return <g transform={transform}>{element.placeholderType && <rect className="template-text-placeholder-guide" x={x} y={y} width={width} height={height} />}<text x={textX} y={textY} fill={element.textColor ?? "#373A36"} fontFamily={previewFontStack(element.fontFamily)} fontSize={fontSize} fontWeight={element.fontWeight} textAnchor={element.textAlign === "center" ? "middle" : element.textAlign === "right" ? "end" : "start"} dominantBaseline="hanging">{lines.map((line, index) => <tspan key={`${element.id}-${index}`} x={textX} dy={index === 0 ? 0 : lineHeight}>{line}</tspan>)}</text></g>;
+    return <g transform={transform}><text x={textX} y={textY} fill={element.textColor ?? "#373A36"} fontFamily={previewFontStack(element.fontFamily)} fontSize={fontSize} fontWeight={element.fontWeight} textAnchor={element.textAlign === "center" ? "middle" : element.textAlign === "right" ? "end" : "start"} dominantBaseline="hanging">{lines.map((line, index) => <tspan key={`${element.id}-${index}`} x={textX} dy={index === 0 ? 0 : lineHeight}>{line}</tspan>)}</text></g>;
   }
   if (element.placeholderType && !element.fill && !element.stroke) {
     const label = ({ ctrTitle: "Title", subTitle: "Subtitle", title: "Title", body: "Content", pic: "Image", obj: "Content", tbl: "Table", chart: "Chart", media: "Media" } as Record<string, string>)[element.placeholderType] ?? element.placeholderType;
@@ -585,10 +618,11 @@ function TemplateLayoutCanvas({ catalog, layout, label }: { catalog: PreviewCanv
   </svg>;
 }
 
-function SlideDesignCanvas({ nativeRender, slideNumber, catalog, layout, label }: { nativeRender?: NativeRenderResult; slideNumber: number; catalog?: PreviewCanvasCatalog; layout?: TemplateLayoutPreview; label: string }) {
+function SlideDesignCanvas({ nativeRender, slideNumber, catalog, layout, label, requireNative = false }: { nativeRender?: NativeRenderResult; slideNumber: number; catalog?: PreviewCanvasCatalog; layout?: TemplateLayoutPreview; label: string; requireNative?: boolean }) {
   const nativeSlide = nativeRender?.status === "ready" ? nativeRender.slides.find((slide) => slide.number === slideNumber) : undefined;
   const nativeSource = useMemo(() => nativeSlide ? `data:${nativeSlide.mimeType};base64,${bytesToBase64(bytesFrom(nativeSlide.bytes))}` : undefined, [nativeSlide]);
   if (nativeSource) return <img className="native-slide-render" src={nativeSource} width={nativeSlide?.width} height={nativeSlide?.height} alt={label} />;
+  if (requireNative) return <span className="proposal-preview-wait"><Monitor size={22} />Build this converted slide to see its latest PowerPoint result</span>;
   if (catalog && layout) return <TemplateLayoutCanvas catalog={catalog} layout={layout} label={`${label} · approximate OOXML fallback`} />;
   return <span className="proposal-preview-wait"><Warning size={22} />Slide render unavailable</span>;
 }
@@ -625,8 +659,8 @@ function StudioNodeView({ node, scene, catalog, nativeSlideSource, selected, onP
     zIndex: node.zIndex + 10,
     color: node.style.color,
     background: node.style.background,
-    borderColor: node.style.borderColor,
-    borderWidth: `${node.style.borderWidthPt}px`,
+    borderColor: node.kind === "text" && !node.style.background ? "transparent" : node.style.borderColor,
+    borderWidth: node.kind === "text" && !node.style.background ? "0" : `${node.style.borderWidthPt}px`,
     fontFamily: previewFontStack(node.style.fontFamily),
     fontSize: `${node.style.fontSizePt / 9.6}cqw`,
     fontWeight: node.style.fontWeight,
@@ -645,11 +679,15 @@ function StudioNodeView({ node, scene, catalog, nativeSlideSource, selected, onP
   return <div role="button" tabIndex={0} className={`studio-node kind-${node.kind} role-${node.role} ${selected ? "selected" : ""} ${node.locked ? "locked" : ""}`} style={style} onPointerDown={(event) => onPointerDown?.(event, "move")} aria-label={`${node.name}${node.locked ? ", locked" : ""}`}>{content}{selected && !node.locked && <span className="studio-resize-handle" onPointerDown={(event) => { event.stopPropagation(); onPointerDown?.(event, "resize"); }} />}</div>;
 }
 
-function StudioWebCanvas({ scene, slide, catalog, templateCatalog, nativeSlideSource, selectedNodeId, onSelectNode, onMoveNode }: { scene: StudioWebScene; slide: StudioWebScene["slides"][number]; catalog?: SlideRenderCatalog; templateCatalog?: TemplateCatalog; nativeSlideSource?: string; selectedNodeId?: string; onSelectNode: (nodeId: string) => void; onMoveNode: (nodeId: string, frame: StudioWebFrame) => void }) {
+function StudioWebCanvas({ scene, slide, catalog, templateCatalog, templateNativeBaseSource, nativeSlideSource, selectedNodeIds, onSelectNode, onMoveNodes }: { scene: StudioWebScene; slide: StudioWebScene["slides"][number]; catalog?: SlideRenderCatalog; templateCatalog?: TemplateCatalog; templateNativeBaseSource?: string; nativeSlideSource?: string; selectedNodeIds: string[]; onSelectNode: (nodeId: string, additive: boolean) => void; onMoveNodes: (updates: Array<{ nodeId: string; frame: StudioWebFrame }>) => void }) {
   const canvas = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ nodeId: string; mode: "move" | "resize"; startX: number; startY: number; frame: StudioWebFrame } | undefined>(undefined);
+  const drag = useRef<{ nodeIds: string[]; mode: "move" | "resize"; startX: number; startY: number; frames: Record<string, StudioWebFrame> } | undefined>(undefined);
+  const [draftFrames, setDraftFrames] = useState<Record<string, StudioWebFrame>>({});
+  const [activeGuides, setActiveGuides] = useState<{ x?: number; y?: number }>({});
   const layout = slide.targetLayoutId ? templateCatalog?.layouts.find((item) => item.id === slide.targetLayoutId) : undefined;
   const generatedComponents = studioGeneratedComponents(slide);
+  const rhythm = scene.rhythm ?? { safeMarginPt: 18, gridPt: 6, compactGapPt: 8, normalGapPt: 12, primaryGapPt: 18, captionGapPt: 8, titleContentGapPt: 18 };
+  const selected = new Set(selectedNodeIds);
   const componentStyle = (component: ReturnType<typeof studioGeneratedComponents>[number]) => ({
     left: `${component.frame.x / scene.slideSize.width * 100}%`, top: `${component.frame.y / scene.slideSize.height * 100}%`, width: `${component.frame.width / scene.slideSize.width * 100}%`, height: `${component.frame.height / scene.slideSize.height * 100}%`,
     background: component.fillColor,
@@ -658,58 +696,237 @@ function StudioWebCanvas({ scene, slide, catalog, templateCatalog, nativeSlideSo
   });
   function begin(event: ReactPointerEvent<HTMLElement>, node: StudioWebNode, mode: "move" | "resize") {
     event.stopPropagation();
-    onSelectNode(node.id);
-    if (node.locked || !canvas.current) return;
+    const additive = event.shiftKey && mode === "move";
+    onSelectNode(node.id, additive);
+    const figureTreatment = mode === "move" ? slide.figureTreatments.find((treatment) => treatment.nodeIds.includes(node.id)) : undefined;
+    if ((node.locked && !figureTreatment) || !canvas.current) return;
+    const activeIds = figureTreatment ? figureTreatment.nodeIds : mode === "move" && (selected.has(node.id) || additive)
+      ? [...new Set([...(additive ? selectedNodeIds : selected.has(node.id) ? selectedNodeIds : []), node.id])]
+      : [node.id];
+    const frames = Object.fromEntries(activeIds.map((id) => [id, { ...slide.nodes.find((candidate) => candidate.id === id)!.frame }]));
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { nodeId: node.id, mode, startX: event.clientX, startY: event.clientY, frame: { ...node.frame } };
+    drag.current = { nodeIds: activeIds, mode, startX: event.clientX, startY: event.clientY, frames };
+  }
+  function unionFrames(frames: StudioWebFrame[]) {
+    const x = Math.min(...frames.map((frame) => frame.x));
+    const y = Math.min(...frames.map((frame) => frame.y));
+    const right = Math.max(...frames.map((frame) => frame.x + frame.width));
+    const bottom = Math.max(...frames.map((frame) => frame.y + frame.height));
+    return { x, y, width: right - x, height: bottom - y };
+  }
+  function snapGroup(raw: Record<string, StudioWebFrame>, movingIds: string[]) {
+    const group = unionFrames(Object.values(raw));
+    const threshold = 5 * 12_700;
+    const safe = rhythm.safeMarginPt * 12_700;
+    const xTargets = [safe, scene.slideSize.width / 2, scene.slideSize.width - safe];
+    const yTargets = [safe, scene.slideSize.height / 2, scene.slideSize.height - safe];
+    for (const peer of slide.nodes.filter((node) => node.visible && !movingIds.includes(node.id))) {
+      xTargets.push(peer.frame.x, peer.frame.x + peer.frame.width / 2, peer.frame.x + peer.frame.width);
+      yTargets.push(peer.frame.y, peer.frame.y + peer.frame.height / 2, peer.frame.y + peer.frame.height);
+    }
+    const xFeatures = [group.x, group.x + group.width / 2, group.x + group.width];
+    const yFeatures = [group.y, group.y + group.height / 2, group.y + group.height];
+    const nearest = (targets: number[], features: number[]) => targets.flatMap((target) => features.map((feature) => ({ delta: target - feature, guide: target }))).filter((candidate) => Math.abs(candidate.delta) <= threshold).sort((left, right) => Math.abs(left.delta) - Math.abs(right.delta))[0];
+    const snapX = nearest(xTargets, xFeatures);
+    const snapY = nearest(yTargets, yFeatures);
+    const grid = Math.max(1, rhythm.gridPt * 12_700);
+    const dx = snapX?.delta ?? Math.round(group.x / grid) * grid - group.x;
+    const dy = snapY?.delta ?? Math.round(group.y / grid) * grid - group.y;
+    setActiveGuides({ x: snapX?.guide, y: snapY?.guide });
+    return Object.fromEntries(Object.entries(raw).map(([id, frame]) => [id, { ...frame, x: frame.x + dx, y: frame.y + dy }]));
   }
   function move(event: ReactPointerEvent<HTMLDivElement>) {
     if (!drag.current || !canvas.current || event.buttons === 0) return;
     const bounds = canvas.current.getBoundingClientRect();
     const deltaX = (event.clientX - drag.current.startX) / bounds.width * scene.slideSize.width;
     const deltaY = (event.clientY - drag.current.startY) / bounds.height * scene.slideSize.height;
-    const next = drag.current.mode === "resize"
-      ? { ...drag.current.frame, width: drag.current.frame.width + deltaX, height: drag.current.frame.height + deltaY }
-      : { ...drag.current.frame, x: drag.current.frame.x + deltaX, y: drag.current.frame.y + deltaY };
-    onMoveNode(drag.current.nodeId, next);
+    if (drag.current.mode === "resize") {
+      const id = drag.current.nodeIds[0];
+      const start = drag.current.frames[id];
+      const grid = Math.max(1, rhythm.gridPt * 12_700);
+      setDraftFrames({ [id]: { ...start, width: Math.max(grid, Math.round((start.width + deltaX) / grid) * grid), height: Math.max(grid, Math.round((start.height + deltaY) / grid) * grid) } });
+      setActiveGuides({});
+      return;
+    }
+    const raw = Object.fromEntries(drag.current.nodeIds.map((id) => { const start = drag.current!.frames[id]; return [id, { ...start, x: start.x + deltaX, y: start.y + deltaY }]; }));
+    setDraftFrames(snapGroup(raw, drag.current.nodeIds));
   }
-  return <div ref={canvas} className="studio-web-canvas" style={{ aspectRatio: `${scene.slideSize.width} / ${scene.slideSize.height}`, background: slide.background }} onPointerMove={move} onPointerUp={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }} onClick={() => onSelectNode("")}>
-    {layout && templateCatalog && <StudioTemplateBase catalog={templateCatalog} layout={layout} />}
+  function finish() {
+    if (drag.current && Object.keys(draftFrames).length) onMoveNodes(Object.entries(draftFrames).map(([nodeId, frame]) => ({ nodeId, frame })));
+    drag.current = undefined;
+    setDraftFrames({});
+    setActiveGuides({});
+  }
+  const safePercentX = rhythm.safeMarginPt * 12_700 / scene.slideSize.width * 100;
+  const safePercentY = rhythm.safeMarginPt * 12_700 / scene.slideSize.height * 100;
+  return <div ref={canvas} className="studio-web-canvas" style={{ aspectRatio: `${scene.slideSize.width} / ${scene.slideSize.height}`, background: slide.background }} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onClick={(event) => { if (event.target === event.currentTarget) onSelectNode("", false); }}>
+    {layout && templateNativeBaseSource ? <img className="studio-template-native-base" src={templateNativeBaseSource} alt="" /> : layout && templateCatalog ? <StudioTemplateBase catalog={templateCatalog} layout={layout} /> : null}
     {generatedComponents.map((component) => <span key={component.id} className={`studio-generated-component ${component.kind}`} style={componentStyle(component)} />)}
-    {slide.nodes.map((node) => <StudioNodeView key={node.id} node={node} scene={scene} catalog={catalog} nativeSlideSource={nativeSlideSource} selected={node.id === selectedNodeId} onPointerDown={(event, mode) => begin(event, node, mode)} />)}
+    <span className="studio-safe-guide" style={{ left: `${safePercentX}%`, top: `${safePercentY}%`, right: `${safePercentX}%`, bottom: `${safePercentY}%` }} />
+    <span className="studio-center-guide vertical" />
+    <span className="studio-center-guide horizontal" />
+    {activeGuides.x !== undefined && <span className="studio-snap-guide vertical active" style={{ left: `${activeGuides.x / scene.slideSize.width * 100}%` }} />}
+    {activeGuides.y !== undefined && <span className="studio-snap-guide horizontal active" style={{ top: `${activeGuides.y / scene.slideSize.height * 100}%` }} />}
+    {slide.nodes.map((node) => <StudioNodeView key={node.id} node={draftFrames[node.id] ? { ...node, frame: draftFrames[node.id] } : node} scene={scene} catalog={catalog} nativeSlideSource={nativeSlideSource} selected={selected.has(node.id)} onPointerDown={(event, mode) => begin(event, node, mode)} />)}
   </div>;
 }
 
-function StudioView({ deck, catalog, nativeRender, freshPreviews, templateCatalog, onInitialize, onRecompose, onMoveNode, onStyleNode, onStage, onPreviewFresh, onSaveFresh }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; freshPreviews?: Record<string, StudioFreshPreview>; templateCatalog?: TemplateCatalog; onInitialize: () => void; onRecompose: (slideNumber: number, recipe: StudioLayoutRecipe, layoutId?: string) => void; onMoveNode: (slideNumber: number, nodeId: string, frame: StudioWebFrame) => void; onStyleNode: (slideNumber: number, nodeId: string, patch: Partial<Pick<StudioWebNode["style"], "fontSizePt" | "fontWeight" | "color" | "textAlign" | "verticalAlign" | "objectFit">>) => void; onStage: (slideNumber: number) => void; onPreviewFresh: (slideNumber: number) => void; onSaveFresh: (slideNumber: number) => void }) {
+function StudioExportResult({ slideNumber, source, preview, designed, templateLayout, onBuild }: { slideNumber: number; source?: string; preview?: StudioFreshPreview; designed: boolean; templateLayout: boolean; onBuild: () => void }) {
+  if (!source) return <div className="studio-export-wait">{designed ? <Monitor size={30} /> : <ArrowsClockwise className="spinner" size={30} />}<strong>{designed ? "PowerPoint export result required" : "Preparing the PowerPoint source result…"}</strong><p>Studio does not display the approximate web scene as the finished slide. This area remains held until authoritative PowerPoint pixels are available.</p>{designed && <button className="button primary small" onClick={onBuild}><Monitor size={16} />Build export result</button>}</div>;
+  return <div className="studio-export-result"><img className="native-slide-render" src={source} alt={`PowerPoint export result for slide ${slideNumber}`} /><div className="studio-export-result-meta"><span><CheckCircle size={16} weight="fill" />PowerPoint-native export result</span><small>{preview ? "Rendered from the exact editable PPTX bytes available to save." : "The source slide is preserved exactly until a designed export candidate passes native QA."}</small></div>{preview && <div className="studio-export-warning"><Warning size={17} /><span><strong>{templateLayout ? "Converted Template Pack artwork included." : "Studio ORNL composition built without the source master."}</strong> {templateLayout ? "The selected layout's non-placeholder images, fills, and vector rules are compiled into this editable slide. Master-level animations and behaviors are not retained." : "This result intentionally uses the Studio design system instead of inherited source furniture. The visible PowerPoint result is the export truth."}</span></div>}</div>;
+}
+
+function StudioExportInspector({ slide, preview, designed }: { slide: StudioWebScene["slides"][number]; preview?: StudioFreshPreview; designed: boolean }) {
+  const ready = !designed || Boolean(preview?.nativeRender?.status === "ready" && preview.nativeMeasurement?.status === "ready");
+  const templateLayout = slide.recipe === "template-layout";
+  const impact = analyzeStudioDesignImpact(slide);
+  return <aside className="studio-inspector studio-export-inspector">
+    <span className="field-label">Export status</span>
+    <strong>{ready ? "Export result ready" : "PowerPoint render required"}</strong>
+    <p>{!designed ? "This slide is still using its untouched source PowerPoint result." : preview ? "The visible result was rendered from the exact editable PowerPoint bytes available to save." : templateLayout ? "Build the central slide to compile the converted ORNL layout artwork and exact source content into one editable result." : "Build the export result before judging or saving this design."}</p>
+    <dl>
+      <div><dt>Visible surface</dt><dd>PowerPoint pixels</dd></div>
+      <div><dt>Recipe</dt><dd>{slide.recipe.replaceAll("-", " ")}</dd></div>
+      <div><dt>Content mapping</dt><dd>{slide.contentCoverage.exactTextMapped ? "Exact" : "Incomplete"}</dd></div>
+      <div><dt>Design impact</dt><dd>{impact.level.replaceAll("-", " ")}</dd></div>
+      <div><dt>Template design</dt><dd>{templateLayout ? ready ? "Converted artwork built" : "Converted artwork pending" : preview ? "Studio ORNL system" : designed ? "Pending" : "Source preserved"}</dd></div>
+    </dl>
+    {preview && <div className="inline-note warning"><Warning size={15} />{templateLayout ? "Converted layout artwork is embedded in the editable slide; original master behaviors and animations are not retained." : "Fresh composition rebuilds the slide with the Studio ORNL system instead of inherited source-master furniture. The large PowerPoint preview is the export truth."}</div>}
+    {impact.requirements.some((item) => !item.passed) && <div className="inline-note warning"><Warning size={15} />{impact.requirements.find((item) => !item.passed)?.reason}</div>}
+    {!designed && <div className="inline-note"><ShieldCheck size={15} />No redesign is being implied. The visible slide is the original PowerPoint result.</div>}
+  </aside>;
+}
+
+function StudioVisualNeedsPanel({ slide, conceptResources, onCreate, onHold, onAttach, onDetach, onReconstruct }: {
+  slide: StudioWebScene["slides"][number];
+  conceptResources: ProjectResource[];
+  onCreate: (slideNumber: number, type: StudioVisualNeed["type"]) => void;
+  onHold: (slideNumber: number, visualNeedId: string) => void;
+  onAttach: (slideNumber: number, visualNeedId: string, resourceId: string) => void;
+  onDetach: (slideNumber: number, referenceId: string) => void;
+  onReconstruct: (slideNumber: number, referenceId: string) => void;
+}) {
+  const [selectedResources, setSelectedResources] = useState<Record<string, string>>({});
+  const recommendedType: StudioVisualNeed["type"] = slide.figureTreatments.length > 0 || slide.nodes.some((node) => ["connector", "native-object"].includes(node.kind))
+    ? "figure-concept"
+    : slide.nodes.some((node) => node.kind === "image") ? "image-treatment" : "layout-concept";
+  const needs = slide.visualNeeds ?? [];
+  return <section className="studio-visual-needs">
+    <div className="studio-visual-needs-heading"><div><span className="field-label">Visual direction queue</span><small>Local briefs · model independent</small></div><button className="button secondary small" onClick={() => onCreate(slide.slideNumber, recommendedType)}><Sparkle size={14} />Add recommended brief</button></div>
+    {needs.length === 0 ? <p>No concept brief is active. Studio can redesign directly, or create a governed brief when art direction would materially help.</p> : needs.map((need) => {
+      const linkedReference = need.linkedConceptReferenceId ? slide.conceptReferences?.find((reference) => reference.id === need.linkedConceptReferenceId) : undefined;
+      const linkedResource = linkedReference ? conceptResources.find((resource) => resource.id === linkedReference.resourceId && resource.sha256 === linkedReference.resourceSha256) : undefined;
+      const linkedSource = linkedResource?.bytes ? `data:${linkedResource.mediaType};base64,${bytesToBase64(linkedResource.bytes)}` : undefined;
+      const selectedResourceId = selectedResources[need.id] ?? conceptResources[0]?.id ?? "";
+      return <article key={need.id} className={`studio-visual-need ${need.status}`}>
+        <div className="studio-visual-need-title"><strong>{need.type.replaceAll("-", " ")}</strong><span>{need.status.replaceAll("-", " ")}</span></div>
+        <p>{need.communicationJob}</p>
+        <small>{need.expression} · {need.brandExpression.motif.replaceAll("-", " ")} · {need.brandExpression.accent} · {need.disclosurePolicy.replaceAll("-", " ")} · {need.targetSlot.role.replaceAll("-", " ")}</small>
+        {linkedReference ? <><div className="studio-visual-need-concept">{linkedSource ? <img src={linkedSource} alt="Attached concept-only visual direction" /> : <span><Images size={18} />Preview permission required</span>}<small>{linkedReference.blueprint.summary}</small></div><div className="studio-visual-need-actions"><span><Images size={14} />Concept attached · {linkedReference.blueprint.zones.length} zone{linkedReference.blueprint.zones.length === 1 ? "" : "s"}</span><button className="button secondary small" disabled={!linkedReference.blueprint.zones.length || need.status !== "concept-attached"} title={linkedReference.blueprint.zones.length ? "Rebuild approved visual zones with exact editable source content." : "The AI must describe normalized semantic zones before reconstruction."} onClick={() => onReconstruct(slide.slideNumber, linkedReference.id)}><MagicWand size={13} />Reconstruct editable</button><button className="button ghost small" onClick={() => onDetach(slide.slideNumber, linkedReference.id)}><X size={13} />Detach</button></div></> : need.status === "brief-ready" ? <div className="studio-visual-need-actions attach"><select value={selectedResourceId} disabled={!conceptResources.length} onChange={(event) => setSelectedResources((current) => ({ ...current, [need.id]: event.currentTarget.value }))}><option value="">{conceptResources.length ? "Choose concept image" : "Enable Preview on an image Resource"}</option>{conceptResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}</select><button className="button secondary small" disabled={!selectedResourceId} onClick={() => onAttach(slide.slideNumber, need.id, selectedResourceId)}>Attach</button></div> : undefined}
+        {!['held', 'resolved'].includes(need.status) && <button className="studio-visual-need-hold" onClick={() => onHold(slide.slideNumber, need.id)}>Hold this brief</button>}
+      </article>;
+    })}
+    <div className="inline-note"><ShieldCheck size={15} />Default prompts disclose structure only. Generated wording, logos, data, claims, screenshots, and technical details remain untrusted.</div>
+  </section>;
+}
+
+function StudioView({ deck, catalog, nativeRender, freshPreviews, templateCatalog, templateNativeRender, resources, requestedSlideNumber, deckBuildReady, onInitialize, onRecompose, onMoveNode, onMoveNodes, onStyleNode, onUpdateFigure, onCreateVisualNeed, onHoldVisualNeed, onAttachConcept, onDetachConcept, onReconstructConcept, onPreviewFresh, onPreviewAll, onSaveFresh, onSaveDeck }: { deck?: DeckJob; catalog?: SlideRenderCatalog; nativeRender?: NativeRenderResult; freshPreviews?: Record<string, StudioFreshPreview>; templateCatalog?: TemplateCatalog; templateNativeRender?: NativeRenderResult; resources: ProjectResource[]; requestedSlideNumber?: number; deckBuildReady: boolean; onInitialize: () => void; onRecompose: (slideNumber: number, recipe: StudioLayoutRecipe, layoutId?: string) => void; onMoveNode: (slideNumber: number, nodeId: string, frame: StudioWebFrame) => void; onMoveNodes: (slideNumber: number, updates: Array<{ nodeId: string; frame: StudioWebFrame }>) => void; onStyleNode: (slideNumber: number, nodeId: string, patch: Partial<Pick<StudioWebNode["style"], "fontSizePt" | "fontWeight" | "color" | "textAlign" | "verticalAlign" | "objectFit">>) => void; onUpdateFigure: (slideNumber: number, treatment: StudioFigureTreatment) => void; onCreateVisualNeed: (slideNumber: number, type: StudioVisualNeed["type"]) => void; onHoldVisualNeed: (slideNumber: number, visualNeedId: string) => void; onAttachConcept: (slideNumber: number, visualNeedId: string, resourceId: string) => void; onDetachConcept: (slideNumber: number, referenceId: string) => void; onReconstructConcept: (slideNumber: number, referenceId: string) => void; onPreviewFresh: (slideNumber: number) => void; onPreviewAll: () => void; onSaveFresh: (slideNumber: number) => void; onSaveDeck: () => void }) {
   const [selectedNumber, setSelectedNumber] = useState(1);
-  const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [showEditor, setShowEditor] = useState(false);
   const scene = deck?.studioScene;
-  useEffect(() => { setSelectedNumber(1); setSelectedNodeId(undefined); }, [deck?.id]);
+  const selectedNodeId = selectedNodeIds.at(-1);
+  useEffect(() => { setSelectedNumber(requestedSlideNumber ?? 1); setSelectedNodeIds([]); setShowEditor(Boolean(requestedSlideNumber)); }, [deck?.id, requestedSlideNumber]);
   if (!deck?.audit) return <NoSelection message="Select an audited deck before entering Studio redesign mode." />;
   if (!scene) return <div className="view-stack studio-empty"><header className="view-header compact"><div><p className="eyebrow">HTML-first presentation design</p><h1>Build a Studio Web Scene</h1><p>Extract exact source content into a semantic 16:9 web canvas. The original PowerPoint remains immutable.</p></div></header><section className="designs-empty"><span className="designs-empty-icon"><Code size={34} /></span><h2>Turn this deck into an editable web design system</h2><p>Studio will preserve source bindings while giving the AI and the user one component-based canvas for layout, hierarchy, tables, imagery, and ORNL templates.</p><button className="button primary large" onClick={onInitialize}><Sparkle size={18} />Create Studio scene</button></section></div>;
   const slide = scene.slides.find((item) => item.slideNumber === selectedNumber) ?? scene.slides[0];
+  const sacredTitleSlide = isSacredOrnlTitleSlide(deck, slide.slideNumber);
+  const editorVisible = showEditor && !sacredTitleSlide;
   const selectedNode = slide?.nodes.find((node) => node.id === selectedNodeId);
   const selectedFigureTreatment = selectedNodeId ? slide?.figureTreatments.find((treatment) => treatment.nodeIds.includes(selectedNodeId)) : undefined;
+  const selectedNodes = slide.nodes.filter((node) => selectedNodeIds.includes(node.id));
+  const canCreateFigureTreatment = selectedNodes.some((node) => ["image", "native-object", "shape", "connector"].includes(node.kind));
+  function createFigureTreatment() {
+    if (!selectedNodes.length || !canCreateFigureTreatment) return;
+    onUpdateFigure(slide.slideNumber, {
+      id: `figure-${slide.slideNumber}-${crypto.randomUUID()}`,
+      nodeIds: selectedNodes.map((node) => node.id),
+      mode: "preserve-and-frame",
+      verificationStatus: "source-locked",
+      intentSummary: `Preserve ${selectedNodes.map((node) => node.name).join(", ")} as one technical evidence unit.`,
+      informationInventory: selectedNodes.map((node) => `${node.kind}: ${node.name}`).slice(0, 40),
+      invariants: ["Preserve all visible labels, values, arrows, sequence, grouping, and source relationships exactly."],
+      rationale: "Human grouped these source elements so Studio and AI design around them as one relationship-preserving figure.",
+      relationshipPolicy: "preserve-internal",
+      lockAspectRatio: true,
+    });
+  }
+  function patchSelectedFigure(patch: Partial<StudioFigureTreatment>) {
+    if (selectedFigureTreatment) onUpdateFigure(slide.slideNumber, { ...selectedFigureTreatment, ...patch });
+  }
+  function patchFigureCrop(field: "left" | "top" | "right" | "bottom", percentage: number) {
+    if (!selectedFigureTreatment || !Number.isFinite(percentage)) return;
+    patchSelectedFigure({ crop: { left: 0, top: 0, right: 0, bottom: 0, ...selectedFigureTreatment.crop, [field]: percentage / 100 } });
+  }
   const nativeSlide = nativeRender?.status === "ready" ? nativeRender.slides.find((item) => item.number === slide?.slideNumber) : undefined;
   const nativeSlideSource = nativeSlide ? `data:${nativeSlide.mimeType};base64,${bytesToBase64(bytesFrom(nativeSlide.bytes))}` : undefined;
+  const templateLayoutIndex = slide.targetLayoutId ? templateCatalog?.layouts.findIndex((layout) => layout.id === slide.targetLayoutId) ?? -1 : -1;
+  const templateNativeSlide = templateLayoutIndex >= 0 && templateNativeRender?.status === "ready" ? templateNativeRender.slides.find((item) => item.number === templateLayoutIndex + 1) : undefined;
+  const templateNativeBaseSource = templateNativeSlide ? `data:${templateNativeSlide.mimeType};base64,${bytesToBase64(bytesFrom(templateNativeSlide.bytes))}` : undefined;
   const selectedFreshPreview = deck && slide ? freshPreviews?.[`${deck.id}:${slide.slideNumber}`] : undefined;
   const requiresFreshComposition = Boolean(slide?.nodes.some((node) => node.visible && node.sourceBinding !== "editable-object"));
-  const currentFreshPreview = selectedFreshPreview?.sceneRevision === scene.revision ? selectedFreshPreview : undefined;
+  const currentFreshPreview = selectedFreshPreview?.slideUpdatedAt === slide.updatedAt ? selectedFreshPreview : undefined;
   const freshNativeSlide = currentFreshPreview?.nativeRender?.status === "ready" ? currentFreshPreview.nativeRender.slides[0] : undefined;
   const freshNativeSource = freshNativeSlide ? `data:${freshNativeSlide.mimeType};base64,${bytesToBase64(bytesFrom(freshNativeSlide.bytes))}` : undefined;
+  const needsDesignedExport = slide.status === "designed" && slide.recipe !== "source";
+  const needsFreshExport = needsDesignedExport;
+  const exportResultSource = needsFreshExport ? freshNativeSource : nativeSlideSource;
   const catalogSlide = catalog?.slides.find((item) => item.number === slide?.slideNumber);
   const designedCount = scene.slides.filter((item) => item.status === "designed").length;
-  const recommended = slide ? recommendedStudioRecipe(slide) : "ornl-title-content";
+  const resultStatus = (item: StudioWebScene["slides"][number]) => {
+    if (item.status !== "designed" || item.recipe === "source") return nativeRender?.status === "ready" && Boolean(nativeRender.slides.find((rendered) => rendered.number === item.slideNumber)) ? "ready" : "pending";
+    const preview = freshPreviews?.[`${deck.id}:${item.slideNumber}`];
+    return preview?.slideUpdatedAt === item.updatedAt && preview.nativeRender?.status === "ready" && preview.nativeMeasurement?.status === "ready" ? "ready" : "pending";
+  };
+  const exportReadyCount = scene.slides.filter((item) => resultStatus(item) === "ready").length;
+  const allExportResultsReady = exportReadyCount === scene.slides.length;
+  const conceptResources = resources.filter((resource) => resource.kind === "image" && resource.mcpAccess === "preview" && Boolean(resource.bytes?.byteLength));
+  const rememberedDesign = scene.designMemory?.find((entry) => entry.contentSignature === studioSlideContentSignature(slide));
+  const recommended = sacredTitleSlide ? "source" : rememberedDesign?.recipe && rememberedDesign.recipe !== "template-layout" ? rememberedDesign.recipe : slide ? recommendedStudioRecipe(slide) : "ornl-title-content";
+  const recommendedTemplate = slide && templateCatalog ? rankLayoutCompatibility(templateCatalog.layouts, contentProfileForSlide(deck, slide.slideNumber))[0] : undefined;
+  const figureControlPanel = editorVisible && selectedNodes.length > 0 ? <section className="studio-figure-toolbar panel">
+    <div><span className="field-label">Relationship-aware figure</span><strong>{selectedFigureTreatment ? selectedFigureTreatment.intentSummary : `${selectedNodes.length} selected element${selectedNodes.length === 1 ? "" : "s"}`}</strong><small>{selectedFigureTreatment ? `${selectedFigureTreatment.mode.replaceAll("-", " ")} · ${selectedFigureTreatment.verificationStatus.replaceAll("-", " ")} · ${selectedFigureTreatment.relationships?.length ?? 0} recorded relationships` : "Shift-click the complete figure, labels, captions, and callouts before grouping."}</small></div>
+    {!selectedFigureTreatment ? <button className="button secondary small" disabled={!canCreateFigureTreatment} title={canCreateFigureTreatment ? "Keep this selection together as one technical evidence unit." : "Select at least one image, native object, shape, or connector."} onClick={createFigureTreatment}><CirclesThreePlus size={16} />Treat selection as figure</button> : <>
+      <label><span>Relationships</span><select value={selectedFigureTreatment.relationshipPolicy ?? "preserve-internal"} onChange={(event) => patchSelectedFigure({ relationshipPolicy: event.currentTarget.value as StudioFigureTreatment["relationshipPolicy"] })}><option value="preserve-internal">Preserve internal</option><option value="reflow-annotations">Reflow annotations</option><option value="editable-diagram" disabled={selectedFigureTreatment.verificationStatus !== "verified"}>Editable diagram</option></select></label>
+      <label className="studio-aspect-toggle"><input type="checkbox" checked={selectedFigureTreatment.lockAspectRatio !== false} onChange={(event) => patchSelectedFigure({ lockAspectRatio: event.currentTarget.checked })} /><span>Lock aspect</span></label>
+      <div className="studio-figure-numbers"><span>Crop %</span>{(["left", "top", "right", "bottom"] as const).map((field) => <label key={field}><span>{field[0].toUpperCase()}</span><input type="number" min="0" max="95" step="1" defaultValue={Math.round((selectedFigureTreatment.crop?.[field] ?? 0) * 100)} onBlur={(event) => patchFigureCrop(field, Number(event.currentTarget.value))} /></label>)}</div>
+      <div className="studio-figure-numbers focal"><span>Focal %</span>{(["x", "y"] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" min="0" max="100" step="1" defaultValue={Math.round((selectedFigureTreatment.focalPoint?.[axis] ?? .5) * 100)} onBlur={(event) => { const value = Number(event.currentTarget.value); if (Number.isFinite(value)) patchSelectedFigure({ focalPoint: { x: selectedFigureTreatment.focalPoint?.x ?? .5, y: selectedFigureTreatment.focalPoint?.y ?? .5, [axis]: value / 100 } }); }} /></label>)}</div>
+    </>}
+  </section> : undefined;
   return <div className="view-stack studio-view">
-    <header className="view-header compact"><div><p className="eyebrow">Studio Web Scene · HTML/CSS design authority</p><h1>{deck.name}</h1><p>The user and AI edit the same semantic web canvas. Preservation mode updates source-bound objects; fresh composition creates a new editable slide from the web scene.</p></div><div className="header-actions studio-header-actions"><span className="standard-version">{designedCount}/{scene.slides.length} designed</span>{requiresFreshComposition && <span className="studio-mode-chip">Fresh composition</span>}<button className="button secondary small" disabled={!slide || slide.status !== "designed" || !slide.contentCoverage.exactTextMapped} title={slide && !slide.contentCoverage.exactTextMapped ? "Grouped or unsupported source text must be atomized before fresh composition." : undefined} onClick={() => onPreviewFresh(slide.slideNumber)}><Monitor size={16} />Preview fresh PPTX</button>{currentFreshPreview && <button className="button secondary small" disabled={!freshNativeSource || currentFreshPreview.nativeMeasurement?.status !== "ready" || currentFreshPreview.nativeMeasurement.authority !== "powerpoint-native"} onClick={() => onSaveFresh(slide.slideNumber)}><FileArrowDown size={16} />Save fresh slide</button>}<button className="button primary small" disabled={!slide || slide.status !== "designed" || requiresFreshComposition} title={requiresFreshComposition ? "This design uses semantic atoms or inherited catalog content and must be compiled as a fresh editable slide." : undefined} onClick={() => onStage(slide.slideNumber)}><MagicWand size={16} />Stage preservation</button></div></header>
-    <section className="studio-shell">
-      <aside className="studio-slide-rail"><span className="field-label">Slides</span>{scene.slides.map((item) => <button key={item.id} className={item.slideNumber === slide?.slideNumber ? "selected" : ""} onClick={() => { setSelectedNumber(item.slideNumber); setSelectedNodeId(undefined); }}><span>{item.slideNumber}</span><small>{item.status === "designed" ? item.recipe.replace("ornl-", "") : "source"}</small></button>)}</aside>
+    <header className="view-header compact">
+      <div><p className="eyebrow">PowerPoint export results</p><h1>{deck.name}</h1><p>Studio shows authoritative Microsoft PowerPoint pixels by default. The semantic web scene is available only as an explicit editing surface and is never presented as the finished slide.</p></div>
+      <div className="header-actions studio-header-actions">
+        <span className="standard-version">{designedCount}/{scene.slides.length} designed</span>
+        <span className={`standard-version ${allExportResultsReady ? "ready" : ""}`}>{exportReadyCount}/{scene.slides.length} results ready</span>
+        {requiresFreshComposition && <span className="studio-mode-chip">Fresh composition</span>}
+        <button className="button primary small" disabled={designedCount === 0} title={designedCount === 0 ? "Apply a Studio design recipe before rebuilding export results." : "Sequentially rebuild every designed slide in PowerPoint; untouched source slides remain preserved."} onClick={onPreviewAll}><SquaresFour size={16} />{allExportResultsReady ? "Rebuild all results" : "Build all results"}</button>
+        <button className="button primary small" disabled={!deckBuildReady} title={deckBuildReady ? "Save the current central design as one editable PowerPoint presentation." : "Convert and build every slide before exporting one central presentation."} onClick={onSaveDeck}><FileArrowDown size={16} />Export presentation</button>
+        <button className="button secondary small" disabled={sacredTitleSlide} title={sacredTitleSlide ? "The existing ORNL title slide is sacred and source-preserved." : undefined} onClick={() => { setShowEditor((value) => !value); setSelectedNodeIds([]); }}><Code size={16} />{sacredTitleSlide ? "ORNL title locked" : editorVisible ? "Close scene editor" : "Edit design scene"}</button>
+        {needsFreshExport && <button className="button secondary small" disabled={!slide.contentCoverage.exactTextMapped} title={!slide.contentCoverage.exactTextMapped ? "Grouped or unsupported source text must be atomized before export rendering." : undefined} onClick={() => onPreviewFresh(slide.slideNumber)}><Monitor size={16} />{currentFreshPreview ? "Rebuild export result" : "Build export result"}</button>}
+        {currentFreshPreview && <button className="button secondary small" disabled={!freshNativeSource || currentFreshPreview.nativeMeasurement?.status !== "ready" || currentFreshPreview.nativeMeasurement.authority !== "powerpoint-native"} onClick={() => onSaveFresh(slide.slideNumber)}><FileArrowDown size={16} />Save this result</button>}
+      </div>
+    </header>
+    {figureControlPanel}
+    {editorVisible && <StudioVisualNeedsPanel slide={slide} conceptResources={conceptResources} onCreate={onCreateVisualNeed} onHold={onHoldVisualNeed} onAttach={onAttachConcept} onDetach={onDetachConcept} onReconstruct={onReconstructConcept} />}
+    {editorVisible && !sacredTitleSlide && <div className="studio-semantic-recipe-shortcuts"><span><strong>Semantic layouts</strong><small>Purpose-built systems for dense technical content</small></span><button className={`button small ${slide.recipe === "ornl-title-challenges-evidence" ? "primary" : "secondary"}`} onClick={() => onRecompose(slide.slideNumber, "ornl-title-challenges-evidence")}><SquaresFour size={15} />Challenges + evidence</button><button className={`button small ${slide.recipe === "ornl-title-process-flow" ? "primary" : "secondary"}`} onClick={() => onRecompose(slide.slideNumber, "ornl-title-process-flow")}><ArrowRight size={15} />Process flow</button></div>}
+    <section className={`studio-shell ${editorVisible ? "editing" : "export-only"}`}>
+      <aside className="studio-slide-rail"><span className="field-label">Slides</span>{scene.slides.map((item) => { const status = resultStatus(item); return <button key={item.id} className={item.slideNumber === slide?.slideNumber ? "selected" : ""} onClick={() => { setSelectedNumber(item.slideNumber); setSelectedNodeIds([]); }}><i className={`studio-result-dot ${status}`} title={status === "ready" ? "PowerPoint export result ready" : "Export result not built"} /><span>{item.slideNumber}</span><small>{item.status === "designed" ? item.recipe.replace("ornl-", "") : "source"}</small></button>; })}</aside>
       <section className="studio-stage">
-        <div className="studio-toolbar"><label>Recipe<select value={slide?.recipe ?? "source"} onChange={(event) => onRecompose(slide.slideNumber, event.target.value as StudioLayoutRecipe, slide.targetLayoutId)}><option value="source">Source geometry</option><option value="ornl-title-content">ORNL title + content</option><option value="ornl-title-two-column">ORNL two column</option><option value="ornl-title-objective-columns">ORNL objective columns</option><option value="ornl-title-steps-evidence">ORNL steps + evidence</option><option value="ornl-title-card-grid">ORNL comparison cards</option><option value="ornl-title-table">ORNL table</option><option value="ornl-title-figure-grid">ORNL figure grid</option><option value="ornl-title-labeled-figure-grid">ORNL labeled figures</option><option value="template-layout">Installed template layout</option></select></label>{slide?.recipe === "template-layout" && <label>Template layout<select value={slide.targetLayoutId ?? ""} onChange={(event) => onRecompose(slide.slideNumber, "template-layout", event.target.value)}><option value="">Choose layout…</option>{templateCatalog?.layouts.map((layout) => <option key={layout.id} value={layout.id}>{layout.name}</option>)}</select></label>}<button className="button secondary small" onClick={() => onRecompose(slide.slideNumber, recommended)}><Sparkle size={15} />Use recommended</button><span className="studio-mode-chip">Web canvas</span></div>
-        <StudioWebCanvas scene={scene} slide={slide} catalog={catalog} templateCatalog={templateCatalog} nativeSlideSource={nativeSlideSource} selectedNodeId={selectedNodeId} onSelectNode={(value) => setSelectedNodeId(value || undefined)} onMoveNode={(nodeId, next) => onMoveNode(slide.slideNumber, nodeId, next)} />
-        <div className="studio-canvas-caption"><span><strong>{slide.recipe.replaceAll("-", " ")}</strong> · {slide.nodes.filter((node) => node.visible).length} semantic nodes · {slide.contentCoverage.exactTextMapped ? "all source text mapped" : `${slide.contentCoverage.mappedCharacterCount}/${slide.contentCoverage.sourceCharacterCount} source characters mapped`}</span><span>{slide.contentCoverage.exactTextMapped ? "Drag elements; use the lower-right handle to resize." : "Fresh composition is held until grouped or unsupported text is atomized."}</span></div>
+        {editorVisible ? <><div className="studio-editor-warning"><Warning size={16} /><span><strong>Editing scene—not the export result.</strong> Close the scene editor and rebuild the PowerPoint result to judge the finished slide.</span></div><div className="studio-toolbar"><label>Recipe<select value={slide?.recipe ?? "source"} onChange={(event) => onRecompose(slide.slideNumber, event.target.value as StudioLayoutRecipe, slide.targetLayoutId)}><option value="source">Source geometry</option><option value="ornl-title-content">ORNL title + content</option><option value="ornl-title-two-column">ORNL two column</option><option value="ornl-title-objective-columns">ORNL objective columns</option><option value="ornl-title-steps-evidence">ORNL steps + evidence</option><option value="ornl-title-card-grid">ORNL comparison cards</option><option value="ornl-title-table">ORNL table</option><option value="ornl-title-figure-grid">ORNL figure grid</option><option value="ornl-title-labeled-figure-grid">ORNL labeled figures</option><option value="template-layout">Converted template layout</option></select></label>{slide?.recipe === "template-layout" && <label>Converted ORNL layout<select value={slide.targetLayoutId ?? ""} onChange={(event) => onRecompose(slide.slideNumber, "template-layout", event.target.value)}><option value="">Choose layout…</option>{templateCatalog?.layouts.map((layout) => <option key={layout.id} value={layout.id}>{layout.name}</option>)}</select></label>}<button className="button secondary small" onClick={() => onRecompose(slide.slideNumber, recommended)}><Sparkle size={15} />Best Studio recipe</button>{recommendedTemplate && <button className="button secondary small" title={`${recommendedTemplate.status}: ${recommendedTemplate.reasons.join(" · ")}`} onClick={() => onRecompose(slide.slideNumber, "template-layout", recommendedTemplate.layoutId)}><SquaresFour size={15} />Best ORNL layout</button>}<span className="studio-mode-chip">Scene editor</span></div><StudioWebCanvas scene={scene} slide={slide} catalog={catalog} templateCatalog={templateCatalog} templateNativeBaseSource={templateNativeBaseSource} nativeSlideSource={nativeSlideSource} selectedNodeIds={selectedNodeIds} onSelectNode={(value, additive) => setSelectedNodeIds((current) => !value ? [] : additive ? current.includes(value) ? current.filter((id) => id !== value) : [...current, value] : [value])} onMoveNodes={(updates) => onMoveNodes(slide.slideNumber, updates)} /><div className="studio-canvas-caption"><span><strong>{slide.recipe.replaceAll("-", " ")}</strong> · {slide.nodes.filter((node) => node.visible).length} semantic nodes · {slide.contentCoverage.exactTextMapped ? "all source text mapped" : `${slide.contentCoverage.mappedCharacterCount}/${slide.contentCoverage.sourceCharacterCount} source characters mapped`}</span><span>{selectedNodeIds.length > 1 ? `${selectedNodeIds.length} elements selected · drag as one relationship-preserving group` : slide.contentCoverage.exactTextMapped ? "Shift-click to select a group · rebuild to see export pixels." : "Export is held until grouped or unsupported text is atomized."}</span></div></> : <><div className="studio-toolbar studio-export-toolbar"><span><strong>Slide {slide.slideNumber} export result</strong><small>{sacredTitleSlide ? "Sacred ORNL title · source preserved" : needsDesignedExport ? currentFreshPreview ? "Current designed revision" : "Design changed · export render required" : "Source preserved"}</small></span><span className="studio-mode-chip">{sacredTitleSlide ? "Brand locked" : "PowerPoint native"}</span></div><StudioExportResult slideNumber={slide.slideNumber} source={exportResultSource} preview={currentFreshPreview} designed={needsDesignedExport} templateLayout={slide.recipe === "template-layout"} onBuild={() => onPreviewFresh(slide.slideNumber)} /></>}
       </section>
-      <aside className="studio-inspector"><span className="field-label">Design inspector</span>{selectedNode ? <><strong>{selectedNode.name}</strong><small>{selectedNode.kind} · {selectedNode.role} · {selectedNode.locked ? "locked native" : "editable"}</small><div className="studio-inspector-grid">{(["x", "y", "width", "height"] as const).map((field) => <label key={`${selectedNode.id}-${field}`}><span>{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()}</span><input type="number" min={field === "width" || field === "height" ? .1 : 0} max={20} step={.01} defaultValue={(selectedNode.frame[field] / 914400).toFixed(2)} disabled={selectedNode.locked} onBlur={(event) => { const value = Number(event.currentTarget.value); if (Number.isFinite(value)) onMoveNode(slide.slideNumber, selectedNode.id, { ...selectedNode.frame, [field]: value * 914400 }); }} /><small>in</small></label>)}</div>{selectedNode.kind === "text" && <div className="studio-type-controls"><label><span>Size</span><input type="number" min={10} max={60} step={.25} defaultValue={selectedNode.style.fontSizePt} disabled={selectedNode.locked} onBlur={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { fontSizePt: Number(event.currentTarget.value) })} /><small>pt</small></label><label><span>Weight</span><select value={selectedNode.style.fontWeight} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { fontWeight: Number(event.currentTarget.value) as 400 | 600 | 700 })}><option value="400">Regular</option><option value="600">Semibold</option><option value="700">Bold</option></select></label><label><span>Align</span><select value={selectedNode.style.textAlign} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { textAlign: event.currentTarget.value as "left" | "center" | "right" })}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><label><span>Color</span><input type="color" value={selectedNode.style.color} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { color: event.currentTarget.value })} /></label></div>}{selectedNode.exactContent && <div className="inline-note"><ShieldCheck size={15} />Content remains bound to its source hash.</div>}{selectedFigureTreatment && <section className="studio-figure-treatment"><span className="field-label">Figure treatment</span><div className="studio-treatment-status"><strong>{selectedFigureTreatment.mode.replaceAll("-", " ")}</strong><span>{selectedFigureTreatment.verificationStatus.replaceAll("-", " ")}</span></div><p>{selectedFigureTreatment.intentSummary}</p><small>{selectedFigureTreatment.rationale}</small><ul>{selectedFigureTreatment.invariants.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul><div className="inline-note"><ShieldCheck size={15} />{selectedFigureTreatment.mode === "preserve-as-unit" || selectedFigureTreatment.mode === "preserve-and-frame" ? "Original technical pixels stay exact; Studio designs around the evidence unit." : "The original remains visible until a verified replacement passes the intent review."}</div></section>}</> : <><p>Select an element to inspect its semantic role, CSS-computed frame, and PowerPoint binding.</p><div className="inline-note"><Info size={15} />This is the new design authority. Native PowerPoint pixels remain the final export authority.</div></>}<div className="studio-source-reference"><span className="field-label">PowerPoint source reference</span><span className="studio-source-thumb">{catalogSlide ? <SlideDesignCanvas nativeRender={nativeRender} slideNumber={slide.slideNumber} catalog={catalog} layout={catalogSlide} label={`PowerPoint source slide ${slide.slideNumber}`} /> : <span className="proposal-preview-wait">Preparing…</span>}</span><small>{nativeSlideSource ? "PowerPoint-native · read only" : "Structural fallback · read only"}</small></div>{currentFreshPreview && <div className="studio-source-reference fresh"><span className="field-label">Fresh-composition PowerPoint</span><span className="studio-source-thumb">{freshNativeSource ? <img className="native-slide-render" src={freshNativeSource} width={freshNativeSlide?.width} height={freshNativeSlide?.height} alt={`PowerPoint-native fresh composition of source slide ${slide.slideNumber}`} /> : <span className="proposal-preview-wait">Native preview unavailable</span>}</span><small>{freshNativeSource ? `PowerPoint-native · ${currentFreshPreview.textNodeCount} text · ${currentFreshPreview.tableCount} table · ${currentFreshPreview.imageCount} image` : "Fresh PPTX built; native visual acceptance is still unavailable."}</small></div>}</aside>
+      {!editorVisible && <StudioExportInspector slide={slide} preview={currentFreshPreview} designed={needsDesignedExport} />}
+      <aside className="studio-inspector"><span className="field-label">Design inspector</span>{selectedNode ? <><strong>{selectedNode.name}</strong><small>{selectedNode.kind} · {selectedNode.role} · {selectedNode.locked ? "locked native" : "editable"}</small><div className="studio-inspector-grid">{(["x", "y", "width", "height"] as const).map((field) => <label key={`${selectedNode.id}-${field}`}><span>{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()}</span><input type="number" min={field === "width" || field === "height" ? .1 : 0} max={20} step={.01} defaultValue={(selectedNode.frame[field] / 914400).toFixed(2)} disabled={selectedNode.locked} onBlur={(event) => { const value = Number(event.currentTarget.value); if (Number.isFinite(value)) onMoveNode(slide.slideNumber, selectedNode.id, { ...selectedNode.frame, [field]: value * 914400 }); }} /><small>in</small></label>)}</div>{selectedNode.kind === "text" && <div className="studio-type-controls"><label><span>Size</span><input type="number" min={10} max={60} step={.25} defaultValue={selectedNode.style.fontSizePt} disabled={selectedNode.locked} onBlur={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { fontSizePt: Number(event.currentTarget.value) })} /><small>pt</small></label><label><span>Weight</span><select value={selectedNode.style.fontWeight} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { fontWeight: Number(event.currentTarget.value) as 400 | 600 | 700 })}><option value="400">Regular</option><option value="600">Semibold</option><option value="700">Bold</option></select></label><label><span>Align</span><select value={selectedNode.style.textAlign} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { textAlign: event.currentTarget.value as "left" | "center" | "right" })}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><label><span>Color</span><input type="color" value={selectedNode.style.color} disabled={selectedNode.locked} onChange={(event) => onStyleNode(slide.slideNumber, selectedNode.id, { color: event.currentTarget.value })} /></label></div>}{selectedNode.exactContent && <div className="inline-note"><ShieldCheck size={15} />Content remains bound to its source hash.</div>}{selectedFigureTreatment && <section className="studio-figure-treatment"><span className="field-label">Figure treatment</span><div className="studio-treatment-status"><strong>{selectedFigureTreatment.mode.replaceAll("-", " ")}</strong><span>{selectedFigureTreatment.verificationStatus.replaceAll("-", " ")}</span></div><p>{selectedFigureTreatment.intentSummary}</p><small>{selectedFigureTreatment.rationale}</small><ul>{selectedFigureTreatment.invariants.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul><div className="inline-note"><ShieldCheck size={15} />{selectedFigureTreatment.mode === "preserve-as-unit" || selectedFigureTreatment.mode === "preserve-and-frame" ? "Original technical pixels stay exact; Studio designs around the evidence unit." : "The original remains visible until a verified replacement passes the intent review."}</div></section>}</> : <><p>Select an element to inspect its semantic role, CSS-computed frame, and PowerPoint binding.</p><div className="inline-note"><Info size={15} />This is the new design authority. Native PowerPoint pixels remain the final export authority.</div></>}{(slide.conceptReferences?.length ?? 0) > 0 && <section className="studio-concept-references"><span className="field-label">Concept references</span>{slide.conceptReferences?.map((reference) => <article key={reference.id}><div><Sparkle size={15} /><strong>{reference.origin === "imagegen" ? "Image Gen concept" : "Visual concept"}</strong><span>Concept only</span></div><p>{reference.blueprint.summary}</p><small>Follow: {reference.approvedInfluences.join(" · ")}</small><em>Text, logos, data, claims, and technical details remain untrusted.</em></article>)}</section>}<div className="studio-source-reference"><span className="field-label">PowerPoint source reference</span><span className="studio-source-thumb">{catalogSlide ? <SlideDesignCanvas nativeRender={nativeRender} slideNumber={slide.slideNumber} catalog={catalog} layout={catalogSlide} label={`PowerPoint source slide ${slide.slideNumber}`} /> : <span className="proposal-preview-wait">Preparing…</span>}</span><small>{nativeSlideSource ? "PowerPoint-native · read only" : "Structural fallback · read only"}</small></div>{currentFreshPreview && <div className="studio-source-reference fresh"><span className="field-label">Fresh-composition PowerPoint</span><span className="studio-source-thumb">{freshNativeSource ? <img className="native-slide-render" src={freshNativeSource} width={freshNativeSlide?.width} height={freshNativeSlide?.height} alt={`PowerPoint-native fresh composition of source slide ${slide.slideNumber}`} /> : <span className="proposal-preview-wait">Native preview unavailable</span>}</span><small>{freshNativeSource ? `PowerPoint-native · ${currentFreshPreview.textNodeCount} text · ${currentFreshPreview.tableCount} table · ${currentFreshPreview.imageCount} image` : "Fresh PPTX built; native visual acceptance is still unavailable."}</small></div>}</aside>
     </section>
   </div>;
 }
@@ -887,13 +1104,13 @@ function ResourcesView({ project, onToggleMcp, onAdd, onRemove }: { project: Pre
               <span className="resource-roles">{resource.roles.join(" · ")}</span>
               <span className={`processing-state ${processingStatus}`}>{hasWarnings && <Warning size={13} />}{processingStatus === "indexed" ? "Indexed" : processingStatus === "needs-review" ? "Needs review" : "Stored only"}</span>
               <span>{formatBytes(resource.byteLength)}</span>
-              <button className={`access-toggle ${resource.mcpAccess !== "none" ? "on" : ""}`} onClick={() => onToggleMcp(resource.id)}>{resource.mcpAccess === "none" ? "Not shared" : "Metadata only"}</button>
+              <button className={`access-toggle ${resource.mcpAccess !== "none" ? "on" : ""}`} onClick={() => onToggleMcp(resource.id)} title={resource.kind === "image" ? "Cycle between not shared, metadata only, and a bounded image preview for this AI session." : "Toggle metadata sharing for this AI session."}>{resource.mcpAccess === "none" ? "Not shared" : resource.mcpAccess === "preview" ? "Preview shared" : "Metadata only"}</button>
               <button className="resource-remove" onClick={() => onRemove(resource.id)} title="Remove this embedded copy from the project; the original file is never deleted"><Trash size={13} />Remove</button>
             </div>;
           })}
         </div>
       </section>
-      <div className="inline-note wide"><ShieldCheck size={18} />Original bytes and extracted text remain local. Remove affects only the embedded project copy—not the source file. Metadata sharing requires both AI session access and a per-Resource choice; file bytes are never returned through MCP.</div>
+      <div className="inline-note wide"><ShieldCheck size={18} />Original bytes and extracted text remain local. Remove affects only the embedded project copy—not the source file. Metadata sharing requires a per-Resource choice. Images expose only a bounded preview after the separate Preview shared setting; original Resource bytes are never returned through MCP.</div>
     </div>
   );
 }
@@ -934,7 +1151,9 @@ export default function App() {
   const [nativeRenderCatalogs, setNativeRenderCatalogs] = useState<Record<string, NativeRenderResult>>({});
   const [nativeRenderLoadingKey, setNativeRenderLoadingKey] = useState<string>();
   const [studioFreshPreviews, setStudioFreshPreviews] = useState<Record<string, StudioFreshPreview>>({});
+  const [studioDeckBuilds, setStudioDeckBuilds] = useState<Record<string, StudioDeckBuild>>({});
   const [slideWorkspaceRequest, setSlideWorkspaceRequest] = useState<SlideWorkspaceRequest>();
+  const [studioOpenSlideNumber, setStudioOpenSlideNumber] = useState<number>();
   const [tourOpen, setTourOpen] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(0);
   const fileDragDepth = useRef(0);
@@ -945,12 +1164,14 @@ export default function App() {
   const inspectionRendersRef = useRef(new Map<string, NativeRenderResult>());
   const templateNativeRendersRef = useRef(new Map<string, NativeRenderResult>());
   const templateNativeRenderPromisesRef = useRef(new Map<string, Promise<NativeRenderResult>>());
+  const studioFreshPreviewsRef = useRef(studioFreshPreviews);
   const onboardingChecked = useRef(false);
   const auditGeometryUpgradeAttempted = useRef(new Set<string>());
   const desktop = window.presentationStudioDesktop;
   const selectedDeck = project.decks.find((deck) => deck.id === selectedDeckId) ?? project.decks[0];
 
   useEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => { studioFreshPreviewsRef.current = studioFreshPreviews; }, [studioFreshPreviews]);
   useEffect(() => {
     if (project.settings.designStandardVersion === PRESENTATION_DESIGN_STANDARD.version) return;
     setProject((current) => current.settings.designStandardVersion === PRESENTATION_DESIGN_STANDARD.version ? current : {
@@ -1053,7 +1274,7 @@ export default function App() {
   }, [desktop, templateCatalog, templateSourceBytes]);
 
   useEffect(() => {
-    if (activeView !== "designs" || !desktop || !templateCatalog || !templateSourceBytes) return;
+    if (!["designs", "studio"].includes(activeView) || !desktop || !templateCatalog || !templateSourceBytes) return;
     let canceled = false;
     setTemplateNativeLoading(true);
     void getOrBuildTemplateNativeRender().catch((caught) => {
@@ -1435,13 +1656,27 @@ export default function App() {
         return {
           updatedAt: current.project.updatedAt,
           deck: { id: deck.id, name: deck.name, targetTemplateId: deck.targetTemplateId },
-          scene: { schema: scene.schema, version: scene.version, revision: scene.revision, slideSize: scene.slideSize, sourceSlideSize: scene.sourceSlideSize, designSystem: scene.designSystem, persisted: Boolean(deck.studioScene) },
+          scene: { schema: scene.schema, version: scene.version, revision: scene.revision, slideSize: scene.slideSize, sourceSlideSize: scene.sourceSlideSize, rhythm: scene.rhythm, designMemory: scene.designMemory ?? [], designSystem: scene.designSystem, persisted: Boolean(deck.studioScene) },
           slide: {
             id: slide.id, slideNumber: slide.slideNumber, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, status: slide.status, designRationale: slide.designRationale, sourceTextHash: slide.sourceTextHash,
             sourceText: deck.audit.slides.find((item) => item.number === slideNumber)?.text ?? "",
             contentCoverage: slide.contentCoverage,
-            recommendedRecipe: recommendedStudioRecipe(slide),
+            sacredTemplateTitle: isSacredOrnlTitleSlide(deck, slideNumber),
+            recommendedRecipe: isSacredOrnlTitleSlide(deck, slideNumber) ? "source" : recommendedStudioRecipe(slide),
             figureTreatments: slide.figureTreatments,
+            conceptReferences: (slide.conceptReferences ?? []).map((reference) => ({
+              ...reference,
+              resourceAvailable: current.resources.some((resource) => resource.id === reference.resourceId && resource.sha256 === reference.resourceSha256),
+              previewAuthorized: current.resources.some((resource) => resource.id === reference.resourceId && resource.sha256 === reference.resourceSha256 && resource.mcpAccess === "preview"),
+            })),
+            visualNeeds: (slide.visualNeeds ?? []).map((need) => ({
+              id: need.id, type: need.type, status: need.status, sourceTextHash: need.sourceTextHash, reason: need.reason, communicationJob: need.communicationJob, expression: need.expression,
+              approvedInfluences: need.approvedInfluences, disclosurePolicy: need.disclosurePolicy, brandExpression: need.brandExpression, targetSlot: need.targetSlot, structureInventory: need.structureInventory,
+              linkedConceptReferenceId: need.linkedConceptReferenceId, resolutionNote: need.resolutionNote, promptReady: Boolean(need.promptPackage.prompt), createdAt: need.createdAt, updatedAt: need.updatedAt,
+            })),
+            constraints: slide.constraints ?? [],
+            qualityReview: slide.qualityReview,
+            designImpact: analyzeStudioDesignImpact(slide),
             nodes: slide.nodes.map((node) => ({
               id: node.id, sourceObjectId: node.sourceObjectId, sourceShapeId: node.sourceShapeId, sourceBinding: node.sourceBinding, sourceTextOrder: node.sourceTextOrder, sourceAtom: node.sourceAtom, name: node.name, kind: node.kind, role: node.role, component: node.component, visible: node.visible, locked: node.locked, exactContent: node.exactContent, text: node.text, textHash: node.textHash, sourceParagraphs: node.sourceParagraphs, tableId: node.tableId, table: node.table,
               sourceFrameInches: { x: node.sourceFrame.x / 914_400, y: node.sourceFrame.y / 914_400, width: node.sourceFrame.width / 914_400, height: node.sourceFrame.height / 914_400, rotation: node.sourceFrame.rotation },
@@ -1449,8 +1684,10 @@ export default function App() {
               style: node.style,
             })),
           },
-          instruction: slide.contentCoverage.exactTextMapped
-            ? "Design in this semantic HTML/CSS scene, not by preserving weak source coordinates. Source paragraphs are exposed as exact semantic atom candidates, but approved wording remains locked. Prefer the recommended recipe: objective columns for 2–4 parallel paragraphs, steps + evidence for 2–5 instruction atoms beside one visual, labeled figures for multiple images with labels/captions, cards only for already-separated comparisons, and table for native tables. Use compilerMode fresh-composition whenever any visible node is catalog-derived or semantic-atom; source-bound-overlay cannot represent those nodes and will be rejected. Then call preview_studio_fresh_composition and judge the Microsoft PowerPoint render before any save."
+          instruction: isSacredOrnlTitleSlide(deck, slideNumber)
+            ? "HARD RULE: this existing populated ORNL title slide is sacred. Keep recipe source and preserve its approved marks, artwork, photography, legal copy, geometry, master, and layout exactly. Do not send nodeFrames, nodeStyles, figure treatments, or another recipe for this slide."
+            : slide.contentCoverage.exactTextMapped
+            ? `Design in this semantic HTML/CSS scene, not by preserving weak source coordinates. Reuse matching ready-rated deck designMemory patterns and the shared rhythm before inventing a one-off layout.${(slide.conceptReferences?.length ?? 0) > 0 ? " Read each attached concept-only reference and follow only its approved visual influences; generated text, logos, data, claims, and technical details remain untrusted." : ""} Source paragraphs are exposed as exact semantic atom candidates, but approved wording remains locked. Prefer the recommended recipe: objective columns for 2–4 parallel paragraphs; challenge + evidence for one assertion, three peer challenges, and dense source-locked evidence; process flow for four source inputs, ordered stages, one output, and exact supporting copy; steps + evidence for 2–5 instruction atoms beside one visual; labeled figures for multiple images with labels/captions; cards only for already-separated comparisons; and table for native tables. Pair process icons/labels by source relationship and z-order, not page position, and do not classify technical content as footer furniture solely because it is low on the slide. Use compilerMode fresh-composition whenever any visible node is catalog-derived or semantic-atom; source-bound-overlay cannot represent those nodes and will be rejected. Then call preview_studio_fresh_composition, run get_studio_slide_critique against the original, and complete the bounded visual loop before any save.`
             : "This slide's complete source text is returned, but not every character maps to an editable Studio node because grouped, inherited, or unsupported content still needs semantic atomization. Do not preview or save a fresh composition that would omit it. Preserve the native source slide or defer redesign until atomization support covers the missing content.",
         };
       }
@@ -1467,7 +1704,8 @@ export default function App() {
         if (preview.nativeMeasurement?.status !== "ready" || preview.nativeMeasurement.authority !== "powerpoint-native") throw new Error(`Microsoft PowerPoint could not remeasure the fresh composition authoritatively: ${preview.nativeMeasurement?.reason ?? preview.nativeMeasurement?.warnings.join(" ") ?? "native measurement is unavailable"}`);
         const image = preview.nativeRender.slides[0];
         if (!image) throw new Error("Microsoft PowerPoint did not return the fresh-composition slide image.");
-        setStudioFreshPreviews((previews) => ({ ...previews, [`${deck.id}:${slideNumber}`]: preview }));
+        studioFreshPreviewsRef.current = { ...studioFreshPreviewsRef.current, [`${deck.id}:${slideNumber}`]: preview };
+        setStudioFreshPreviews(studioFreshPreviewsRef.current);
         setSelectedDeckId(deck.id);
         setActiveView("studio");
         return {
@@ -1486,13 +1724,160 @@ export default function App() {
           sourceSha256: preview.nativeRender.sourceSha256,
           authoritative: true,
           warnings: preview.warnings,
-          preservationTradeoff: "This is a newly composed one-slide editable PowerPoint. It preserves exact visible source text and native table content/merged structure, but it does not preserve the imported slide master, animations, transitions, or unsupported PowerPoint internals.",
+          preservationTradeoff: studioSlide.recipe === "template-layout" ? "This is a newly composed editable slide with converted non-placeholder artwork from the selected Template Pack layout. It preserves exact source content, but not original master behavior, animations, transitions, or unsupported PowerPoint internals." : "This is a newly composed editable slide in the Studio ORNL system. It preserves exact visible source text and native table content/merged structure, but it does not preserve the imported source master, animations, transitions, or unsupported PowerPoint internals.",
           applied: false,
           saved: false,
           mimeType: image.mimeType,
           data: bytesToBase64(bytesFrom(image.bytes)),
           width: image.width,
           height: image.height,
+        };
+      }
+      if (request.operation === "get_studio_slide_critique") {
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.studioScene) throw new Error("Create, design, and build the Studio slide before requesting its visual critique.");
+        if (request.input.expectedSceneRevision !== deck.studioScene.revision) throw new Error("The Studio scene changed. Build and inspect the exact current revision before critique.");
+        const slideNumber = Number(request.input.slideNumber);
+        const studioSlide = deck.studioScene.slides.find((slide) => slide.slideNumber === slideNumber);
+        if (!studioSlide) throw new Error("The requested Studio slide is unavailable.");
+        const preview = studioFreshPreviewsRef.current[`${deck.id}:${slideNumber}`];
+        if (!preview || preview.sceneRevision !== deck.studioScene.revision || preview.slideUpdatedAt !== studioSlide.updatedAt || preview.nativeRender?.status !== "ready" || preview.nativeMeasurement?.status !== "ready") throw new Error("Build this exact Studio slide revision in PowerPoint before requesting Found issues.");
+        const exportImage = preview.nativeRender.slides[0];
+        const sourceRender = await getOrBuildNativeRender(deck, "current", current);
+        const sourceImage = sourceRender?.status === "ready" ? sourceRender.slides.find((slide) => slide.number === slideNumber) : undefined;
+        if (!sourceImage || !exportImage) throw new Error("Both authoritative original and export-result images are required for Studio critique.");
+        const critique = critiqueStudioSlide(deck.studioScene, slideNumber, preview.nativeMeasurement);
+        const conceptImages = [] as Array<{ label: string; representation: "concept"; data: string; mimeType: "image/png"; width: number; height: number; sha256: string; referenceId: string; approvedInfluences: string[] }>;
+        for (const reference of (studioSlide.conceptReferences ?? []).slice(0, 2)) {
+          const resource = current.resources.find((item) => item.id === reference.resourceId && item.sha256 === reference.resourceSha256 && item.mcpAccess === "preview");
+          if (!resource) continue;
+          const concept = await boundedResourceImagePreview(resource);
+          conceptImages.push({ label: `Concept-only reference · ${reference.origin}`, representation: "concept", data: bytesToBase64(concept.bytes), mimeType: concept.mimeType, width: concept.width, height: concept.height, sha256: concept.sha256, referenceId: reference.id, approvedInfluences: reference.approvedInfluences });
+        }
+        return {
+          updatedAt: current.project.updatedAt,
+          deck: { id: deck.id, name: deck.name },
+          slideNumber,
+          sceneRevision: deck.studioScene.revision,
+          slideUpdatedAt: studioSlide.updatedAt,
+          rasterSha256: exportImage.sha256,
+          critique,
+          issueLedger: { phase: "found-issues", issueCount: critique.issues.length, autoFixableCount: critique.autoFixableCount },
+          images: [
+            { label: "Original PowerPoint reference", representation: "source", data: bytesToBase64(bytesFrom(sourceImage.bytes)), mimeType: sourceImage.mimeType, width: sourceImage.width, height: sourceImage.height, sha256: sourceImage.sha256 },
+            ...conceptImages,
+            { label: "Current Studio export result", representation: "export", data: bytesToBase64(bytesFrom(exportImage.bytes)), mimeType: exportImage.mimeType, width: exportImage.width, height: exportImage.height, sha256: exportImage.sha256 },
+          ],
+          instruction: critique.verdict === "ready" ? `Inspect the original and export images${conceptImages.length ? " plus each concept-only image for only its approved visual influences" : ""} for issues the deterministic critic cannot see, then record a ready or revise verdict for this exact raster.` : "Fix the objective issue ledger with high-level Studio operations, rebuild the exact slide, and request critique again. Do not merely reduce all type sizes.",
+        };
+      }
+      if (request.operation === "record_studio_visual_critique") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Request a fresh Studio slide critique before recording judgment.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.studioScene) throw new Error("The requested Studio deck is unavailable.");
+        if (request.input.expectedSceneRevision !== deck.studioScene.revision) throw new Error("The Studio scene changed. Build and critique the exact current revision first.");
+        const slideNumber = Number(request.input.slideNumber);
+        const studioSlide = deck.studioScene.slides.find((slide) => slide.slideNumber === slideNumber);
+        if (!studioSlide) throw new Error("The requested Studio slide is unavailable.");
+        const preview = studioFreshPreviewsRef.current[`${deck.id}:${slideNumber}`];
+        const exportImage = preview?.nativeRender?.status === "ready" ? preview.nativeRender.slides[0] : undefined;
+        if (!preview || preview.sceneRevision !== deck.studioScene.revision || preview.slideUpdatedAt !== studioSlide.updatedAt || preview.nativeMeasurement?.status !== "ready" || !exportImage || request.input.rasterSha256 !== exportImage.sha256) throw new Error("The Studio export raster changed. Request a fresh critique before recording visual judgment.");
+        const critique = critiqueStudioSlide(deck.studioScene, slideNumber, preview.nativeMeasurement);
+        const rawVisualIssues = Array.isArray(request.input.visualIssues) ? request.input.visualIssues as Array<Record<string, unknown>> : [];
+        const visualIssues: StudioQualityIssue[] = rawVisualIssues.map((raw, index) => ({
+          id: `ai-visual-${index + 1}`,
+          category: String(raw.category ?? "other") as StudioQualityIssue["category"],
+          severity: String(raw.severity ?? "minor") as StudioQualityIssue["severity"],
+          source: "ai-visual",
+          nodeIds: Array.isArray(raw.nodeIds) ? raw.nodeIds.map(String) : [],
+          message: String(raw.message ?? "").trim().slice(0, 1_000),
+          recommendation: String(raw.recommendation ?? "").trim().slice(0, 1_000),
+          autoFixable: raw.autoFixable === true,
+        }));
+        const requestedVerdict = String(request.input.verdict ?? "revise") as "ready" | "revise" | "hold";
+        const pass = critique.iteration.currentPass;
+        const serious = critique.issues.some((issue) => issue.severity !== "minor") || visualIssues.some((issue) => issue.severity !== "minor");
+        let recordedVerdict: "ready" | "revise" | "hold" = requestedVerdict === "ready" && serious ? "revise" : requestedVerdict;
+        if (pass >= 3 && recordedVerdict !== "ready") recordedVerdict = "hold";
+        const review = {
+          sceneRevision: deck.studioScene.revision,
+          slideUpdatedAt: studioSlide.updatedAt,
+          rasterSha256: exportImage.sha256,
+          pass,
+          maxPasses: 3 as const,
+          requestedVerdict,
+          recordedVerdict,
+          rationale: String(request.input.rationale ?? "").trim().slice(0, 1_000),
+          objectiveIssues: critique.issues,
+          visualIssues,
+          recordedAt: new Date().toISOString(),
+        };
+        const memoryEntry = recordedVerdict === "ready" ? {
+          contentSignature: studioSlideContentSignature(studioSlide),
+          recipe: studioSlide.recipe,
+          targetLayoutId: studioSlide.targetLayoutId,
+          targetLayoutName: studioSlide.targetLayoutName,
+          rhythm: deck.studioScene.rhythm ?? { safeMarginPt: 18, gridPt: 6, compactGapPt: 8, normalGapPt: 12, primaryGapPt: 18, captionGapPt: 8, titleContentGapPt: 18 },
+          adoptedFromSlideNumber: slideNumber,
+          qualityRasterSha256: exportImage.sha256,
+          recordedAt: review.recordedAt,
+        } : undefined;
+        const designMemory = memoryEntry ? [...(deck.studioScene.designMemory ?? []).filter((entry) => entry.contentSignature !== memoryEntry.contentSignature), memoryEntry].slice(-80) : deck.studioScene.designMemory;
+        let studioScene: StudioWebScene = { ...deck.studioScene, designMemory, slides: deck.studioScene.slides.map((slide) => slide.slideNumber === slideNumber ? { ...slide, qualityReview: review } : slide) };
+        if (recordedVerdict === "ready") studioScene = resolveStudioVisualNeeds(studioScene, slideNumber, "The editable reconstruction passed the bounded PowerPoint-native visual review.");
+        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene } : item) }, "mcp-studio-visual-critique-recorded", `AI recorded Studio visual pass ${pass}/3 as ${recordedVerdict} for slide ${slideNumber} of ${deck.name}; slide design geometry and source bytes remain unchanged.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setStudioOpenSlideNumber(slideNumber);
+        setActiveView("studio");
+        return {
+          projectUpdatedAt: next.project.updatedAt,
+          slideNumber,
+          review,
+          issueLedger: { phase: recordedVerdict === "ready" ? "ready" : "found-issues", issueCount: critique.issues.length + visualIssues.length, autoFixableCount: [...critique.issues, ...visualIssues].filter((issue) => issue.autoFixable).length },
+          instruction: recordedVerdict === "ready" ? "The exact Studio result is ready for human review. No file was saved or exported." : recordedVerdict === "revise" ? "Use one materially different high-level layout, figure, hierarchy, or spacing operation; rebuild and critique the new exact raster." : "The three-pass loop is held. Keep the exact current result visible and ask the human to resolve the remaining visual or content ambiguity.",
+        };
+      }
+      if (request.operation === "build_studio_presentation") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio scenes again before building the presentation.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.studioScene) throw new Error("Create and design the Studio Web Scene before building the central presentation.");
+        assertSacredOrnlTitleSlideIntegrity(deck, deck.studioScene);
+        const unconverted = unsupportedSourceSlideNumbers(deck, deck.studioScene);
+        if (unconverted.length) throw new Error(`The central presentation cannot be built until every slide has a Studio or converted-template design. Still source-only: ${unconverted.join(", ")}.`);
+        let rebuiltSlideCount = 0;
+        let reusedSlideCount = 0;
+        for (const studioSlide of deck.studioScene.slides) {
+          const key = `${deck.id}:${studioSlide.slideNumber}`;
+          const cached = studioFreshPreviewsRef.current[key];
+          if (cached?.slideUpdatedAt === studioSlide.updatedAt && cached.nativeRender?.status === "ready" && cached.nativeMeasurement?.status === "ready") {
+            reusedSlideCount += 1;
+            continue;
+          }
+          const preview = await buildFreshStudioPreview(deck, studioSlide.slideNumber, deck.studioScene);
+          studioFreshPreviewsRef.current = { ...studioFreshPreviewsRef.current, [key]: preview };
+          setStudioFreshPreviews(studioFreshPreviewsRef.current);
+          rebuiltSlideCount += 1;
+        }
+        const build = await buildCentralStudioDeck(deck, deck.studioScene);
+        setStudioDeckBuilds((builds) => ({ ...builds, [deck.id]: build }));
+        setSelectedDeckId(deck.id);
+        setActiveView("slides");
+        return {
+          projectUpdatedAt: current.project.updatedAt,
+          deck: { id: deck.id, name: deck.name },
+          sceneRevision: deck.studioScene.revision,
+          slideCount: build.slideCount,
+          editablePowerPoint: { textNodeCount: build.textNodeCount, tableCount: build.tableCount, imageCount: build.imageCount, generatedComponentCount: build.generatedComponentCount },
+          renderer: build.nativeRender.renderer,
+          powerPointVersion: build.nativeRender.powerPointVersion,
+          measurementAuthority: build.nativeMeasurement.authority,
+          incrementalBuild: { rebuiltSlideCount, reusedSlideCount },
+          readyForInAppReview: true,
+          saved: false,
+          exported: false,
+          instruction: "Review the same central result in Slides. Location comments bind to each exact Studio slide revision. Export remains a separate user action.",
         };
       }
       if (request.operation === "list_resources") {
@@ -1514,6 +1899,214 @@ export default function App() {
             permission: resource.mcpAccess,
           })),
         };
+      }
+      if (request.operation === "get_resource_preview") {
+        const resource = current.resources.find((item) => item.id === request.input.resourceId);
+        if (!resource) throw new Error("The requested Resource is not in this project.");
+        if (resource.mcpAccess !== "preview") throw new Error("The person has not granted Preview access to this Resource for the current AI session.");
+        const preview = await boundedResourceImagePreview(resource);
+        return {
+          updatedAt: current.project.updatedAt,
+          resource: { id: resource.id, name: resource.name, sha256: resource.sha256, roles: resource.roles, roleLabel: resource.roles.includes("concept-reference") ? "concept-only" : "reference" },
+          mimeType: preview.mimeType,
+          data: bytesToBase64(preview.bytes),
+          width: preview.width,
+          height: preview.height,
+          rasterSha256: preview.sha256,
+        };
+      }
+      if (request.operation === "create_studio_visual_need") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio scene again before creating a visual-direction brief.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current Studio source scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
+        if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing populated ORNL title slide is sacred and cannot enter the visual-concept queue.");
+        const catalog = await getOrBuildSlideCatalog(deck, current);
+        const baseScene = deck.studioScene ?? compileStudioWebScene(deck, catalog);
+        const rawTarget = request.input.targetSlot && typeof request.input.targetSlot === "object" ? request.input.targetSlot as Record<string, unknown> : undefined;
+        const scene = createStudioVisualNeed(baseScene, slideNumber, {
+          type: String(request.input.type ?? "layout-concept") as StudioVisualNeed["type"],
+          reason: String(request.input.reason ?? ""),
+          communicationJob: String(request.input.communicationJob ?? ""),
+          expression: String(request.input.expression ?? "balanced") as StudioVisualNeed["expression"],
+          approvedInfluences: Array.isArray(request.input.approvedInfluences) ? request.input.approvedInfluences.map(String) as StudioVisualNeed["approvedInfluences"] : undefined,
+          disclosurePolicy: String(request.input.disclosurePolicy ?? "abstract-structure-only") as StudioVisualNeed["disclosurePolicy"],
+          approvedContentSummary: typeof request.input.approvedContentSummary === "string" ? request.input.approvedContentSummary : undefined,
+          targetSlot: rawTarget ? {
+            role: typeof rawTarget.role === "string" ? rawTarget.role as StudioVisualNeed["targetSlot"]["role"] : undefined,
+            aspectRatio: typeof rawTarget.aspectRatio === "string" ? rawTarget.aspectRatio as StudioVisualNeed["targetSlot"]["aspectRatio"] : undefined,
+            placementNotes: typeof rawTarget.placementNotes === "string" ? rawTarget.placementNotes : undefined,
+          } : undefined,
+        });
+        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item) }, "studio-visual-need-created", `Created a local visual-direction brief for slide ${slideNumber} of ${deck.name}; no model was called and source bytes remain unchanged.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setStudioOpenSlideNumber(slideNumber);
+        setActiveView("studio");
+        const need = scene.slides.find((slide) => slide.slideNumber === slideNumber)?.visualNeeds?.at(-1);
+        return { projectUpdatedAt: next.project.updatedAt, sceneRevision: scene.revision, slideNumber, need, imageModelCalled: false, sourceChanged: false, saved: false, exported: false };
+      }
+      if (request.operation === "list_studio_visual_needs") {
+        const deckId = typeof request.input.deckId === "string" ? request.input.deckId : undefined;
+        const needs = current.decks.filter((deck) => !deckId || deck.id === deckId).flatMap((deck) => {
+          if (!deck.studioScene) return [];
+          return deck.studioScene.slides.flatMap((slide) => (slide.visualNeeds ?? []).map((need) => ({
+            deckId: deck.id,
+            deckName: deck.name,
+            slideNumber: slide.slideNumber,
+            id: need.id,
+            type: need.type,
+            status: need.status,
+            expression: need.expression,
+            disclosurePolicy: need.disclosurePolicy,
+            brandExpression: need.brandExpression,
+            targetSlot: need.targetSlot,
+            sourceTextHash: need.sourceTextHash,
+            linkedConceptReferenceId: need.linkedConceptReferenceId,
+            conceptAvailable: Boolean(need.linkedConceptReferenceId && slide.conceptReferences?.some((reference) => reference.id === need.linkedConceptReferenceId)),
+            updatedAt: need.updatedAt,
+          })));
+        });
+        return { updatedAt: current.project.updatedAt, needs };
+      }
+      if (request.operation === "get_studio_visual_need_brief") {
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.studioScene) throw new Error("The requested deck does not have a persisted Studio scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        const slide = deck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
+        const need = slide?.visualNeeds?.find((item) => item.id === request.input.visualNeedId);
+        if (!slide || !need) throw new Error("The requested visual need is not present on this Studio slide.");
+        if (need.sourceTextHash !== slide.sourceTextHash) throw new Error("The visual brief is stale because its source-content binding changed.");
+        return {
+          updatedAt: current.project.updatedAt,
+          deck: { id: deck.id, name: deck.name },
+          slideNumber,
+          sceneRevision: deck.studioScene.revision,
+          need: {
+            id: need.id, type: need.type, status: need.status, sourceTextHash: need.sourceTextHash, expression: need.expression, approvedInfluences: need.approvedInfluences,
+            disclosurePolicy: need.disclosurePolicy, approvedContentSummary: need.approvedContentSummary, brandExpression: need.brandExpression, structureInventory: need.structureInventory, targetSlot: need.targetSlot, promptPackage: need.promptPackage,
+            linkedConceptReferenceId: need.linkedConceptReferenceId, createdAt: need.createdAt, updatedAt: need.updatedAt,
+          },
+          instruction: "Use only the promptPackage within its disclosure boundary. Do not add source pixels or exact content that the package excludes. Import any resulting raster into Resources, grant Preview, attach it as concept-only, then reconstruct approved visual characteristics with exact editable source content.",
+        };
+      }
+      if (request.operation === "hold_studio_visual_need") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the visual-needs queue again before holding this brief.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.studioScene) throw new Error("The requested deck does not have a persisted Studio scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        const visualNeedId = String(request.input.visualNeedId ?? "");
+        const scene = holdStudioVisualNeed(deck.studioScene, slideNumber, visualNeedId, String(request.input.note ?? ""));
+        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item) }, "studio-visual-need-held", `Held a local visual-direction brief on slide ${slideNumber} of ${deck.name}; no Resource or source file was deleted.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setStudioOpenSlideNumber(slideNumber);
+        setActiveView("studio");
+        return { projectUpdatedAt: next.project.updatedAt, sceneRevision: scene.revision, slideNumber, visualNeedId, deleted: false, sourceChanged: false };
+      }
+      if (request.operation === "attach_studio_concept_reference") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio scene and Resources again before attaching a concept reference.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current Studio source scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
+        if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing populated ORNL title slide is sacred and cannot use an Image Gen or external concept reference.");
+        const resource = current.resources.find((item) => item.id === request.input.resourceId);
+        if (!resource) throw new Error("The requested concept image is not embedded in this project.");
+        if (resource.mcpAccess !== "preview") throw new Error("Grant Preview access to this image in Resources before an AI can attach it as a concept reference.");
+        const catalog = await getOrBuildSlideCatalog(deck, current);
+        const baseScene = deck.studioScene ?? compileStudioWebScene(deck, catalog);
+        const rawBlueprint = request.input.blueprint && typeof request.input.blueprint === "object" ? request.input.blueprint as Record<string, unknown> : {};
+        const scene = attachStudioConceptReference(baseScene, slideNumber, resource, {
+          origin: String(request.input.origin ?? "other") as "imagegen" | "human-reference" | "other",
+          approvedInfluences: Array.isArray(request.input.approvedInfluences) ? request.input.approvedInfluences.map(String) as Array<"composition" | "visual-hierarchy" | "negative-space" | "color-balance" | "figure-concept" | "image-treatment" | "visual-rhythm"> : [],
+          blueprint: {
+            summary: String(rawBlueprint.summary ?? ""),
+            zones: Array.isArray(rawBlueprint.zones) ? rawBlueprint.zones.map((zone) => {
+              const item = zone && typeof zone === "object" ? zone as Record<string, unknown> : {};
+              return { id: String(item.id ?? ""), role: String(item.role ?? "other") as "title" | "primary-visual" | "supporting-evidence" | "caption" | "footer-safe" | "other", x: Number(item.x), y: Number(item.y), width: Number(item.width), height: Number(item.height) };
+            }) : [],
+            styleNotes: Array.isArray(rawBlueprint.styleNotes) ? rawBlueprint.styleNotes.map(String) : [],
+            reconstructionNotes: Array.isArray(rawBlueprint.reconstructionNotes) ? rawBlueprint.reconstructionNotes.map(String) : [],
+          },
+          provenance: request.input.provenance && typeof request.input.provenance === "object" ? {
+            model: typeof (request.input.provenance as Record<string, unknown>).model === "string" ? String((request.input.provenance as Record<string, unknown>).model) : undefined,
+            promptSummary: typeof (request.input.provenance as Record<string, unknown>).promptSummary === "string" ? String((request.input.provenance as Record<string, unknown>).promptSummary) : undefined,
+            generatedAt: typeof (request.input.provenance as Record<string, unknown>).generatedAt === "string" ? String((request.input.provenance as Record<string, unknown>).generatedAt) : undefined,
+          } : undefined,
+          visualNeedId: typeof request.input.visualNeedId === "string" ? request.input.visualNeedId : undefined,
+        });
+        const next = touchProject({
+          ...current,
+          resources: current.resources.map((item) => item.id === resource.id ? { ...item, roles: [...new Set([...item.roles, "concept-reference" as const])] } : item),
+          decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene, operationScope: "reflow", proposal: undefined, status: "ready-for-cleanup" as const } : item),
+        }, "studio-concept-reference-attached", `Attached a concept-only image Resource to slide ${slideNumber} of ${deck.name}; source content and PowerPoint bytes remain unchanged.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setActiveView("studio");
+        const reference = scene.slides.find((slide) => slide.slideNumber === slideNumber)?.conceptReferences?.find((item) => item.resourceId === resource.id);
+        return { projectUpdatedAt: next.project.updatedAt, sceneRevision: scene.revision, slideNumber, reference, saved: false, exported: false, instruction: "Read this concept alongside the exact Studio scene and original PowerPoint render. Reconstruct only its approved visual characteristics with exact source content; then build and inspect the editable PowerPoint result." };
+      }
+      if (request.operation === "get_studio_concept_reference") {
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.studioScene) throw new Error("The requested deck does not have a persisted Studio scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        const slide = deck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
+        const reference = slide?.conceptReferences?.find((item) => item.id === request.input.referenceId);
+        if (!slide || !reference) throw new Error("The requested concept reference is not attached to this Studio slide.");
+        if (reference.sourceTextHash !== slide.sourceTextHash) throw new Error("The concept reference is stale because the source content binding changed.");
+        const resource = current.resources.find((item) => item.id === reference.resourceId && item.sha256 === reference.resourceSha256);
+        if (!resource) throw new Error("The concept Resource is missing or no longer matches its recorded identity.");
+        if (resource.mcpAccess !== "preview") throw new Error("Preview access to this concept Resource is not enabled for the current AI session.");
+        const preview = await boundedResourceImagePreview(resource);
+        return { updatedAt: current.project.updatedAt, deck: { id: deck.id, name: deck.name }, slideNumber, sceneRevision: deck.studioScene.revision, reference, mimeType: preview.mimeType, data: bytesToBase64(preview.bytes), width: preview.width, height: preview.height, rasterSha256: preview.sha256 };
+      }
+      if (request.operation === "reconstruct_studio_concept") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio scene and concept reference again before reconstruction.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.studioScene) throw new Error("Create and persist the Studio scene before reconstructing a concept.");
+        if (request.input.expectedSceneRevision !== deck.studioScene.revision) throw new Error("The Studio scene changed. Read the exact current revision before reconstruction.");
+        const slideNumber = Number(request.input.slideNumber);
+        if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot be reconstructed from a visual concept.");
+        const requestedRecipe = request.input.recipe ? String(request.input.recipe) as StudioLayoutRecipe : undefined;
+        const reconstruction = reconstructStudioConcept(deck.studioScene, slideNumber, String(request.input.referenceId ?? ""), requestedRecipe);
+        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, operationScope: "reflow" as const, studioScene: reconstruction.scene, proposal: undefined } : item) }, "mcp-studio-concept-reconstructed", `AI reconstructed approved concept zones as editable Studio content on slide ${slideNumber} of ${deck.name}; exact source content and source PowerPoint bytes remain unchanged.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setStudioOpenSlideNumber(slideNumber);
+        setActiveView("studio");
+        return {
+          projectUpdatedAt: next.project.updatedAt,
+          sceneRevision: reconstruction.scene.revision,
+          slideNumber,
+          referenceId: reconstruction.referenceId,
+          recipe: reconstruction.recipe,
+          mappedNodeIds: reconstruction.mappedNodeIds,
+          unmappedNodeIds: reconstruction.unmappedNodeIds,
+          designImpact: analyzeStudioDesignImpact(reconstruction.scene.slides.find((slide) => slide.slideNumber === slideNumber)!),
+          diagnostics: reconstruction.diagnostics,
+          applied: false,
+          saved: false,
+          instruction: "The concept zones are now an editable Studio composition with exact source-bound content. Build the export result, inspect original/concept/export pixels together, and record the bounded native visual critique before review or save.",
+        };
+      }
+      if (request.operation === "remove_studio_concept_reference") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio scene again before detaching the concept reference.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.studioScene) throw new Error("The requested deck does not have a persisted Studio scene.");
+        const slideNumber = Number(request.input.slideNumber);
+        const scene = removeStudioConceptReference(deck.studioScene, slideNumber, String(request.input.referenceId ?? ""));
+        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item) }, "studio-concept-reference-detached", `Detached a concept reference from slide ${slideNumber} of ${deck.name}; the embedded Resource and source PowerPoint remain unchanged.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setActiveView("studio");
+        return { projectUpdatedAt: next.project.updatedAt, sceneRevision: scene.revision, slideNumber, referenceId: request.input.referenceId, resourceRemoved: false, sourceChanged: false };
       }
       if (request.operation === "get_deck_audit") {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
@@ -1756,9 +2349,11 @@ export default function App() {
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current PowerPoint audit and preservation scene.");
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-        const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "template-layout"];
+        const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"];
         const recipe = String(request.input.recipe ?? "") as StudioLayoutRecipe;
         if (!allowedRecipes.includes(recipe)) throw new Error("Choose a supported Studio web recipe.");
+        if (isSacredOrnlTitleSlide(deck, slideNumber) && recipe !== "source") throw new Error("The existing ORNL title slide is sacred. Keep slide 1 on Source geometry; its approved marks, artwork, photography, legal copy, geometry, master, and layout cannot be recomposed or restyled.");
+        if (isSacredOrnlTitleSlide(deck, slideNumber) && ([request.input.nodeFrames, request.input.nodeStyles, request.input.figureTreatments].some((value) => Array.isArray(value) && value.length > 0))) throw new Error("The existing ORNL title slide is sacred. Source preservation cannot include node-frame, style, or figure-treatment overrides.");
         const layoutId = typeof request.input.layoutId === "string" ? request.input.layoutId : undefined;
         const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
         if (recipe === "template-layout" && !layout) throw new Error("Choose an installed Template Pack layout ID before staging template-layout.");
@@ -1803,17 +2398,42 @@ export default function App() {
             informationInventory: Array.isArray(raw?.informationInventory) ? raw.informationInventory.map(String) : [],
             invariants: Array.isArray(raw?.invariants) ? raw.invariants.map(String) : [],
             rationale: String(raw?.rationale ?? ""),
+            relationships: Array.isArray(raw?.relationships) ? raw.relationships.map((relationship: Record<string, unknown>) => ({
+              fromNodeId: String(relationship.fromNodeId ?? ""),
+              toNodeId: String(relationship.toNodeId ?? ""),
+              kind: String(relationship.kind ?? "contained-by") as NonNullable<StudioFigureTreatment["relationships"]>[number]["kind"],
+            })) : [],
+            groupFrame: raw?.groupFrame && typeof raw.groupFrame === "object" ? {
+              x: Number((raw.groupFrame as Record<string, unknown>).xInches) * 914_400,
+              y: Number((raw.groupFrame as Record<string, unknown>).yInches) * 914_400,
+              width: Number((raw.groupFrame as Record<string, unknown>).widthInches) * 914_400,
+              height: Number((raw.groupFrame as Record<string, unknown>).heightInches) * 914_400,
+              rotation: Number((raw.groupFrame as Record<string, unknown>).rotation ?? 0),
+            } : undefined,
+            focalPoint: raw?.focalPoint && typeof raw.focalPoint === "object" ? { x: Number((raw.focalPoint as Record<string, unknown>).x), y: Number((raw.focalPoint as Record<string, unknown>).y) } : undefined,
+            crop: raw?.crop && typeof raw.crop === "object" ? {
+              left: Number((raw.crop as Record<string, unknown>).left),
+              top: Number((raw.crop as Record<string, unknown>).top),
+              right: Number((raw.crop as Record<string, unknown>).right),
+              bottom: Number((raw.crop as Record<string, unknown>).bottom),
+            } : undefined,
+            relationshipPolicy: raw?.relationshipPolicy ? String(raw.relationshipPolicy) as StudioFigureTreatment["relationshipPolicy"] : undefined,
+            lockAspectRatio: typeof raw?.lockAspectRatio === "boolean" ? raw.lockAspectRatio : undefined,
           };
           studioScene = updateStudioFigureTreatment(studioScene, slideNumber, treatment);
         }
+        const visualNeedIds = Array.isArray(request.input.visualNeedIds) ? request.input.visualNeedIds.map(String) : [];
+        if (visualNeedIds.length) studioScene = markStudioVisualNeedsReconstructionReady(studioScene, slideNumber, visualNeedIds);
         const adoptedDeck: DeckJob = { ...deck, operationScope: "reflow", studioScene };
-        const compilerMode = request.input.compilerMode === "fresh-composition" ? "fresh-composition" as const : "source-bound-overlay" as const;
-        const requiresFreshComposition = studioScene.slides.find((item) => item.slideNumber === slideNumber)?.nodes.some((node) => node.visible && node.sourceBinding !== "editable-object") ?? false;
-        if (compilerMode === "source-bound-overlay" && requiresFreshComposition) throw new Error("This design uses inherited catalog content or semantic atoms that do not map one-to-one to source PowerPoint shapes. Use compilerMode fresh-composition so no designed content is silently dropped.");
-        if (compilerMode === "fresh-composition") {
+        if (request.input.compilerMode !== undefined && request.input.compilerMode !== "fresh-composition") throw new Error("Studio has one central composition path. Use compilerMode fresh-composition; source-bound proposals are separate legacy cleanup evidence and cannot become the Studio design authority.");
+        const compilerMode = "fresh-composition" as const;
+        {
+          const addressedThreadIds = requestedAddressedThreadIds(request.input);
+          const nextSlideRevision = studioScene.slides.find((slide) => slide.slideNumber === slideNumber)?.updatedAt ?? studioScene.revision;
+          const revisionBoundThreads = markSubmittedThreadsForReanchor(current.designThreads, deck.id, slideNumber, nextSlideRevision, addressedThreadIds);
           const next = touchProject({
             ...current,
-            designThreads: removeAddressedDesignThreadsForSlides(current.designThreads, deck.id, [slideNumber], requestedAddressedThreadIds(request.input)),
+            designThreads: removeAddressedDesignThreadsForSlides(revisionBoundThreads, deck.id, [slideNumber], addressedThreadIds),
             decks: current.decks.map((item) => item.id === deck.id ? { ...adoptedDeck, proposal: undefined, status: "ready-for-cleanup" as const } : item),
           }, "mcp-studio-fresh-composition-designed", `AI recomposed slide ${slideNumber} of ${deck.name} with the shared ${recipe} Studio web recipe for the fresh-composition compiler; no source-bound proposal was created and source bytes remain unchanged.`);
           projectRef.current = next;
@@ -1824,33 +2444,61 @@ export default function App() {
             projectUpdatedAt: next.project.updatedAt,
             studioSceneRevision: studioScene.revision,
             compilerMode,
-            slide: { number: slideNumber, recipe, layoutId: layout?.id, layoutName: layout?.name, nodeFrameOverrideCount: nodeFrames.length, nodeStyleOverrideCount: nodeStyles.length, figureTreatmentCount: figureTreatments.length },
+            slide: { number: slideNumber, recipe, layoutId: layout?.id, layoutName: layout?.name, nodeFrameOverrideCount: nodeFrames.length, nodeStyleOverrideCount: nodeStyles.length, figureTreatmentCount: figureTreatments.length, reconstructedVisualNeedCount: visualNeedIds.length },
             applied: false,
             saved: false,
             instruction: "The semantic web composition is visible in Studio and no PowerPoint was changed. Call preview_studio_fresh_composition with projectUpdatedAt to compile exact content into a new editable one-slide PPTX, render and measure it in Microsoft PowerPoint, then critique the returned pixels.",
           };
         }
-        const compiled = await compileStudioProposal(adoptedDeck, studioScene, slideNumber, current.project.updatedAt, "ai");
-        const proposal = compiled.proposal;
+      }
+      if (request.operation === "refine_studio_layout") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read get_studio_web_scene again before refining the Studio layout.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit || !deck.studioScene) throw new Error("Create and persist the Studio Web Scene before refining its layout.");
+        if (request.input.expectedSceneRevision !== deck.studioScene.revision) throw new Error("The Studio scene changed. Read get_studio_web_scene again before applying layout constraints.");
+        const slideNumber = Number(request.input.slideNumber);
+        if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
+        if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing ORNL title slide is sacred. Its approved geometry cannot enter Studio layout refinement.");
+        const rawConstraints = Array.isArray(request.input.constraints) ? request.input.constraints as Array<Record<string, unknown>> : [];
+        const constraints: StudioConstraintRequest[] = rawConstraints.map((raw) => ({
+          kind: String(raw.kind ?? "align") as StudioConstraintRequest["kind"],
+          mode: String(raw.mode ?? "left") as StudioConstraintRequest["mode"],
+          nodeIds: Array.isArray(raw.nodeIds) ? raw.nodeIds.map(String) : [],
+          groups: Array.isArray(raw.groups) ? raw.groups.map((group) => Array.isArray(group) ? group.map(String) : []) : undefined,
+          anchorNodeId: typeof raw.anchorNodeId === "string" ? raw.anchorNodeId : undefined,
+          gridPt: raw.gridPt === undefined ? undefined : Number(raw.gridPt),
+          rationale: String(raw.rationale ?? ""),
+          author: "ai",
+        }));
+        const studioSlide = deck.studioScene.slides.find((slide) => slide.slideNumber === slideNumber);
+        if (!studioSlide) throw new Error("The requested Studio slide is unavailable.");
+        const preview = studioFreshPreviewsRef.current[`${deck.id}:${slideNumber}`];
+        const matchingMeasurement = preview?.sceneRevision === deck.studioScene.revision && preview.slideUpdatedAt === studioSlide.updatedAt ? preview.nativeMeasurement : undefined;
+        const refined = applyStudioLayoutConstraints(deck.studioScene, slideNumber, constraints, matchingMeasurement);
+        const addressedThreadIds = requestedAddressedThreadIds(request.input);
+        const nextSlideRevision = refined.scene.slides.find((slide) => slide.slideNumber === slideNumber)?.updatedAt ?? refined.scene.revision;
+        const revisionBoundThreads = markSubmittedThreadsForReanchor(current.designThreads, deck.id, slideNumber, nextSlideRevision, addressedThreadIds);
         const next = touchProject({
           ...current,
-          designThreads: removeAddressedDesignThreads(current.designThreads, deck.id, proposal, requestedAddressedThreadIds(request.input)),
-          decks: current.decks.map((item) => item.id === deck.id ? { ...adoptedDeck, proposal, status: "proposal-ready" as const } : item),
-        }, "mcp-studio-web-design-staged", `AI recomposed slide ${slideNumber} of ${deck.name} with the shared ${recipe} Studio web recipe and compiled ${compiled.geometryCount} source-bound geometry edits to editable PowerPoint; source bytes remain unchanged.`);
-        proposal.baseUpdatedAt = next.project.updatedAt;
+          designThreads: removeAddressedDesignThreadsForSlides(revisionBoundThreads, deck.id, [slideNumber], addressedThreadIds),
+          decks: current.decks.map((item) => item.id === deck.id ? { ...item, operationScope: "reflow" as const, studioScene: refined.scene, proposal: undefined, status: "ready-for-cleanup" as const } : item),
+        }, "mcp-studio-layout-refined", `AI applied ${refined.constraints.length} high-level Studio layout constraints on slide ${slideNumber} of ${deck.name}; source bytes remain unchanged.`);
         projectRef.current = next;
         setProject(next);
         setSelectedDeckId(deck.id);
-        setActiveView("review");
+        setStudioOpenSlideNumber(slideNumber);
+        setActiveView("studio");
         return {
           projectUpdatedAt: next.project.updatedAt,
-          studioSceneRevision: studioScene.revision,
-          compilerMode,
-          slide: { number: slideNumber, recipe, layoutId: layout?.id, layoutName: layout?.name, nodeFrameOverrideCount: nodeFrames.length, nodeStyleOverrideCount: nodeStyles.length, figureTreatmentCount: figureTreatments.length },
-          proposal: { id: proposal.id, summary: proposal.summary, status: proposal.status, geometryCount: compiled.geometryCount },
+          sceneRevision: refined.scene.revision,
+          slideNumber,
+          changedNodeIds: refined.changedNodeIds,
+          constraints: refined.constraints,
+          evidenceAuthority: refined.evidenceAuthority,
+          diagnostics: refined.diagnostics,
           applied: false,
           saved: false,
-          instruction: "Presentation Studio is showing the staged design in Review. Inspect the authoritative PowerPoint-native Current/Proposal comparison, then revise, reject, or leave it for human acceptance. The source file was not changed.",
+          instruction: refined.evidenceAuthority === "powerpoint-native" ? "Build this exact slide revision and inspect its PowerPoint-native pixels. The optical constraints used a matching native measurement but the changed result still requires final rendering." : "Build this exact slide revision, inspect and measure it in Microsoft PowerPoint, then run refine_studio_layout again for any remaining optical mismatch. Do not guess correction coordinates.",
         };
       }
       if (request.operation === "stage_font_cleanup") {
@@ -2619,7 +3267,7 @@ export default function App() {
       const impact = resourceRemovalImpact(current, resourceId);
       const dependentSummary = impact.linkedDeckIds.length > 0
         ? `\n\nThis Resource is the embedded source for ${impact.linkedDeckIds.length} deck${impact.linkedDeckIds.length === 1 ? "" : "s"}. Removing it will also remove the linked deck work, ${impact.removedExemplarCount} style exemplar${impact.removedExemplarCount === 1 ? "" : "s"}, and ${impact.removedThreadCount} design comment${impact.removedThreadCount === 1 ? "" : "s"} from this project.`
-        : "";
+        : impact.removedConceptReferenceCount > 0 ? `\n\nThis will also detach ${impact.removedConceptReferenceCount} concept reference${impact.removedConceptReferenceCount === 1 ? "" : "s"} from Studio slides. The slides and source PowerPoint remain in the project.` : "";
       const confirmed = window.confirm(`Remove “${impact.resource.name}” from this project?${dependentSummary}\n\nThe original file on disk will not be changed or deleted.`);
       if (!confirmed) return;
       const result = removeResourceFromProject(current, resourceId);
@@ -2701,83 +3349,176 @@ export default function App() {
     clearMessages();
     try {
       const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
-      const studioScene = recomposeStudioWebSlide(selectedDeck.studioScene, slideNumber, recipe, layout, `Recompose slide ${slideNumber} with the shared ${recipe} web layout while retaining exact source content and editable PowerPoint bindings.`);
-      setProject((current) => touchProject({ ...current, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, operationScope: "reflow", studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }, "studio-slide-recomposed", `Recomposed slide ${slideNumber} with ${recipe} in the Studio Web Scene; no PowerPoint file was changed.`));
+      if (isSacredOrnlTitleSlide(selectedDeck, slideNumber) && recipe !== "source") throw new Error("The existing ORNL title slide is sacred and remains source-preserved. Choose another slide to redesign.");
+      const studioScene = recomposeStudioWebSlide(selectedDeck.studioScene, slideNumber, recipe, layout, recipe === "source" && isSacredOrnlTitleSlide(selectedDeck, slideNumber)
+        ? "Preserve the existing populated ORNL title slide exactly as approved template composition."
+        : `Recompose slide ${slideNumber} with the shared ${recipe} web layout while retaining exact source content and editable PowerPoint bindings.`);
+      const nextSlideRevision = studioScene.slides.find((slide) => slide.slideNumber === slideNumber)?.updatedAt ?? studioScene.revision;
+      setProject((current) => touchProject({ ...current, designThreads: markSubmittedThreadsForReanchor(current.designThreads, selectedDeck.id, slideNumber, nextSlideRevision), decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, operationScope: "reflow", studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }, "studio-slide-recomposed", `Recomposed slide ${slideNumber} with ${recipe} in the Studio Web Scene; no PowerPoint file was changed.`));
       setNotice(`Slide ${slideNumber} now uses the ${recipe.replaceAll("-", " ")} web composition. Drag elements to refine it or stage it for PowerPoint review.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The slide could not be recomposed.");
     }
   }
 
-  async function compileStudioProposal(deck: DeckJob, studioScene: StudioWebScene, slideNumber: number, updatedAt: string, author: "human" | "ai") {
-    const geometry = studioGeometryRequests(deck, studioScene, slideNumber, author);
-    const studioSlide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
-    if (!studioSlide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
-    let baseProposal: CleanupProposal;
-    if (studioSlide.recipe === "template-layout") {
-      if (!templateCatalog || !templateSourceBytes || !studioSlide.targetLayoutId) throw new Error("The installed Template Pack is required to compile this web layout to its real PowerPoint master and custom layout.");
-      const layout = templateCatalog.layouts.find((item) => item.id === studioSlide.targetLayoutId);
-      if (!layout) throw new Error("The Studio slide references a template layout that is no longer installed.");
-      const command = {
-        id: `studio-native-layout-slide-${slideNumber}`,
-        slideNumber,
-        templateSha256: templateCatalog.sha256,
-        templateLayoutPart: layout.sourcePart,
-        templateLayoutSha256: await templateLayoutPartSha256(templateSourceBytes, layout.sourcePart),
-        templateLayoutName: layout.name,
-        rationale: `${studioSlide.designRationale} Compile the same installed template layout used by the Studio web canvas into PowerPoint.`.slice(0, 1_000),
-        author,
-      } as const;
-      baseProposal = createNativeLayoutRecompositionProposal({ ...deck, operationScope: "reflow" }, updatedAt, command, geometry);
-    } else {
-      baseProposal = createGeometryBatchProposal({ ...deck, operationScope: "reflow" }, updatedAt, geometry);
+  function moveStudioNodes(slideNumber: number, updates: Array<{ nodeId: string; frame: StudioWebFrame }>) {
+    if (!selectedDeck?.studioScene) return;
+    try {
+      if (isSacredOrnlTitleSlide(selectedDeck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot be moved or resized in Studio.");
+      if (!updates.length || updates.length > 60 || new Set(updates.map((update) => update.nodeId)).size !== updates.length) throw new Error("Move between 1 and 60 unique Studio elements in one canvas transaction.");
+      let studioScene = selectedDeck.studioScene;
+      const slide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
+      if (!slide) throw new Error("The requested Studio slide is unavailable.");
+      const pending = new Map(updates.map((update) => [update.nodeId, update.frame]));
+      for (const treatment of slide.figureTreatments) {
+        if (!treatment.nodeIds.every((id) => pending.has(id))) continue;
+        const anchor = slide.nodes.find((node) => node.id === treatment.nodeIds[0]);
+        const target = pending.get(treatment.nodeIds[0]);
+        if (!anchor || !target) continue;
+        const dx = target.x - anchor.frame.x;
+        const dy = target.y - anchor.frame.y;
+        if (treatment.nodeIds.some((id) => { const node = slide.nodes.find((candidate) => candidate.id === id); const frame = pending.get(id); return !node || !frame || Math.abs(frame.x - node.frame.x - dx) > 1_000 || Math.abs(frame.y - node.frame.y - dy) > 1_000; })) throw new Error("A first-class Studio figure must move as one intact relationship group.");
+        studioScene = translateStudioFigureTreatment(studioScene, slideNumber, treatment.id, dx, dy);
+        treatment.nodeIds.forEach((id) => pending.delete(id));
+      }
+      for (const [nodeId, frame] of pending) studioScene = updateStudioWebNodeFrame(studioScene, slideNumber, nodeId, frame);
+      const nextSlideRevision = studioScene.slides.find((slide) => slide.slideNumber === slideNumber)?.updatedAt ?? studioScene.revision;
+      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, designThreads: markSubmittedThreadsForReanchor(current.designThreads, selectedDeck.id, slideNumber, nextSlideRevision), decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Studio elements could not be moved.");
     }
-    const proposal = createVisualDesignProposal({ ...deck, proposal: baseProposal, operationScope: "reflow" }, updatedAt, studioVisualDesignRequest(studioScene, slideNumber, author));
-    return { proposal, geometryCount: geometry.length };
   }
 
   function moveStudioNode(slideNumber: number, nodeId: string, nextFrame: StudioWebFrame) {
-    if (!selectedDeck?.studioScene) return;
-    try {
-      const studioScene = updateStudioWebNodeFrame(selectedDeck.studioScene, slideNumber, nodeId, nextFrame);
-      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The Studio element could not be moved.");
-    }
+    moveStudioNodes(slideNumber, [{ nodeId, frame: nextFrame }]);
   }
 
   function styleStudioNode(slideNumber: number, nodeId: string, patch: Partial<Pick<StudioWebNode["style"], "fontSizePt" | "fontWeight" | "color" | "textAlign" | "verticalAlign" | "objectFit">>) {
     if (!selectedDeck?.studioScene) return;
     try {
+      if (isSacredOrnlTitleSlide(selectedDeck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot be restyled in Studio.");
       const studioScene = updateStudioWebNodeStyle(selectedDeck.studioScene, slideNumber, nodeId, patch);
-      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
+      const nextSlideRevision = studioScene.slides.find((slide) => slide.slideNumber === slideNumber)?.updatedAt ?? studioScene.revision;
+      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, designThreads: markSubmittedThreadsForReanchor(current.designThreads, selectedDeck.id, slideNumber, nextSlideRevision), decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The Studio element style could not be updated.");
     }
   }
 
-  async function stageStudioSlide(slideNumber: number) {
+  function setStudioFigureTreatment(slideNumber: number, treatment: StudioFigureTreatment) {
     if (!selectedDeck?.studioScene) return;
-    clearMessages();
-    setBusy(`Compiling Studio slide ${slideNumber} to editable PowerPoint…`);
     try {
-      const current = projectRef.current;
-      const deck = current.decks.find((item) => item.id === selectedDeck.id);
-      if (!deck?.studioScene) throw new Error("Create or reopen the Studio Web Scene before compiling a slide to PowerPoint.");
-      const studioSlide = deck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
-      if (studioSlide?.nodes.some((node) => node.visible && node.sourceBinding !== "editable-object")) throw new Error("This design contains inherited catalog content or semantic atoms and must use Preview fresh PPTX. A preservation overlay would omit designed content.");
-      const compiled = await compileStudioProposal(deck, deck.studioScene, slideNumber, current.project.updatedAt, "human");
-      const proposal = compiled.proposal;
-      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" } : item) }, "studio-slide-compiled", `Compiled slide ${slideNumber}'s semantic HTML/CSS scene into ${compiled.geometryCount} editable PowerPoint geometry bindings plus shared ORNL typography and components.`);
-      proposal.baseUpdatedAt = next.project.updatedAt;
+      if (isSacredOrnlTitleSlide(selectedDeck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot receive a figure treatment.");
+      const studioScene = updateStudioFigureTreatment(selectedDeck.studioScene, slideNumber, treatment);
+      const nextSlideRevision = studioScene.slides.find((slide) => slide.slideNumber === slideNumber)?.updatedAt ?? studioScene.revision;
+      setProject((current) => ({ ...current, project: { ...current.project, updatedAt: new Date().toISOString() }, designThreads: markSubmittedThreadsForReanchor(current.designThreads, selectedDeck.id, slideNumber, nextSlideRevision), decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, studioScene, proposal: undefined, status: "ready-for-cleanup" } : deck) }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The Studio figure treatment could not be updated.");
+    }
+  }
+
+  function createVisualNeedFromStudio(slideNumber: number, type: StudioVisualNeed["type"]) {
+    const current = projectRef.current;
+    const deck = selectedDeck ? current.decks.find((item) => item.id === selectedDeck.id) : undefined;
+    if (!deck?.studioScene) return;
+    try {
+      if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot enter the visual-concept queue.");
+      const copy: Record<StudioVisualNeed["type"], { reason: string; job: string }> = {
+        "layout-concept": { reason: "The slide may benefit from a stronger whole-slide hierarchy and composition direction.", job: "Create clearer hierarchy, pacing, and negative space without changing the approved content." },
+        "figure-concept": { reason: "The technical figure may benefit from relationship-preserving art direction.", job: "Clarify the figure's evidence hierarchy while preserving its source meaning and exact technical relationships." },
+        "image-treatment": { reason: "The source imagery may benefit from a more deliberate crop, frame, and supporting-content relationship.", job: "Make the source image carry the main evidence while leaving clean editable content zones." },
+        "supporting-visual": { reason: "A restrained supporting visual may improve comprehension or pacing.", job: "Add one purposeful visual role without competing with the source assertion and evidence." },
+        "diagram-rebuild": { reason: "The source schematic may need an editable relationship-preserving reconstruction concept.", job: "Provide a clearer diagram system while retaining every verified label, value, arrow, group, sequence, and causal relationship." },
+      };
+      const scene = createStudioVisualNeed(deck.studioScene, slideNumber, { type, reason: copy[type].reason, communicationJob: copy[type].job, expression: "balanced" });
+      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item) }, "studio-visual-need-created", `Created a local ${type} brief for slide ${slideNumber} of ${deck.name}; no image model was called.`);
       projectRef.current = next;
       setProject(next);
-      setActiveView("review");
-      setNotice(`Slide ${slideNumber} was compiled from the web scene into an editable PowerPoint proposal. Compare the PowerPoint-native Current and Proposal renders before accepting it.`);
+      setNotice(`A governed ${type.replaceAll("-", " ")} brief is ready on slide ${slideNumber}. It shares abstract structure only by default.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The Studio slide could not be compiled to PowerPoint.");
-    } finally {
-      setBusy(undefined);
+      setError(caught instanceof Error ? caught.message : "The visual-direction brief could not be created.");
+    }
+  }
+
+  function holdVisualNeedFromStudio(slideNumber: number, visualNeedId: string) {
+    const current = projectRef.current;
+    const deck = selectedDeck ? current.decks.find((item) => item.id === selectedDeck.id) : undefined;
+    if (!deck?.studioScene) return;
+    try {
+      const scene = holdStudioVisualNeed(deck.studioScene, slideNumber, visualNeedId, "Held by the person in Studio; preserve the brief for later review.");
+      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item) }, "studio-visual-need-held", `Held a local visual-direction brief on slide ${slideNumber} of ${deck.name}.`);
+      projectRef.current = next;
+      setProject(next);
+      setNotice(`The visual-direction brief on slide ${slideNumber} is held, not deleted.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The visual-direction brief could not be held.");
+    }
+  }
+
+  function attachConceptFromStudio(slideNumber: number, visualNeedId: string, resourceId: string) {
+    const current = projectRef.current;
+    const deck = selectedDeck ? current.decks.find((item) => item.id === selectedDeck.id) : undefined;
+    if (!deck?.studioScene) return;
+    try {
+      if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot use a concept reference.");
+      const slide = deck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
+      const need = slide?.visualNeeds?.find((item) => item.id === visualNeedId);
+      if (!need) throw new Error("The selected visual need is no longer available.");
+      const resource = current.resources.find((item) => item.id === resourceId);
+      if (!resource || resource.kind !== "image") throw new Error("Choose an embedded image Resource for this concept.");
+      if (resource.mcpAccess !== "preview") throw new Error("Enable Preview for this image in Resources before attaching it for AI art direction.");
+      const scene = attachStudioConceptReference(deck.studioScene, slideNumber, resource, {
+        visualNeedId,
+        origin: "human-reference",
+        approvedInfluences: need.approvedInfluences,
+        blueprint: {
+          summary: need.communicationJob,
+          zones: [],
+          styleNotes: [`Use the ${need.expression} ORNL expression recorded in visual need ${need.id}.`],
+          reconstructionNotes: ["Reconstruct only approved visual characteristics with exact source-bound Studio content; do not trace or flatten the concept."],
+        },
+      });
+      const next = touchProject({
+        ...current,
+        resources: current.resources.map((item) => item.id === resource.id ? { ...item, roles: [...new Set([...item.roles, "concept-reference" as const])] } : item),
+        decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item),
+      }, "studio-concept-reference-attached", `Attached a concept-only image Resource to visual need ${visualNeedId} on slide ${slideNumber} of ${deck.name}.`);
+      projectRef.current = next;
+      setProject(next);
+      setNotice(`${resource.name} is attached as concept-only direction on slide ${slideNumber}. Rebuild the slide from editable Studio objects; do not use generated text or claims.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The concept image could not be attached.");
+    }
+  }
+
+  function detachConceptFromStudio(slideNumber: number, referenceId: string) {
+    const current = projectRef.current;
+    const deck = selectedDeck ? current.decks.find((item) => item.id === selectedDeck.id) : undefined;
+    if (!deck?.studioScene) return;
+    try {
+      const scene = removeStudioConceptReference(deck.studioScene, slideNumber, referenceId);
+      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, studioScene: scene } : item) }, "studio-concept-reference-detached", `Detached a concept-only reference from slide ${slideNumber} of ${deck.name}; the Resource remains embedded.`);
+      projectRef.current = next;
+      setProject(next);
+      setNotice(`The concept was detached from slide ${slideNumber}. Its Resource remains in the project.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The concept image could not be detached.");
+    }
+  }
+
+  function reconstructConceptFromStudio(slideNumber: number, referenceId: string) {
+    const current = projectRef.current;
+    const deck = selectedDeck ? current.decks.find((item) => item.id === selectedDeck.id) : undefined;
+    if (!deck?.studioScene) return;
+    try {
+      if (isSacredOrnlTitleSlide(deck, slideNumber)) throw new Error("The existing ORNL title slide is sacred and cannot be reconstructed from a visual concept.");
+      const reconstruction = reconstructStudioConcept(deck.studioScene, slideNumber, referenceId);
+      const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? { ...item, operationScope: "reflow" as const, studioScene: reconstruction.scene, proposal: undefined } : item) }, "studio-concept-reconstructed", `Reconstructed concept-only direction as editable Studio content on slide ${slideNumber} of ${deck.name}; source bytes remain unchanged.`);
+      projectRef.current = next;
+      setProject(next);
+      setNotice(`Slide ${slideNumber} now has a material editable reconstruction. Build its PowerPoint result before judging the design.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The concept could not be reconstructed as editable Studio content.");
     }
   }
 
@@ -2787,10 +3528,30 @@ export default function App() {
     const studioSlide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
     if (!sourceSlide || !studioSlide) throw new Error(`Slide ${slideNumber} is not present in the current Studio scene.`);
     const catalog = await getOrBuildSlideCatalog(deck, projectRef.current);
+    const sourceRender = await getOrBuildNativeRender(deck, "current", projectRef.current);
+    const sourceRaster = sourceRender?.status === "ready" ? sourceRender.slides.find((slide) => slide.number === slideNumber) : undefined;
+    const templateRender = studioSlide.recipe === "template-layout" ? await getOrBuildTemplateNativeRender() : undefined;
+    const templateLayoutIndex = studioSlide.targetLayoutId ? templateCatalog?.layouts.findIndex((layout) => layout.id === studioSlide.targetLayoutId) ?? -1 : -1;
+    const templateLayoutRaster = templateRender?.status === "ready" && templateLayoutIndex >= 0 ? templateRender.slides.find((slide) => slide.number === templateLayoutIndex + 1) : undefined;
     const oneSlideScene: StudioWebScene = { ...studioScene, slides: [studioSlide] };
-    const result = await buildStudioCompositionPptx(oneSlideScene, { catalog, strict: true, title: `${cleanFileStem(deck.name)} · Studio slide ${slideNumber}` });
+    const result = await buildStudioCompositionPptx(oneSlideScene, {
+      catalog,
+      templateCatalog,
+      sourceSlideRasters: sourceRaster ? { [slideNumber]: { data: `data:${sourceRaster.mimeType};base64,${bytesToBase64(bytesFrom(sourceRaster.bytes))}`, width: sourceRaster.width, height: sourceRaster.height } } : undefined,
+      sourceSlideText: { [slideNumber]: sourceSlide.text },
+      templateLayoutRasters: templateLayoutRaster && studioSlide.targetLayoutId ? { [studioSlide.targetLayoutId]: { data: `data:${templateLayoutRaster.mimeType};base64,${bytesToBase64(bytesFrom(templateLayoutRaster.bytes))}`, width: templateLayoutRaster.width, height: templateLayoutRaster.height } } : undefined,
+      strict: true,
+      title: `${cleanFileStem(deck.name)} · Studio slide ${slideNumber}`,
+    });
     const candidateAudit = await auditPptx(result.bytes);
-    if (candidateAudit.slideCount !== 1 || candidateAudit.slides[0]?.textHash !== sourceSlide.textHash) throw new Error("Fresh-composition validation rejected the candidate because exact visible source content changed.");
+    if (candidateAudit.slideCount !== 1 || candidateAudit.slides[0]?.textHash !== sourceSlide.textHash) {
+      const normalizedSource = sourceSlide.text.replace(/\s+/g, " ").trim();
+      const normalizedCandidate = (candidateAudit.slides[0]?.text ?? "").replace(/\s+/g, " ").trim();
+      let mismatch = 0;
+      while (mismatch < normalizedSource.length && mismatch < normalizedCandidate.length && normalizedSource[mismatch] === normalizedCandidate[mismatch]) mismatch += 1;
+      const context = (value: string) => value.slice(Math.max(0, mismatch - 45), mismatch + 95);
+      throw new Error(`Fresh-composition validation rejected the candidate because exact visible source content changed near character ${mismatch}. Source: "${context(normalizedSource)}" Candidate: "${context(normalizedCandidate)}"`);
+    }
     const sourceTables = deck.audit.tables.filter((table) => table.slideNumber === slideNumber).map((table) => `${table.contentHash}:${table.structureHash}`).sort();
     const candidateTables = candidateAudit.tables.map((table) => `${table.contentHash}:${table.structureHash}`).sort();
     if (sourceTables.join("|") !== candidateTables.join("|")) throw new Error("Fresh-composition validation rejected the candidate because exact table content or merged structure changed.");
@@ -2801,7 +3562,54 @@ export default function App() {
       const overflow = nativeTextOverflows(nativeMeasurement);
       if (overflow.length) throw new Error(`Fresh-composition validation rejected the candidate because Microsoft PowerPoint measured text outside its frame: ${overflow.slice(0, 4).map((item) => `${item.name} (${item.edges.join(", ")})`).join("; ")}.`);
     }
-    return { ...result, deckId: deck.id, sourceSlideNumber: slideNumber, sceneRevision: studioScene.revision, nativeRender, nativeMeasurement };
+    return { ...result, deckId: deck.id, sourceSlideNumber: slideNumber, sceneRevision: studioScene.revision, slideUpdatedAt: studioSlide.updatedAt, nativeRender, nativeMeasurement };
+  }
+
+  async function buildCentralStudioDeck(deck: DeckJob, studioScene: StudioWebScene): Promise<StudioDeckBuild> {
+    if (!deck.audit) throw new Error("Audit the source PowerPoint before building the central presentation.");
+    assertSacredOrnlTitleSlideIntegrity(deck, studioScene);
+    const unconverted = unsupportedSourceSlideNumbers(deck, studioScene);
+    if (unconverted.length) throw new Error(`Convert every slide into the Studio design system before exporting one central presentation. Still using source geometry: ${unconverted.join(", ")}.`);
+    const catalog = await getOrBuildSlideCatalog(deck, projectRef.current);
+    const sourceRender = await getOrBuildNativeRender(deck, "current", projectRef.current);
+    const sourceSlideRasters = sourceRender?.status === "ready" ? Object.fromEntries(sourceRender.slides.map((slide) => [slide.number, { data: `data:${slide.mimeType};base64,${bytesToBase64(bytesFrom(slide.bytes))}`, width: slide.width, height: slide.height }])) : undefined;
+    const templateRender = studioScene.slides.some((slide) => slide.recipe === "template-layout") ? await getOrBuildTemplateNativeRender() : undefined;
+    const templateLayoutRasters = templateRender?.status === "ready" && templateCatalog ? Object.fromEntries(templateCatalog.layouts.map((layout, index) => {
+      const slide = templateRender.slides.find((candidate) => candidate.number === index + 1);
+      return [layout.id, slide ? { data: `data:${slide.mimeType};base64,${bytesToBase64(bytesFrom(slide.bytes))}`, width: slide.width, height: slide.height } : undefined];
+    }).filter((entry): entry is [string, { data: string; width: number; height: number }] => Boolean(entry[1]))) : undefined;
+    const composition = await buildStudioCompositionPptx(studioScene, { catalog, templateCatalog, sourceSlideRasters, sourceSlideText: Object.fromEntries(deck.audit.slides.map((slide) => [slide.number, slide.text])), templateLayoutRasters, strict: true, title: `${cleanFileStem(deck.name)} · Presentation Studio redesign` });
+    let result = composition;
+    if (isSacredOrnlTitleSlide(deck, 1)) {
+      const sourceBytes = sourceForDeck(projectRef.current, deck)?.bytes;
+      if (!sourceBytes) throw new Error("The embedded source PowerPoint is required to preserve the sacred ORNL title slide natively.");
+      const preserved = await preserveNativeSlide({ destinationBytes: composition.bytes, sourceBytes, slideNumber: 1 });
+      result = { ...composition, bytes: preserved.bytes, warnings: [...composition.warnings, `Slide 1: native ORNL title slide, layout, master, theme, and ${preserved.receipt.copiedMediaCount} related media part${preserved.receipt.copiedMediaCount === 1 ? "" : "s"} preserved.`] };
+    }
+    const candidateAudit = await auditPptx(result.bytes);
+    const sourceText = deck.audit.slides.map((slide) => `${slide.number}:${slide.textHash}`).join("|");
+    const candidateText = candidateAudit.slides.map((slide) => `${slide.number}:${slide.textHash}`).join("|");
+    if (candidateAudit.slideCount !== deck.audit.slideCount || sourceText !== candidateText) throw new Error("Central presentation validation rejected the candidate because slide count or exact visible source content changed.");
+    const tableSignature = (audit: NonNullable<DeckJob["audit"]>) => audit.tables.map((table) => `${table.slideNumber}:${table.contentHash}:${table.structureHash}`).sort().join("|");
+    if (tableSignature(deck.audit) !== tableSignature(candidateAudit)) throw new Error("Central presentation validation rejected the candidate because exact table content or merged structure changed.");
+    if (!desktop) throw new Error("Building the central presentation requires the Electron desktop app and Microsoft PowerPoint validation.");
+    const artifactName = `${cleanFileStem(deck.name)}_studio-redesign.pptx`;
+    const [nativeRender, nativeMeasurement] = await Promise.all([
+      desktop.renderPowerPoint({ name: artifactName, bytes: result.bytes, width: 1600, format: "png" }),
+      desktop.measurePowerPoint({ name: artifactName, bytes: result.bytes }),
+    ]);
+    if (nativeRender.status !== "ready" || !nativeRender.authoritative || nativeRender.slides.length !== studioScene.slides.length) throw new Error(nativeRender.reason ?? "Microsoft PowerPoint could not render every slide in the central presentation.");
+    if (nativeMeasurement.status !== "ready" || nativeMeasurement.authority !== "powerpoint-native") throw new Error(nativeMeasurement.reason ?? "Microsoft PowerPoint could not measure the central presentation.");
+    const overflow = nativeTextOverflows(nativeMeasurement);
+    if (overflow.length) throw new Error(`Central presentation validation found text outside its frame: ${overflow.slice(0, 6).map((item) => `${item.name} (${item.edges.join(", ")})`).join("; ")}.`);
+    return {
+      ...result,
+      deckId: deck.id,
+      sceneRevision: studioScene.revision,
+      slideUpdatedAts: Object.fromEntries(studioScene.slides.map((slide) => [slide.slideNumber, slide.updatedAt])),
+      nativeRender,
+      nativeMeasurement,
+    };
   }
 
   async function previewFreshStudioSlide(slideNumber: number) {
@@ -2812,7 +3620,8 @@ export default function App() {
       const deck = projectRef.current.decks.find((item) => item.id === selectedDeck.id);
       if (!deck?.studioScene) throw new Error("Create or reopen the Studio Web Scene before building a fresh composition.");
       const preview = await buildFreshStudioPreview(deck, slideNumber, deck.studioScene);
-      setStudioFreshPreviews((current) => ({ ...current, [`${deck.id}:${slideNumber}`]: preview }));
+      studioFreshPreviewsRef.current = { ...studioFreshPreviewsRef.current, [`${deck.id}:${slideNumber}`]: preview };
+      setStudioFreshPreviews(studioFreshPreviewsRef.current);
       if (preview.nativeRender?.status === "ready" && preview.nativeMeasurement?.status === "ready") setNotice(`Fresh-composition PowerPoint for slide ${slideNumber} passed exact-copy, native-table, PowerPoint-render, and measured-text-fit guards. Compare it in the Studio inspector before saving.`);
       else setNotice(`Fresh-composition PowerPoint for slide ${slideNumber} passed exact-copy and native-table guards. Native visual review is still required before it can be saved.`);
     } catch (caught) {
@@ -2822,10 +3631,64 @@ export default function App() {
     }
   }
 
+  async function previewAllFreshStudioSlides() {
+    if (!selectedDeck?.studioScene) return;
+    clearMessages();
+    const deck = projectRef.current.decks.find((item) => item.id === selectedDeck.id);
+    if (!deck?.studioScene) { setError("Create or reopen the Studio Web Scene before building deck results."); return; }
+    const buildPlan = planStudioExportBuild(deck.studioScene);
+    const designedCount = buildPlan.freshCompositionSlideNumbers.length;
+    if (!designedCount) { setNotice("Every slide is still using its preserved source PowerPoint result. Apply a Studio design recipe before rebuilding designed slides."); return; }
+    const freshSlides = buildPlan.freshCompositionSlideNumbers.map((slideNumber) => deck.studioScene!.slides.find((slide) => slide.slideNumber === slideNumber)!);
+    const failed: Array<{ slideNumber: number; reason: string }> = [];
+    let built = 0;
+    let reused = 0;
+    try {
+      for (const [index, studioSlide] of freshSlides.entries()) {
+        const key = `${deck.id}:${studioSlide.slideNumber}`;
+        const cached = studioFreshPreviewsRef.current[key];
+        if (cached?.slideUpdatedAt === studioSlide.updatedAt && cached.nativeRender?.status === "ready" && cached.nativeMeasurement?.status === "ready") {
+          reused += 1;
+          continue;
+        }
+        setBusy(`Building PowerPoint export result ${index + 1} of ${freshSlides.length}: slide ${studioSlide.slideNumber}…`);
+        try {
+          const preview = await buildFreshStudioPreview(deck, studioSlide.slideNumber, deck.studioScene);
+          studioFreshPreviewsRef.current = { ...studioFreshPreviewsRef.current, [key]: preview };
+          setStudioFreshPreviews(studioFreshPreviewsRef.current);
+          built += 1;
+        } catch (caught) {
+          failed.push({ slideNumber: studioSlide.slideNumber, reason: caught instanceof Error ? caught.message : "PowerPoint export validation failed" });
+        }
+      }
+      const preserved = buildPlan.preservedSourceSlideNumbers.length;
+      if (failed.length) {
+        setError(`Built ${built} designed slide result${built === 1 ? "" : "s"}; ${preserved} untouched source slide${preserved === 1 ? " remains" : "s remain"} preserved. Could not refresh slide${failed.length === 1 ? "" : "s"}: ${failed.map((item) => item.slideNumber).join(", ")}. A prior verified result remains visible when it still matches the current design; otherwise the slide stays held. Build a failed slide individually to see its exact PowerPoint validation error.`);
+      } else {
+        const allConverted = deck.studioScene.slides.every((slide) => slide.status === "designed" && slide.recipe !== "source");
+        if (allConverted) {
+          setBusy("Assembling and validating the one central editable PowerPoint presentation…");
+          try {
+            const centralBuild = await buildCentralStudioDeck(deck, deck.studioScene);
+            setStudioDeckBuilds((current) => ({ ...current, [deck.id]: centralBuild }));
+            setNotice(`All ${deck.studioScene.slides.length} slide results and the central editable PowerPoint presentation are ready. Rebuilt ${built}; reused ${reused} exact current result${reused === 1 ? "" : "s"}. Slides, comments, and export now refer to this same design revision.`);
+          } catch (caught) {
+            setError(`Every individual slide result is ready, but the central presentation export is held: ${caught instanceof Error ? caught.message : "deck validation failed"}`);
+          }
+        } else {
+          setNotice(`All current PowerPoint results are ready: ${built} designed slide${built === 1 ? "" : "s"} rebuilt, ${reused} exact current result${reused === 1 ? "" : "s"} reused, and ${preserved} untouched source slide${preserved === 1 ? "" : "s"} preserved. Convert the remaining source slides before exporting one central presentation.`);
+        }
+      }
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   async function saveFreshStudioSlide(slideNumber: number) {
     if (!selectedDeck?.studioScene || !desktop) { setError("Saving a fresh Studio PowerPoint requires the Electron desktop app."); return; }
     const preview = studioFreshPreviews[`${selectedDeck.id}:${slideNumber}`];
-    if (!preview || preview.sceneRevision !== selectedDeck.studioScene.revision) { setError("The web scene changed. Rebuild the fresh PowerPoint preview before saving it."); return; }
+    const studioSlide = selectedDeck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
+    if (!preview || !studioSlide || preview.slideUpdatedAt !== studioSlide.updatedAt) { setError("This slide design changed. Rebuild its PowerPoint export result before saving it."); return; }
     if (preview.nativeRender?.status !== "ready" || !preview.nativeRender.authoritative) { setError("Render the fresh composition successfully in Microsoft PowerPoint before saving it."); return; }
     if (preview.nativeMeasurement?.status !== "ready" || preview.nativeMeasurement.authority !== "powerpoint-native" || nativeTextOverflows(preview.nativeMeasurement).length > 0) { setError("Remeasure the fresh composition successfully in Microsoft PowerPoint with no material text overflow before saving it."); return; }
     clearMessages();
@@ -2834,6 +3697,31 @@ export default function App() {
       if (!result.canceled) setNotice(`Saved a new one-slide editable PowerPoint rebuilt from Studio slide ${slideNumber}. The imported deck remains untouched; original masters, animations, transitions, and unsupported native internals are not part of this fresh-composition file.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The fresh Studio PowerPoint could not be saved.");
+    }
+  }
+
+  async function saveCentralStudioDeck() {
+    if (!selectedDeck?.studioScene || !desktop) { setError("Exporting the central presentation requires the Electron desktop app."); return; }
+    const build = studioDeckBuilds[selectedDeck.id];
+    if (!build || build.sceneRevision !== selectedDeck.studioScene.revision) { setError("The central design changed. Run Build all results before exporting the presentation."); return; }
+    clearMessages();
+    setBusy("Rerendering the exact central presentation export candidate in Microsoft PowerPoint…");
+    try {
+      const artifactName = `${cleanFileStem(selectedDeck.name)}_studio-redesign.pptx`;
+      const [render, measurement] = await Promise.all([
+        desktop.renderPowerPoint({ name: artifactName, bytes: build.bytes, width: 1600, format: "png" }),
+        desktop.measurePowerPoint({ name: artifactName, bytes: build.bytes }),
+      ]);
+      if (render.status !== "ready" || !render.authoritative) throw new Error(render.reason ?? "PowerPoint rerender failed.");
+      if (render.slides.map((slide) => slide.sha256).join("|") !== build.nativeRender.slides.map((slide) => slide.sha256).join("|")) throw new Error("Export acceptance failed because the rerendered slide pixels no longer match the central design shown in the app.");
+      if (measurement.status !== "ready" || measurement.authority !== "powerpoint-native" || nativeTextOverflows(measurement).length) throw new Error("Export acceptance failed because PowerPoint measurement is unavailable or found text overflow.");
+      setBusy("Export acceptance passed. Choose where to save the central presentation…");
+      const result = await desktop.saveBinary({ kind: "pptx", defaultName: `${cleanFileStem(selectedDeck.name)}_studio-redesign.pptx`, bytes: build.bytes });
+      if (!result.canceled) setNotice("Exported the exact central Presentation Studio design as one editable PowerPoint. The imported source file remains untouched.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The central presentation could not be exported.");
+    } finally {
+      setBusy(undefined);
     }
   }
 
@@ -2867,7 +3755,8 @@ export default function App() {
     const inventory = selectedDeck.audit.slides.find((item) => item.number === slide.number);
     if (!inventory) { setError("The selected slide revision could not be resolved."); return; }
     const now = new Date().toISOString();
-    const thread: DesignThread = { id: crypto.randomUUID(), deckId: selectedDeck.id, slideId: inventory.id, slideNumber: slide.number, baseRevision: projectRef.current.project.updatedAt, anchor, comment, status: submit ? "submitted" : "note", createdAt: now, updatedAt: now, submittedAt: submit ? now : undefined };
+    const centralSlideRevision = selectedDeck.studioScene?.slides.find((item) => item.slideNumber === slide.number)?.updatedAt;
+    const thread: DesignThread = { id: crypto.randomUUID(), deckId: selectedDeck.id, slideId: inventory.id, slideNumber: slide.number, baseRevision: centralSlideRevision ?? projectRef.current.project.updatedAt, anchor, comment, status: submit ? "submitted" : "note", createdAt: now, updatedAt: now, submittedAt: submit ? now : undefined };
     setProject((current) => {
       const next = touchProject({ ...current, designThreads: [...current.designThreads, thread] }, submit ? "design-thread-submitted" : "design-note-saved", `${submit ? "Submitted" : "Saved"} a location-anchored design comment on slide ${slide.number} of ${selectedDeck.name}.`);
       return { ...next, decks: next.decks.map((deck) => deck.id === selectedDeck.id && deck.proposal && ["pending", "applied"].includes(deck.proposal.status) ? { ...deck, proposal: { ...deck.proposal, baseUpdatedAt: next.project.updatedAt, slideReviews: submit ? [...(deck.proposal.slideReviews ?? []).filter((review) => review.slideNumber !== slide.number), { slideNumber: slide.number, decision: "changes-requested", reviewedAt: now, comment }] : deck.proposal.slideReviews } } : deck) };
@@ -3047,16 +3936,33 @@ export default function App() {
     await openProjectFile(result.file);
   }
 
+  const currentStudioDeckBuild = selectedDeck?.studioScene && studioDeckBuilds[selectedDeck.id]?.sceneRevision === selectedDeck.studioScene.revision
+    ? studioDeckBuilds[selectedDeck.id]
+    : undefined;
+  const latestStudioNativeRender = currentStudioDeckBuild?.nativeRender ?? (selectedDeck?.studioScene
+    ? composeLatestStudioNativeRender(
+      selectedDeck.studioScene,
+      nativeRenderCatalogs[`${selectedDeck.id}:current`],
+      studioFreshPreviews,
+    )
+    : undefined);
+
   const mainContent = useMemo(() => {
     if (activeView === "batch") return <BatchView project={project} selectedId={selectedDeck?.id} onSelect={(id) => { setSelectedDeckId(id); setActiveView("decks"); }} onAdd={() => void addDecks()} />;
     if (activeView === "decks") return <DeckAuditView deck={selectedDeck} onConfirm={confirmTemplate} onStage={stageCleanup} onStartOrnlCleanup={startOrnlCleanup} onMarkExemplar={markTableExemplar} onExportReport={() => void exportAuditReport()} isExemplar={Boolean(selectedDeck && project.styleExemplars.some((item) => item.deckId === selectedDeck.id && item.kind === "table"))} />;
-    if (activeView === "slides") { const proposalWorkspace = selectedDeck?.proposal?.status === "applied" || (slideWorkspaceRequest?.deckId === selectedDeck?.id && slideWorkspaceRequest.representation === "proposal"); return <SlidesView deck={selectedDeck} catalog={selectedDeck ? proposalWorkspace ? proposalCatalogs[selectedDeck.id] : slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? proposalWorkspace ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} loading={Boolean(selectedDeck && (proposalWorkspace ? proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal` : slideCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:current`))} revision={project.project.updatedAt} threads={project.designThreads} openRequest={slideWorkspaceRequest} onSaveThread={saveDesignThread} onDeleteThread={deleteDesignThread} onStageGeometry={stageGeometryEdit} />; }
-    if (activeView === "studio") return <StudioView deck={selectedDeck} catalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} freshPreviews={studioFreshPreviews} templateCatalog={templateCatalog} onInitialize={() => void initializeStudioScene()} onRecompose={recomposeStudioSlide} onMoveNode={moveStudioNode} onStyleNode={styleStudioNode} onStage={stageStudioSlide} onPreviewFresh={(slideNumber) => void previewFreshStudioSlide(slideNumber)} onSaveFresh={(slideNumber) => void saveFreshStudioSlide(slideNumber)} />;
+    if (activeView === "slides") { const proposalWorkspace = selectedDeck?.proposal?.status === "applied" || (slideWorkspaceRequest?.deckId === selectedDeck?.id && slideWorkspaceRequest.representation === "proposal"); return <SlidesView deck={selectedDeck} catalog={selectedDeck ? proposalWorkspace ? proposalCatalogs[selectedDeck.id] : slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? proposalWorkspace ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : selectedDeck.studioScene ? latestStudioNativeRender : nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} loading={Boolean(selectedDeck && (proposalWorkspace ? proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal` : slideCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:current`))} revision={project.project.updatedAt} threads={project.designThreads} openRequest={slideWorkspaceRequest} deckBuildReady={Boolean(currentStudioDeckBuild)} onSaveThread={saveDesignThread} onDeleteThread={deleteDesignThread} onStageGeometry={stageGeometryEdit} onOpenStudioSlide={(slideNumber) => { setStudioOpenSlideNumber(slideNumber); setActiveView("studio"); }} onSaveDeck={() => void saveCentralStudioDeck()} />; }
+    if (activeView === "studio") return <StudioView deck={selectedDeck} catalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} nativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} freshPreviews={studioFreshPreviews} templateCatalog={templateCatalog} templateNativeRender={templateNativeRender} resources={project.resources} requestedSlideNumber={studioOpenSlideNumber} deckBuildReady={Boolean(currentStudioDeckBuild)} onInitialize={() => void initializeStudioScene()} onRecompose={recomposeStudioSlide} onMoveNode={moveStudioNode} onMoveNodes={moveStudioNodes} onStyleNode={styleStudioNode} onUpdateFigure={setStudioFigureTreatment} onCreateVisualNeed={createVisualNeedFromStudio} onHoldVisualNeed={holdVisualNeedFromStudio} onAttachConcept={attachConceptFromStudio} onDetachConcept={detachConceptFromStudio} onReconstructConcept={reconstructConceptFromStudio} onPreviewFresh={(slideNumber) => void previewFreshStudioSlide(slideNumber)} onPreviewAll={() => void previewAllFreshStudioSlides()} onSaveFresh={(slideNumber) => void saveFreshStudioSlide(slideNumber)} onSaveDeck={() => void saveCentralStudioDeck()} />;
     if (activeView === "designs") return <DesignsView catalog={templateCatalog} installedAt={templateInstalledAt} loading={templateLoading} nativeRender={templateNativeRender} nativeLoading={templateNativeLoading} onInstall={() => void installTemplate()} />;
     if (activeView === "rules") return <RulesView deck={selectedDeck} exemplarCount={project.styleExemplars.filter((item) => item.kind === "table").length} />;
     if (activeView === "review") return <ReviewView deck={selectedDeck} projectUpdatedAt={project.project.updatedAt} currentCatalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} proposalCatalog={selectedDeck ? proposalCatalogs[selectedDeck.id] : undefined} currentNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} proposalNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : undefined} previewLoading={Boolean(selectedDeck && (proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal`))} threads={project.designThreads} onToggle={toggleChange} onReviewSlide={reviewSlide} onRequestChanges={requestSlideChanges} onDeleteThread={deleteDesignThread} onOpenSlide={openSlideWorkspace} onReject={rejectProposal} onApply={acceptProposal} onExport={() => void exportCleaned()} />;
-    return <ResourcesView project={project} onAdd={() => void addResources()} onRemove={removeResource} onToggleMcp={(id) => setProject((current) => touchProject({ ...current, resources: current.resources.map((resource) => resource.id === id ? { ...resource, mcpAccess: resource.mcpAccess === "none" ? "metadata" : "none" } : resource) }, "resource-access-updated", "Updated session-only Resource metadata permission."))} />;
-  }, [activeView, nativeRenderCatalogs, nativeRenderLoadingKey, project, proposalCatalogLoadingDeckId, proposalCatalogs, selectedDeck, slideCatalogLoadingDeckId, slideCatalogs, slideWorkspaceRequest, studioFreshPreviews, templateCatalog, templateInstalledAt, templateLoading, templateNativeLoading, templateNativeRender]);
+    return <ResourcesView project={project} onAdd={() => void addResources()} onRemove={removeResource} onToggleMcp={(id) => setProject((current) => touchProject({ ...current, resources: current.resources.map((resource) => {
+      if (resource.id !== id) return resource;
+      const nextAccess = resource.kind === "image"
+        ? resource.mcpAccess === "none" ? "metadata" : resource.mcpAccess === "metadata" ? "preview" : "none"
+        : resource.mcpAccess === "none" ? "metadata" : "none";
+      return { ...resource, mcpAccess: nextAccess };
+    }) }, "resource-access-updated", "Updated this Resource's session-only AI permission."))} />;
+  }, [activeView, currentStudioDeckBuild, latestStudioNativeRender, nativeRenderCatalogs, nativeRenderLoadingKey, project, proposalCatalogLoadingDeckId, proposalCatalogs, selectedDeck, slideCatalogLoadingDeckId, slideCatalogs, slideWorkspaceRequest, studioFreshPreviews, studioOpenSlideNumber, templateCatalog, templateInstalledAt, templateLoading, templateNativeLoading, templateNativeRender]);
   const mcpActivityMessage = mcpActivity ? mcpActivityCopy(mcpActivity) : undefined;
 
   return (

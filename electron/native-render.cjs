@@ -36,8 +36,26 @@ const POWERPOINT_RENDER_SCRIPT = `on run argv
     set targetPresentation to missing value
     try
       open sourceFile
-      set targetPresentation to active presentation
-      if full name of targetPresentation is not sourcePath then error "PowerPoint did not activate the requested render copy."
+      repeat with bindAttempt from 1 to 40
+        repeat with presentationIndex from 1 to (count of presentations)
+          set candidatePresentation to presentation presentationIndex
+          try
+            if (full name of candidatePresentation as text) is sourcePath then
+              set targetPresentation to candidatePresentation
+              exit repeat
+            end if
+          end try
+        end repeat
+        if targetPresentation is not missing value then exit repeat
+        delay 0.1
+      end repeat
+      if targetPresentation is missing value then error "PowerPoint did not open the requested render copy."
+      -- PowerPoint can expose the presentation object before its text and
+      -- linked image layout is ready for PDF output. Without this brief
+      -- stabilization window, a newly generated slide can intermittently
+      -- export with its first text shape missing even though the PPTX package
+      -- and a subsequent export are correct.
+      delay 1
       save targetPresentation in outputFile as save as PDF
       close targetPresentation saving no
     on error renderError number renderErrorNumber

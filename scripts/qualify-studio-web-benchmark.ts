@@ -8,6 +8,7 @@ import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { compileStudioWebScene, recomposeStudioWebSlide } from "../src/lib/studio-web-scene";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
+import { analyzeStudioDesignImpact } from "../src/lib/studio-design-impact";
 import { bindNativeMeasurement } from "../src/lib/native-measurement";
 import { calculateDesignMetrics } from "../src/lib/design-metrics";
 import { sha256 } from "../src/lib/hash";
@@ -70,20 +71,58 @@ function candidateDeck(audit: Awaited<ReturnType<typeof auditPptx>>, bytes: Uint
   });
 }
 
-export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers: number[], outputRoot: string, benchmarkPath?: string) {
+function nativeTextOverflowEvidence(native: NativeMeasurementResult, audit: Awaited<ReturnType<typeof auditPptx>>) {
+  if (native.status !== "ready" || native.authority !== "powerpoint-native") return [];
+  return native.slides.flatMap((slide) => slide.shapes.flatMap((shape) => {
+    if (!shape.text?.lineCount) return [];
+    const bounds = shape.boundsPt;
+    const text = shape.text?.renderedBoundsPt;
+    const margins = shape.text?.marginsPt;
+    if (!bounds || !text || !margins || shape.text?.coordinateSpace !== "slide") return [];
+    const editableObject = audit.editableObjects.find((object) => object.slideNumber === slide.number && object.name === shape.name);
+    const textBox = editableObject ? audit.textBoxes.find((item) => item.slideNumber === slide.number && item.shapeId === editableObject.shapeId) : undefined;
+    const tolerance = (textBox?.bulletParagraphCount ?? 0) > 0 ? 3 : .5;
+    const inner = { left: bounds.left + margins.left, top: bounds.top + margins.top, right: bounds.left + bounds.width - margins.right, bottom: bounds.top + bounds.height - margins.bottom };
+    const edges = [
+      text.left < inner.left - tolerance ? "left" : undefined,
+      text.top < inner.top - tolerance ? "top" : undefined,
+      text.left + text.width > inner.right + tolerance ? "right" : undefined,
+      text.top + text.height > inner.bottom + tolerance ? "bottom" : undefined,
+    ].filter((edge): edge is string => Boolean(edge));
+    return edges.length ? [{ slideNumber: slide.number, shapeIndex: shape.shapeIndex, name: shape.name, lineCount: shape.text?.lineCount, edges }] : [];
+  }));
+}
+
+export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers: number[], outputRoot: string, benchmarkPath?: string, expected?: { sourceSha256?: string; benchmarkSha256?: string }) {
   await fs.mkdir(outputRoot, { recursive: true });
   const sourceBytes = new Uint8Array(await fs.readFile(sourcePath));
   const sourceAudit = await auditPptx(sourceBytes);
   for (const slideNumber of slideNumbers) if (!sourceAudit.slides.some((slide) => slide.number === slideNumber)) throw new Error(`Source slide ${slideNumber} does not exist.`);
   const sourceSha256 = await sha256(sourceBytes);
+  if (expected?.sourceSha256 && expected.sourceSha256 !== sourceSha256) throw new Error(`The private source hash changed. Expected ${expected.sourceSha256}, received ${sourceSha256}.`);
   const sourceDeck: DeckJob = { id: "studio-web-benchmark-source", name: path.basename(sourcePath), sourceResourceId: "studio-web-benchmark-source-resource", sourceSha256, operationScope: "reflow", templateClassification: sourceAudit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", targetTemplateConfirmedAt: new Date().toISOString(), status: "ready-for-cleanup", audit: sourceAudit, protectedSlideNumbers: [] };
   sourceDeck.scene = compilePresentationScene({ ...sourceDeck, audit: sourceAudit });
   const catalog = await buildSlideRenderCatalog(sourceBytes, path.basename(sourcePath));
+  const sourceRender = await renderPowerPointNative({ bytes: sourceBytes, name: path.basename(sourcePath), width: 2200, format: "png" });
+  if (sourceRender.status !== "ready" || sourceRender.renderer !== "powerpoint-native" || !sourceRender.authoritative) {
+    throw new Error(`The private benchmark requires an authoritative Microsoft PowerPoint source render; received ${sourceRender.status} from ${sourceRender.renderer}.`);
+  }
+  const sourceSlideRasters = Object.fromEntries(sourceRender.slides.map((slide) => [slide.number, {
+    data: `data:${slide.mimeType};base64,${Buffer.from(slide.bytes).toString("base64")}`,
+    width: slide.width,
+    height: slide.height,
+  }]));
   let scene = compileStudioWebScene(sourceDeck, catalog);
   const mappingCompleteBeforeDesign = slideNumbers.every((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)?.contentCoverage.exactTextMapped);
   for (const slideNumber of slideNumbers) scene = recomposeStudioWebSlide(scene, slideNumber);
   scene = { ...scene, slides: slideNumbers.map((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)!).filter(Boolean) } as StudioWebScene;
-  const composition = await buildStudioCompositionPptx(scene, { catalog, strict: true, title: "Presentation Studio native benchmark" });
+  const composition = await buildStudioCompositionPptx(scene, {
+    catalog,
+    sourceSlideRasters,
+    sourceSlideText: Object.fromEntries(sourceAudit.slides.map((slide) => [slide.number, slide.text])),
+    strict: true,
+    title: "Presentation Studio native benchmark",
+  });
   const candidatePath = path.join(outputRoot, "studio-web-benchmark.pptx");
   await fs.writeFile(candidatePath, composition.bytes);
   const candidateAudit = await auditPptx(composition.bytes);
@@ -92,18 +131,21 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
   const measurement = bindNativeMeasurement(rebuiltDeck, nativeMeasurement);
   const metrics = calculateDesignMetrics(rebuiltDeck, measurement);
   const candidateRender = await renderPowerPointNative({ bytes: composition.bytes, name: path.basename(candidatePath), width: 2200, format: "png" });
-  const sourceRender = await renderPowerPointNative({ bytes: sourceBytes, name: path.basename(sourcePath), width: 2200, format: "png" });
   const candidateImages = await writeRender(candidateRender, outputRoot, "candidate", slideNumbers, true);
   const sourceImages = await writeRender(sourceRender, outputRoot, "source", slideNumbers);
   let benchmarkImages: string[] = [];
   let benchmarkRenderStatus: NativeRenderResult["status"] | undefined;
+  let benchmarkSha256: string | undefined;
   if (benchmarkPath) {
     const benchmarkBytes = new Uint8Array(await fs.readFile(benchmarkPath));
+    benchmarkSha256 = await sha256(benchmarkBytes);
+    if (expected?.benchmarkSha256 && expected.benchmarkSha256 !== benchmarkSha256) throw new Error(`The private visual-benchmark hash changed. Expected ${expected.benchmarkSha256}, received ${benchmarkSha256}.`);
     const benchmarkRender = await renderPowerPointNative({ bytes: benchmarkBytes, name: path.basename(benchmarkPath), width: 2200, format: "png" });
     benchmarkRenderStatus = benchmarkRender.status;
     benchmarkImages = await writeRender(benchmarkRender, outputRoot, "visual-benchmark");
   }
   const fonts = [...new Set(candidateAudit.fonts.map((font) => font.family))];
+  const designImpact = scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, ...analyzeStudioDesignImpact(slide) }));
   const checks = {
     mappingCompleteBeforeDesign,
     exactVisibleTextSequence: exactSelectedText(sourceAudit, candidateAudit, slideNumbers),
@@ -112,16 +154,20 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
     nativePowerPointRenderReady: candidateRender.status === "ready" && candidateRender.renderer === "powerpoint-native" && candidateRender.authoritative,
     nativePowerPointMeasurementReady: nativeMeasurement.status === "ready" && nativeMeasurement.authority === "powerpoint-native",
     noNativeTextOverflow: metrics.totals.textOverflowCount === 0,
+    noNativeTableCellClearanceViolations: metrics.totals.tableCellClearanceViolationCount === 0,
     noOffSlideObjects: metrics.totals.offSlideObjectCount === 0,
+    materialCompositionBeyondTypography: designImpact.every((impact) => ["layout-redesign", "figure-redesign", "full-redesign"].includes(impact.level)),
   };
   const report = {
     schema: "presentation-studio/studio-web-benchmark",
     version: 1,
     generatedAt: new Date().toISOString(),
     source: { path: sourcePath, sha256: sourceSha256, slideNumbers },
-    benchmark: benchmarkPath ? { path: benchmarkPath, renderStatus: benchmarkRenderStatus } : undefined,
+    benchmark: benchmarkPath ? { path: benchmarkPath, sha256: benchmarkSha256, renderStatus: benchmarkRenderStatus } : undefined,
     candidate: { path: candidatePath, sha256: await sha256(composition.bytes), recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, recipe: slide.recipe, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, ...composition },
     metrics,
+    nativeTextOverflowEvidence: nativeTextOverflowEvidence(nativeMeasurement, candidateAudit),
+    designImpact,
     renders: { source: sourceImages, candidate: candidateImages, visualBenchmark: benchmarkImages },
     checks,
     readyForHumanVisualReview: Object.values(checks).every(Boolean),
@@ -135,7 +181,7 @@ if (path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1
   const sourcePath = argument("source");
   if (!sourcePath) throw new Error("Use --source /absolute/path/to/source.pptx.");
   const outputRoot = argument("output") ?? path.join(os.tmpdir(), "presentation-studio-web-benchmark");
-  qualifyStudioWebBenchmark(sourcePath, requestedSlides(argument("slides")), outputRoot, argument("benchmark")).then(({ report, reportPath }) => {
+  qualifyStudioWebBenchmark(sourcePath, requestedSlides(argument("slides")), outputRoot, argument("benchmark"), { sourceSha256: argument("source-sha256"), benchmarkSha256: argument("benchmark-sha256") }).then(({ report, reportPath }) => {
     process.stdout.write(`${JSON.stringify({ readyForHumanVisualReview: report.readyForHumanVisualReview, checks: report.checks, candidate: report.candidate.path, report: reportPath, renders: report.renders }, null, 2)}\n`);
     if (!report.readyForHumanVisualReview) process.exitCode = 1;
   }).catch((error) => {

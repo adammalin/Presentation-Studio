@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import JSZip from "jszip";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,9 +9,10 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { atomizeStudioWebSlide, compileStudioWebScene, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioFigureTreatment, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { atomizeStudioWebSlide, compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioFigureTreatment, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
+import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
 import { sha256, sha256Text } from "../src/lib/hash";
 import type { DeckJob, StudioWebNode, StudioWebScene } from "../src/types";
 
@@ -127,6 +129,71 @@ test("comparison-card recipe ignores footer furniture and composes repeated sema
   assert.deepEqual(slide.nodes.map((node) => node.text).filter(Boolean).sort(), nodes.map((node) => node.text).filter(Boolean).sort());
 });
 
+test("process-flow recipe keeps low technical inputs out of the footer and pairs the true output by source order", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const base = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const textNode = async (id: string, text: string, role: StudioWebNode["role"], zIndex: number, x: number, y: number, paragraphs = [text]): Promise<StudioWebNode> => ({
+    ...base,
+    id,
+    sourceObjectId: id,
+    sourceShapeId: id,
+    sourceBinding: "editable-object",
+    name: id,
+    kind: "text",
+    role,
+    zIndex,
+    sourceTextOrder: zIndex * 100,
+    text,
+    textHash: await sha256Text(text),
+    sourceParagraphs: await Promise.all(paragraphs.map(async (paragraph, index) => ({ index: index + 1, text: paragraph, textHash: await sha256Text(paragraph), characterCount: paragraph.length, bullet: role === "body", bulletConfidence: "direct" as const, level: 0, fontFamilies: ["Aptos"], fontSizes: [16] }))),
+    sourceFrame: { x: x * 914_400, y: y * 914_400, width: 2.4 * 914_400, height: .5 * 914_400, rotation: 0 },
+    frame: { x: x * 914_400, y: y * 914_400, width: 2.4 * 914_400, height: .5 * 914_400, rotation: 0 },
+    visible: true,
+    locked: false,
+  });
+  const imageNode = (id: string, zIndex: number, x: number, y: number): StudioWebNode => ({
+    ...base,
+    id,
+    sourceObjectId: id,
+    sourceShapeId: id,
+    sourceBinding: "editable-object",
+    name: id,
+    kind: "image",
+    role: "image",
+    zIndex,
+    sourceTextOrder: zIndex * 100,
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    sourceFrame: { x: x * 914_400, y: y * 914_400, width: .6 * 914_400, height: .6 * 914_400, rotation: 0 },
+    frame: { x: x * 914_400, y: y * 914_400, width: .6 * 914_400, height: .6 * 914_400, rotation: 0 },
+    visible: true,
+    locked: false,
+  });
+  const nodes: StudioWebNode[] = [
+    await textNode("process-title", "Exact conversion process", "title", 0, .5, .3),
+    await textNode("stage-one", "Conversion Tool", "body", 1, 4.5, 4.6),
+    imageNode("steady-icon", 2, 3.0, 4.7), await textNode("steady-label", "Steady-state network data files", "caption", 3, .8, 4.7),
+    imageNode("dynamic-icon", 4, 3.0, 5.4), await textNode("dynamic-label", "Dynamic model data files", "caption", 5, .8, 5.4),
+    imageNode("sequence-icon", 6, 3.0, 6.1), await textNode("sequence-label", "Sequence network data files", "caption", 7, .8, 6.1),
+    imageNode("location-icon", 8, 3.2, 6.9), await textNode("location-label", "Location and diagram data files", "caption", 9, .8, 6.8),
+    await textNode("stage-two", "Fix conversion errors", "body", 10, 7.4, 4.6),
+    imageNode("output-icon", 11, 11.0, 5.6), await textNode("output-label", "EMT input data files", "caption", 12, 9.4, 5.3),
+    await textNode("support", "The process crosses parties. Exact source detail remains available.", "body", 13, .5, 1.4, ["The process crosses parties.", "Exact source detail remains available."]),
+  ];
+  const processSource = { ...scene, slides: [{ ...sourceSlide, nodes }] };
+  assert.equal(recommendedStudioRecipe(processSource.slides[0]), "ornl-title-process-flow");
+  const designed = recomposeStudioWebSlide(processSource, sourceSlide.slideNumber);
+  const designedSlide = designed.slides[0];
+  const inputs = designedSlide.nodes.filter((node) => node.component?.role === "process-input");
+  assert.equal(inputs.length, 4);
+  assert.deepEqual(inputs.map((node) => node.text), ["Steady-state network data files", "Dynamic model data files", "Sequence network data files", "Location and diagram data files"]);
+  assert.equal(designedSlide.nodes.find((node) => node.text === "EMT input data files")?.component?.role, "process-output");
+  assert.equal(designedSlide.nodes.find((node) => node.id === "location-icon")?.component?.role, "process-icon");
+});
+
 test("semantic atomization turns one exact multi-paragraph source box into reusable objective columns", async () => {
   const { deck, catalog } = await fixture();
   const scene = compileStudioWebScene(deck, catalog);
@@ -205,9 +272,77 @@ test("fresh-composition mode builds a new editable native deck from the web scen
   assert.deepEqual(after.slides.map((slide) => slide.textHash), before.slides.map((slide) => slide.textHash));
   assert.deepEqual(after.tables.map((table) => table.contentHash), before.tables.map((table) => table.contentHash));
   assert.deepEqual(after.tables.map((table) => table.structureHash), before.tables.map((table) => table.structureHash));
+  assert.equal(after.textBoxes.reduce((sum, item) => sum + item.bulletParagraphCount, 0), before.textBoxes.reduce((sum, item) => sum + item.bulletParagraphCount, 0));
   assert.equal(after.fonts.some((font) => font.family === "Aptos"), true);
   assert.equal(after.textBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos")), true);
   assert.equal(after.tables.every((table) => table.cellFonts.every((family) => family === "Aptos")), true);
+});
+
+test("fresh composition builds converted template artwork into the same editable slide result", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const templateScene: StudioWebScene = {
+    ...scene,
+    slides: [{ ...sourceSlide, status: "designed", recipe: "template-layout", targetLayoutId: "installed-layout" }],
+  };
+  const templateCatalog = {
+    id: "template",
+    name: "Converted ORNL Template",
+    sha256: "template-sha",
+    slideWidth: templateScene.slideSize.width,
+    slideHeight: templateScene.slideSize.height,
+    masterCount: 1,
+    layouts: [{ id: "installed-layout", name: "ORNL content", category: "content" as const, background: "#FFFFFF", placeholderTypes: ["title", "body"], sourcePart: "ppt/slideLayouts/slideLayout1.xml", elements: [
+      { id: "brand-rule", kind: "shape" as const, name: "ORNL brand rule", x: 420_000, y: 900_000, width: 1_000_000, height: 32_000, rotation: 0, geometry: "rect" as const, fill: "#007833", origin: "master" as const },
+      { id: "brand-image", kind: "image" as const, name: "ORNL brand image", x: 10_900_000, y: 6_300_000, width: 700_000, height: 300_000, rotation: 0, geometry: "rect" as const, mediaId: "template-logo", origin: "master" as const },
+    ] }],
+    media: { "template-logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=" },
+    generatedAt: "2026-08-13T16:00:00.000Z",
+  };
+  const rebuilt = await buildStudioCompositionPptx(templateScene, { catalog, templateCatalog, strict: false });
+  const audited = await auditPptx(rebuilt.bytes);
+  assert.equal(rebuilt.slideCount, 1);
+  assert.equal(audited.pictures.some((picture) => picture.name === "Template · ORNL brand image"), true);
+  assert.ok(rebuilt.bytes.length > 0);
+});
+
+test("build-all planning preserves source slides and routes each designed slide to its truthful PowerPoint compiler", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const fresh = { ...source.slides[1], status: "designed" as const, recipe: "ornl-title-content" as const };
+  const template = { ...source.slides[2], status: "designed" as const, recipe: "template-layout" as const, targetLayoutId: "installed-layout" };
+  const plan = planStudioExportBuild({ ...source, slides: [source.slides[0], fresh, template] });
+  assert.deepEqual(plan, {
+    preservedSourceSlideNumbers: [source.slides[0].slideNumber],
+    freshCompositionSlideNumbers: [fresh.slideNumber, template.slideNumber],
+    nativeTemplateSlideNumbers: [],
+  });
+});
+
+test("source-preserved title composition remains visually locked while exact text stays auditable", async () => {
+  const { bytes, deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides[0];
+  const rasterRebuilt = await buildStudioCompositionPptx({ ...source, slides: [sourceSlide] }, {
+    catalog,
+    sourceSlideText: { [sourceSlide.slideNumber]: deck.audit!.slides[0].text },
+    sourceSlideRasters: { [sourceSlide.slideNumber]: { data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=", width: 1, height: 1 } },
+  });
+  await assert.rejects(() => preserveNativeSlide({ destinationBytes: rasterRebuilt.bytes, sourceBytes: bytes, slideNumber: 1 }), /notesSlide1\.xml.*held rather than flattening/i);
+  const minimalSource = await JSZip.loadAsync(bytes);
+  const slideRelationshipsPart = "ppt/slides/_rels/slide1.xml.rels";
+  const relationships = await minimalSource.file(slideRelationshipsPart)!.async("text");
+  minimalSource.file(slideRelationshipsPart, relationships.replace(/<Relationship\b[^>]*Type="[^"]*\/notesSlide"[^>]*\/>/g, ""));
+  const minimalSourceBytes = await minimalSource.generateAsync({ type: "uint8array" });
+  const minimalAudit = await auditPptx(minimalSourceBytes);
+  const rebuilt = await preserveNativeSlide({ destinationBytes: rasterRebuilt.bytes, sourceBytes: minimalSourceBytes, slideNumber: 1 });
+  const after = await auditPptx(rebuilt.bytes);
+  assert.equal(after.slides[0].textHash, minimalAudit.slides[0].textHash);
+  assert.equal(rebuilt.receipt.slideNumber, 1);
+  assert.match(rebuilt.receipt.clonedLayoutPart, /^ppt\/slideLayouts\/slideLayout\d+\.xml$/);
+  assert.match(rebuilt.receipt.clonedMasterPart ?? "", /^ppt\/slideMasters\/slideMaster\d+\.xml$/);
+  assert.equal(rebuilt.receipt.sourceSlideSha256, minimalAudit.slides[0].sourcePartSha256);
 });
 
 test("fresh table composition preserves an explicit visible cell break in the editable PowerPoint grid", async () => {
@@ -233,6 +368,58 @@ test("fresh table composition preserves an explicit visible cell break in the ed
   assert.equal(rebuiltCell?.text, updatedText);
   assert.equal(rebuiltCell?.runBreaksBefore?.some((value) => value !== "none"), true);
   assert.deepEqual(after.tables.map((table) => table.structureHash), deck.audit?.tables.map((table) => table.structureHash));
+});
+
+test("fresh composition carries a disclosed complex source figure as one PowerPoint-rendered evidence unit", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides[0];
+  const seed = sourceSlide.nodes[0];
+  assert.ok(seed);
+  const nativeObject: StudioWebNode = {
+    ...seed,
+    id: "source-locked-native-object",
+    sourceObjectId: "source-locked-native-object",
+    sourceShapeId: "source-locked-native-object",
+    sourceBinding: "catalog-derived",
+    name: "Complex technical schematic",
+    kind: "native-object",
+    role: "group",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    sourceFrame: { x: 914_400, y: 1_828_800, width: 3_657_600, height: 1_828_800, rotation: 0 },
+    frame: { x: 4_571_999, y: 1_371_600, width: 6_400_800, height: 3_200_400, rotation: 0 },
+    visible: true,
+    locked: true,
+    exactContent: false,
+  };
+  const scene: StudioWebScene = {
+    ...source,
+    slides: [{
+      ...sourceSlide,
+      status: "designed",
+      recipe: "ornl-title-two-column",
+      nodes: [...sourceSlide.nodes, nativeObject],
+      figureTreatments: [{
+        id: "source-locked-schematic",
+        nodeIds: [nativeObject.id],
+        mode: "preserve-and-frame",
+        verificationStatus: "source-locked",
+        intentSummary: "Technical schematic with meaning-bearing labels and relationships",
+        informationInventory: ["Schematic labels", "Connections"],
+        invariants: ["Preserve all labels and relationships"],
+        rationale: "Retain exact source pixels while Studio improves the surrounding composition.",
+      }],
+    }],
+  };
+  const rebuilt = await buildStudioCompositionPptx(scene, {
+    catalog,
+    sourceSlideRasters: { 1: { data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=", width: 1, height: 1 } },
+  });
+  const after = await auditPptx(rebuilt.bytes);
+  assert.equal(after.pictures.some((picture) => picture.name.startsWith("Source-locked · Technical schematic")), true);
+  assert.equal(rebuilt.warnings.some((warning) => warning.includes("source-locked PowerPoint-rendered evidence unit")), true);
 });
 
 test("fresh composition stops before writing a slide whose grouped or unsupported text is not completely mapped", async () => {

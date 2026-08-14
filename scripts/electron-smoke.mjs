@@ -7,7 +7,13 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const capture = path.join(os.tmpdir(), `presentation-studio-smoke-${process.pid}.png`);
 const electronBin = path.join(root, "node_modules", "electron", "cli.js");
-const child = spawn(process.execPath, [electronBin, "."], { cwd: root, env: { ...process.env, PRESENTATION_STUDIO_SMOKE_TEST: "1", PRESENTATION_STUDIO_CAPTURE_PATH: capture }, stdio: "inherit" });
+const child = spawn(process.execPath, [electronBin, "."], {
+  cwd: root,
+  env: { ...process.env, PRESENTATION_STUDIO_SMOKE_TEST: "1", PRESENTATION_STUDIO_CAPTURE_PATH: capture },
+  // The smoke flow drives the renderer itself. Do not let terminal input
+  // accidentally advance the focused onboarding control while it is measured.
+  stdio: ["ignore", "inherit", "inherit"],
+});
 const code = await new Promise((resolve) => child.on("exit", resolve));
 if (code !== 0) process.exit(code ?? 1);
 const stats = await fs.stat(capture);
