@@ -83,6 +83,15 @@ function color(value: string | undefined, fallback: string): string {
   return /^#[0-9a-f]{6}$/i.test(value ?? "") ? value!.toUpperCase() : fallback;
 }
 
+function templateTextColor(layout: TemplateLayoutPreview | undefined, node: StudioWebNode, nextFrame: StudioWebFrame): string | undefined {
+  if (!layout || node.kind !== "text") return undefined;
+  const candidates = layout.elements.filter((element) => element.placeholderType && element.textColor);
+  const direct = candidates.find((element) => element.x === nextFrame.x && element.y === nextFrame.y && element.width === nextFrame.width && element.height === nextFrame.height);
+  if (direct?.textColor) return color(direct.textColor, node.style.color);
+  const roleTypes = node.role === "title" ? new Set(["title", "ctrTitle"]) : node.role === "caption" || node.role === "label" ? new Set(["body", "subTitle"]) : new Set(["body", "obj"]);
+  return color(candidates.find((element) => roleTypes.has(element.placeholderType ?? ""))?.textColor, node.style.color);
+}
+
 function roleStyle(role: SceneSemanticRole, preview: TemplatePreviewElement | undefined, textBox: DeckJob["audit"] extends infer _ ? NonNullable<DeckJob["audit"]>["textBoxes"][number] | undefined : never): StudioWebNode["style"] {
   const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
   const observedSize = preview?.fontSize ?? textBox?.fontSizes.find((value) => value >= 8);
@@ -371,6 +380,9 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "step-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.14, color: palette.darkMatter };
   if (node.component?.role === "figure-label") return { ...base, fontSizePt: 14, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen, verticalAlign: "middle" };
   if (node.component?.role === "figure-caption") return { ...base, fontSizePt: 14, fontWeight: 400, lineHeight: 1.12, color: palette.darkMatter, verticalAlign: "middle" };
+  if (node.component?.role === "technical-annotation") return { ...base, fontSizePt: Math.max(10, Math.min(12, node.style.fontSizePt)), fontWeight: node.style.fontWeight, lineHeight: 1.04, color: node.style.color, verticalAlign: "middle" };
+  if (node.component?.role === "question-intro") return { ...base, fontSizePt: 15, fontWeight: 400, lineHeight: 1.12, color: "#666B68" };
+  if (node.component?.role === "question-item") return { ...base, fontSizePt: 17, fontWeight: 600, lineHeight: 1.12, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "challenge-assertion") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.08, color: palette.ornlGreen };
   if (node.component?.role === "challenge-intro") return { ...base, fontSizePt: 12.5, fontWeight: 700, lineHeight: 1, color: "#666B68" };
   if (node.component?.role === "challenge-body") return { ...base, fontSizePt: 14, fontWeight: 400, lineHeight: 1.12, color: palette.darkMatter };
@@ -528,9 +540,79 @@ function grid(nodes: StudioWebNode[], target: StudioWebFrame, columns = 2, gapPt
   return placements;
 }
 
+function scaleSourceGroup(nodes: StudioWebNode[], target: StudioWebFrame): Map<string, StudioWebFrame> {
+  const placements = new Map<string, StudioWebFrame>();
+  if (nodes.length === 0) return placements;
+  const source = unionStudioFrames(nodes.map((node) => node.sourceFrame));
+  if (source.width <= 0 || source.height <= 0) return placements;
+  const scale = Math.min(target.width / source.width, target.height / source.height);
+  const width = source.width * scale;
+  const height = source.height * scale;
+  const originX = target.x + (target.width - width) / 2;
+  const originY = target.y + (target.height - height) / 2;
+  for (const node of nodes) {
+    placements.set(node.id, {
+      x: Math.round(originX + (node.sourceFrame.x - source.x) * scale),
+      y: Math.round(originY + (node.sourceFrame.y - source.y) * scale),
+      width: Math.max(inches(.02), Math.round(node.sourceFrame.width * scale)),
+      height: Math.max(inches(.02), Math.round(node.sourceFrame.height * scale)),
+      rotation: node.sourceFrame.rotation,
+    });
+  }
+  return placements;
+}
+
+function sourceCenterDistance(left: StudioWebNode, right: StudioWebNode): number {
+  const leftX = left.sourceFrame.x + left.sourceFrame.width / 2;
+  const leftY = left.sourceFrame.y + left.sourceFrame.height / 2;
+  const rightX = right.sourceFrame.x + right.sourceFrame.width / 2;
+  const rightY = right.sourceFrame.y + right.sourceFrame.height / 2;
+  return Math.hypot(leftX - rightX, leftY - rightY);
+}
+
+function shortFigureAnnotation(node: StudioWebNode): boolean {
+  return node.kind === "text"
+    && ["caption", "label"].includes(node.role)
+    && (node.text?.length ?? 0) > 0
+    && (node.text?.length ?? 0) <= 80
+    && node.sourceFrame.height <= inches(1.05);
+}
+
+function assignFigureRelationships(visuals: StudioWebNode[], candidates: StudioWebNode[]): Map<string, StudioWebNode[]> {
+  const assignments = new Map(visuals.map((visual) => [visual.id, [] as StudioWebNode[]]));
+  for (const candidate of candidates) {
+    const visual = [...visuals].sort((left, right) => sourceCenterDistance(left, candidate) - sourceCenterDistance(right, candidate))[0];
+    if (visual) assignments.get(visual.id)?.push(candidate);
+  }
+  return assignments;
+}
+
+function sourceFrameContains(container: StudioWebFrame, candidate: StudioWebFrame, padding = inches(.12)): boolean {
+  const centerX = candidate.x + candidate.width / 2;
+  const centerY = candidate.y + candidate.height / 2;
+  return centerX >= container.x - padding
+    && centerX <= container.x + container.width + padding
+    && centerY >= container.y - padding
+    && centerY <= container.y + container.height + padding;
+}
+
+function narrativeHeightInches(nodes: StudioWebNode[], widthInches: number, minimum = 1.05, maximum = 1.75): number {
+  const characters = nodes.reduce((sum, node) => sum + (node.text?.length ?? 0), 0);
+  const paragraphs = nodes.reduce((sum, node) => sum + Math.max(1, node.sourceParagraphs?.length ?? 1), 0);
+  const estimatedLines = characters / Math.max(36, widthInches * 8.4) + Math.max(0, paragraphs - 1) * .35;
+  return Math.max(minimum, Math.min(maximum, .48 + estimatedLines * .27));
+}
+
 export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutRecipe {
   const nodes = activeNodes(slide);
   if (nodes.some((node) => node.kind === "table")) return "ornl-title-table";
+  const nativeObject = slide.nodes.some((node) => node.visible && node.kind === "native-object" && !footerNode(node));
+  const directBodyParagraphs = nodes
+    .filter((node) => node.kind === "text" && node.role === "body" && node.sourceBinding === "editable-object" && !footerNode(node))
+    .flatMap((node) => node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? []);
+  const questionCount = directBodyParagraphs.filter((paragraph) => paragraph.text.trim().endsWith("?")).length;
+  if (nativeObject && questionCount >= 3 && questionCount <= 6) return "ornl-title-question-diagram";
+  if (nativeObject) return "ornl-title-two-column";
   const eligibleParagraphs = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).reduce((sum, node) => sum + Math.max(1, node.sourceParagraphs?.length ?? 1), 0);
   const bodyCharacters = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).reduce((sum, node) => sum + (node.text?.length ?? 0), 0);
   const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
@@ -606,11 +688,24 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
     return components;
   }
   if (slide.recipe === "ornl-title-labeled-figure-grid") {
+    slide.nodes.filter((node) => node.component?.role === "figure-media" && node.component.frame).forEach((node) => {
+      components.push({ id: `${node.component!.groupId}-visual-field`, kind: "rect", frame: node.component!.frame!, fillColor: palette.graphite, lineWidthPt: 0, behindContent: true });
+    });
     const groups = [...new Set(slide.nodes.filter((node) => node.component?.role === "figure-label").map((node) => node.component!.groupId))];
     groups.slice(1).forEach((groupId) => {
       const node = slide.nodes.find((candidate) => candidate.component?.groupId === groupId);
       if (node) components.push({ id: `${groupId}-separator`, kind: "rect", frame: { x: .47 * EMU_PER_INCH, y: node.frame.y - points(10), width: 12.39 * EMU_PER_INCH, height: points(.75), rotation: 0 }, fillColor: palette.graphite, lineWidthPt: 0, behindContent: true });
     });
+    return components;
+  }
+  if (slide.recipe === "ornl-title-question-diagram") {
+    const questions = slide.nodes.filter((node) => node.component?.role === "question-item").sort((left, right) => (left.component?.ordinal ?? 0) - (right.component?.ordinal ?? 0));
+    if (questions.length) {
+      const top = Math.min(...questions.map((node) => node.frame.y));
+      const bottom = Math.max(...questions.map((node) => node.frame.y + node.frame.height));
+      components.push({ id: `studio-question-rail-${slide.slideNumber}`, kind: "rect", frame: { x: questions[0].frame.x - points(13), y: top, width: points(3), height: bottom - top, rotation: 0 }, fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true });
+      questions.slice(1).forEach((node, ordinal) => components.push({ id: `studio-question-separator-${slide.slideNumber}-${ordinal + 1}`, kind: "rect", frame: { x: node.frame.x, y: node.frame.y - points(7), width: node.frame.width, height: points(.75), rotation: 0 }, fillColor: palette.graphite, lineWidthPt: 0, behindContent: true }));
+    }
     return components;
   }
   if (slide.recipe === "ornl-title-challenges-evidence") {
@@ -671,7 +766,12 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   if (!originalSlide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
   const recipe = requestedRecipe ?? recommendedStudioRecipe(originalSlide);
   const atomRecipes: StudioLayoutRecipe[] = ["ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-card-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow"];
-  const workingScene = atomRecipes.includes(recipe) ? atomizeStudioWebSlide(scene, slideNumber) : restoreSemanticAtoms(scene, slideNumber);
+  const questionSourceIds = recipe === "ornl-title-question-diagram"
+    ? originalSlide.nodes.filter((node) => node.kind === "text" && node.role === "body" && node.sourceBinding === "editable-object" && (node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()).filter((paragraph) => paragraph.text.trim().endsWith("?")).length ?? 0) >= 3).map((node) => node.id)
+    : [];
+  const workingScene = recipe === "ornl-title-question-diagram"
+    ? atomizeStudioWebSlide(scene, slideNumber, questionSourceIds)
+    : atomRecipes.includes(recipe) ? atomizeStudioWebSlide(scene, slideNumber) : restoreSemanticAtoms(scene, slideNumber);
   const slide = workingScene.slides.find((item) => item.slideNumber === slideNumber)!;
   if (recipe === "template-layout" && !layout?.semantic) throw new Error("Choose an installed template layout with semantic regions before applying template-layout.");
   const nodes = activeNodes(slide);
@@ -682,7 +782,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   const captions = nodes.filter((node) => node.id !== eyebrow?.id && !footerNode(node) && (node.role === "caption" || node.role === "label"));
   const placements = new Map<string, StudioWebFrame>();
   const components = new Map<string, StudioWebNode["component"]>();
-  let generatedFigureTreatment: StudioFigureTreatment | undefined;
+  const generatedFigureTreatments: StudioFigureTreatment[] = [];
   const titleFrame = frame(.47, eyebrow ? .58 : .26, 12.39, eyebrow ? .68 : (title?.text?.length ?? 0) > 68 ? 1.04 : .95);
   const contentTop = emuInches(titleFrame.y + titleFrame.height) + .12;
   const contentBottom = 6.64;
@@ -698,7 +798,52 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const tables = content.filter((node) => node.kind === "table");
     const remaining = content.filter((node) => node.kind !== "table");
     const support = [...remaining, ...captions];
-    if (tables.length === 1 && support.length >= 2) {
+    const visuals = remaining.filter(meaningfulImage).sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x);
+    const connectors = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "connector" && !footerNode(node));
+    const annotations = captions.filter(shortFigureAnnotation);
+    if (tables.length === 1 && visuals.length >= 2) {
+      const relationshipAssignments = assignFigureRelationships(visuals, [...connectors, ...annotations]);
+      const relationshipIds = new Set([...connectors, ...annotations].map((node) => node.id));
+      const prose = support.filter((node) => !visuals.some((visual) => visual.id === node.id) && !relationshipIds.has(node.id));
+      const lead = prose.filter((node) => node.kind === "text" && node.sourceFrame.y < visuals[0].sourceFrame.y);
+      const reference = prose.filter((node) => node.kind === "text" && node.sourceFrame.y >= inches(6.35));
+      const middle = prose.filter((node) => !lead.includes(node) && !reference.includes(node));
+      const leadHeight = lead.length ? narrativeHeightInches(lead, 12.39, .58, .82) : 0;
+      const topFigureY = contentTop + leadHeight + (lead.length ? .10 : 0);
+      const topFigureHeight = Math.max(1.10, Math.min(1.48, contentHeight * .28));
+      const referenceHeight = reference.length ? .48 : 0;
+      const mainY = topFigureY + topFigureHeight + .18;
+      const mainBottom = contentBottom - referenceHeight - (reference.length ? .10 : 0);
+      const mainHeight = Math.max(1.55, mainBottom - mainY);
+      const leftWidth = 5.18;
+      if (lead.length) for (const [id, value] of stack(lead, frame(.47, contentTop, 12.39, leadHeight), 5)) placements.set(id, value);
+      const topVisual = visuals[0];
+      const lowerVisuals = visuals.slice(1);
+      const placeRelationshipGroup = (visual: StudioWebNode, target: StudioWebFrame, ordinal: number) => {
+        const groupNodes = [visual, ...(relationshipAssignments.get(visual.id) ?? [])];
+        for (const [id, value] of scaleSourceGroup(groupNodes, target)) placements.set(id, value);
+        generatedFigureTreatments.push({
+          id: `studio-auto-table-evidence-${slideNumber}-${ordinal}`,
+          nodeIds: groupNodes.map((node) => node.id),
+          mode: "preserve-as-unit",
+          verificationStatus: "source-locked",
+          intentSummary: ordinal === 1 ? "Preserve the source overview figure and its callout relationships as one technical evidence unit." : "Preserve the source supporting figure and its callout relationships as one technical evidence unit.",
+          informationInventory: ["All source figure pixels, labels, arrows, and relative relationships"],
+          invariants: ["Do not alter source labels, values, topology, arrows, or technical meaning."],
+          rationale: "The figure carries relationship meaning that is safer to preserve natively while the surrounding slide is recomposed.",
+          groupFrame: target,
+          lockAspectRatio: true,
+          relationshipPolicy: "preserve-internal",
+        });
+      };
+      placeRelationshipGroup(topVisual, frame(.47, topFigureY, 12.39, topFigureHeight), 1);
+      const middleHeight = middle.length ? Math.min(1.14, Math.max(.72, narrativeHeightInches(middle, leftWidth, .72, 1.14))) : 0;
+      if (middle.length) for (const [id, value] of stack(middle, frame(.47, mainY, leftWidth, middleHeight), 5)) placements.set(id, value);
+      placements.set(tables[0].id, frame(.47, mainY + middleHeight + (middle.length ? .12 : 0), leftWidth, Math.max(.72, mainHeight - middleHeight - (middle.length ? .12 : 0))));
+      if (lowerVisuals.length === 1) placeRelationshipGroup(lowerVisuals[0], frame(5.93, mainY, 6.93, mainHeight), 2);
+      else lowerVisuals.forEach((visual, index) => placeRelationshipGroup(visual, frame(5.93, mainY + index * (mainHeight / lowerVisuals.length), 6.93, mainHeight / lowerVisuals.length - .08), index + 2));
+      if (reference.length) for (const [id, value] of stack(reference, frame(5.93, mainBottom + .08, 6.93, referenceHeight), 3)) placements.set(id, value);
+    } else if (tables.length === 1 && support.length >= 2) {
       placements.set(tables[0].id, frame(.47, contentTop, 8.05, contentHeight));
       for (const [id, value] of stack(support, frame(8.90, contentTop, 3.96, contentHeight), 12)) placements.set(id, value);
     } else {
@@ -707,12 +852,85 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       for (const [id, value] of stack(tables, frame(.47, contentTop, 12.39, support.length ? Math.max(3.15, contentHeight - .72) : Math.min(contentHeight, adaptiveHeight)), 12)) placements.set(id, value);
       for (const [id, value] of stack(support, frame(.47, 5.98, 12.39, .64), 8)) placements.set(id, value);
     }
+  } else if (recipe === "ornl-title-question-diagram") {
+    const atoms = content.filter((node) => node.kind === "text" && node.sourceBinding === "semantic-atom").sort((left, right) => left.sourceTextOrder - right.sourceTextOrder);
+    const intro = atoms.find((node) => !node.text?.trim().endsWith("?"));
+    const questions = atoms.filter((node) => node.id !== intro?.id && node.text?.trim().endsWith("?")).slice(0, 6);
+    const nativeObject = slide.nodes.find((node) => node.visible && node.kind === "native-object" && !footerNode(node));
+    const embeddedNativeText = nativeObject
+      ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && node.kind === "text" && sourceFrameContains(nativeObject.sourceFrame, node.sourceFrame))
+      : [];
+    if (intro) {
+      placements.set(intro.id, frame(.58, contentTop, 3.18, .82));
+      components.set(intro.id, { groupId: `studio-question-${slideNumber}-intro`, role: "question-intro" });
+    }
+    const questionTop = contentTop + (intro ? 1.00 : .16);
+    const questionGap = .18;
+    const questionHeight = Math.max(.62, Math.min(.92, (contentBottom - questionTop - questionGap * Math.max(0, questions.length - 1)) / Math.max(1, questions.length)));
+    questions.forEach((node, ordinal) => {
+      placements.set(node.id, frame(.65, questionTop + ordinal * (questionHeight + questionGap), 3.02, questionHeight));
+      components.set(node.id, { groupId: `studio-question-${slideNumber}-${ordinal + 1}`, role: "question-item", ordinal });
+    });
+    if (nativeObject) {
+      const groupNodes = [...new Map([nativeObject, ...embeddedNativeText].map((node) => [node.id, node])).values()];
+      const target = frame(4.03, contentTop + .10, 8.83, contentHeight - .10);
+      for (const [id, value] of scaleSourceGroup(groupNodes, target)) placements.set(id, value);
+      generatedFigureTreatments.push({
+        id: `studio-auto-question-diagram-${slideNumber}`,
+        nodeIds: groupNodes.map((node) => node.id),
+        mode: "preserve-as-unit",
+        verificationStatus: "source-locked",
+        intentSummary: "Preserve the complete technical diagram and its internal glossary as the evidence that answers the source questions.",
+        informationInventory: ["Complete native PowerPoint group", "Every internal label, shape, connector, arrow, glossary entry, and spatial relationship"],
+        invariants: ["Do not alter source labels, topology, values, arrows, glossary definitions, or technical relationships."],
+        rationale: "The slide's communication job is a question rail paired with a dense relationship-bearing technical figure, so Studio gives each a dedicated region without interpreting or redrawing the source diagram.",
+        groupFrame: target,
+        lockAspectRatio: true,
+        relationshipPolicy: "preserve-internal",
+      });
+    }
+    const reserved = new Set([intro?.id, ...questions.map((node) => node.id), nativeObject?.id, ...embeddedNativeText.map((node) => node.id)].filter((id): id is string => Boolean(id)));
+    const leftovers = [...content, ...captions].filter((node) => !reserved.has(node.id) && node.sourceBinding !== "catalog-derived");
+    if (leftovers.length) for (const [id, value] of stack(leftovers, frame(.58, 6.18, 3.18, .40), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-two-column") {
-    const visual = content.find((node) => meaningfulImage(node) || node.kind === "table");
-    const left = content.filter((node) => node.id !== visual?.id);
-    for (const [id, value] of stack(left, frame(.47, 1.15, 5.78, 5.40), 18)) placements.set(id, value);
-    if (visual) placements.set(visual.id, contained(visual, frame(6.63, 1.15, 6.23, 5.40)));
-    for (const [id, value] of stack(captions, frame(6.63, 6.58, 6.23, .18), 4)) placements.set(id, value);
+    const nativeObject = slide.nodes.find((node) => node.visible && node.kind === "native-object" && !footerNode(node));
+    const visual = content.find((node) => meaningfulImage(node) || node.kind === "table") ?? nativeObject;
+    const connectors = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "connector" && !footerNode(node));
+    const figureAnnotations = captions.filter(shortFigureAnnotation);
+    const embeddedNativeText = nativeObject
+      ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && node.kind === "text" && sourceFrameContains(nativeObject.sourceFrame, node.sourceFrame))
+      : [];
+    const relationshipBearingFigure = visual && (visual.kind === "native-object" || (visual.kind === "image" && connectors.length >= 1 && figureAnnotations.length >= 2));
+    if (visual && relationshipBearingFigure) {
+      const groupNodes = [...new Map([visual, ...connectors, ...figureAnnotations, ...embeddedNativeText].map((node) => [node.id, node])).values()];
+      const groupIds = new Set(groupNodes.map((node) => node.id));
+      const narrative = [...content, ...captions].filter((node) => !groupIds.has(node.id));
+      const narrativeParagraphs = narrative.reduce((sum, node) => sum + Math.max(1, node.sourceParagraphs?.length ?? 1), 0);
+      const nativeMinimum = Math.min(2.0, .55 + narrativeParagraphs * .26);
+      const narrativeHeight = narrative.length ? narrativeHeightInches(narrative, 12.39, visual.kind === "native-object" ? nativeMinimum : .62, visual.kind === "native-object" ? 2.0 : .92) : 0;
+      if (visual.kind === "native-object") narrative.filter((node) => node.kind === "text").forEach((node, ordinal) => components.set(node.id, { groupId: `studio-native-figure-support-${slideNumber}`, role: "supporting-copy", ordinal }));
+      if (narrative.length) for (const [id, value] of stack(narrative, frame(.47, contentTop, 12.39, narrativeHeight), 6)) placements.set(id, value);
+      const target = frame(.47, contentTop + narrativeHeight + (narrative.length ? .14 : 0), 12.39, Math.max(1.25, contentHeight - narrativeHeight - (narrative.length ? .14 : 0)));
+      for (const [id, value] of scaleSourceGroup(groupNodes, target)) placements.set(id, value);
+      generatedFigureTreatments.push({
+        id: `studio-auto-technical-figure-${slideNumber}`,
+        nodeIds: groupNodes.map((node) => node.id),
+        mode: "preserve-as-unit",
+        verificationStatus: "source-locked",
+        intentSummary: visual.kind === "native-object" ? "Preserve the grouped native PowerPoint diagram as one relationship-bearing evidence unit." : "Preserve the technical figure, labels, and connectors as one relationship-bearing evidence unit.",
+        informationInventory: visual.kind === "native-object" ? ["Complete native PowerPoint group", "Every internal label, shape, connector, arrow, and spatial relationship"] : ["Source image", "All short figure labels", "All source connectors and arrows"],
+        invariants: ["Do not separate labels from their targets or alter arrows, topology, values, or technical relationships."],
+        rationale: "The source figure is visually weak but information-dense; Studio improves the page around it without guessing at its internal meaning.",
+        groupFrame: target,
+        lockAspectRatio: true,
+        relationshipPolicy: "preserve-internal",
+      });
+    } else {
+      const left = content.filter((node) => node.id !== visual?.id);
+      for (const [id, value] of stack(left, frame(.47, contentTop, 5.78, contentHeight), 18)) placements.set(id, value);
+      if (visual) placements.set(visual.id, contained(visual, frame(6.63, contentTop, 6.23, contentHeight - (captions.length ? .40 : 0))));
+      for (const [id, value] of stack(captions, frame(6.63, contentBottom - .34, 6.23, .34), 4)) placements.set(id, value);
+    }
   } else if (recipe === "ornl-title-figure-grid") {
     const visuals = content.filter(meaningfulImage);
     const remaining = content.filter((node) => node.kind !== "image");
@@ -753,7 +971,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       || (node.role === "caption" && node.sourceFrame.x < inches(6.2) && node.sourceFrame.y >= inches(4.1) && node.sourceFrame.y < inches(6.75))
     ));
     if (sourceDiagramNodes.length >= 4) {
-      generatedFigureTreatment = {
+      generatedFigureTreatments.push({
         id: `studio-auto-evidence-${slideNumber}`,
         nodeIds: sourceDiagramNodes.map((node) => node.id).slice(0, 30),
         mode: "preserve-as-unit",
@@ -765,11 +983,11 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
         groupFrame: frame(.47, 4.48, 4.50, 2.02),
         lockAspectRatio: true,
         relationshipPolicy: "preserve-internal",
-      };
+      });
     }
     const visual = content.find((node) => meaningfulImage(node));
     if (visual) placements.set(visual.id, frame(5.30, 4.48, 7.56, 1.55));
-    const reserved = new Set([assertion?.id, intro?.id, ...challenges.map((node) => node.id), visual?.id, ...(generatedFigureTreatment?.nodeIds ?? [])].filter((id): id is string => Boolean(id)));
+    const reserved = new Set([assertion?.id, intro?.id, ...challenges.map((node) => node.id), visual?.id, ...generatedFigureTreatments.flatMap((treatment) => treatment.nodeIds)].filter((id): id is string => Boolean(id)));
     const remaining = [...content, ...captions].filter((node) => !reserved.has(node.id));
     const evidenceCaptions = remaining.filter((node) => node.kind === "text").sort((left, right) => left.sourceFrame.x - right.sourceFrame.x);
     const leftCaption = evidenceCaptions[0];
@@ -850,6 +1068,8 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   } else if (recipe === "ornl-title-labeled-figure-grid") {
     const visuals = content.filter(meaningfulImage).sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x);
     const labels = captions.filter((node) => node.kind === "text");
+    const fieldConnectors = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "connector" && !footerNode(node));
+    const fieldShapes = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "shape" && /arrow/i.test(node.name) && !footerNode(node));
     const unused = new Set(labels.map((node) => node.id));
     const distance = (node: StudioWebNode, visual: StudioWebNode) => Math.abs((node.sourceFrame.y + node.sourceFrame.height / 2) - (visual.sourceFrame.y + visual.sourceFrame.height / 2));
     const takeNearest = (visual: StudioWebNode, role: "label" | "caption") => {
@@ -857,22 +1077,69 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       if (node) unused.delete(node.id);
       return node;
     };
-    if (visuals.length === 2) {
+    if (visuals.length >= 2 && fieldConnectors.length >= 1) {
+      const annotations = labels.filter(shortFigureAnnotation);
+      const diagramNodes = [...visuals, ...fieldConnectors, ...fieldShapes, ...annotations];
+      const diagramIds = new Set(diagramNodes.map((node) => node.id));
+      const prose = [...content, ...captions].filter((node) => !diagramIds.has(node.id) && !meaningfulImage(node));
+      const sourceDiagramFrame = unionStudioFrames(diagramNodes.map((node) => node.sourceFrame));
+      const lead = prose.filter((node) => node.sourceFrame.y < sourceDiagramFrame.y + inches(.12));
+      const tail = prose.filter((node) => !lead.includes(node));
+      const leadHeight = lead.length ? narrativeHeightInches(lead, 12.39, .56, .92) : 0;
+      const tailHeight = tail.length ? narrativeHeightInches(tail, 12.39, .46, .76) : 0;
+      if (lead.length) for (const [id, value] of stack(lead, frame(.47, contentTop, 12.39, leadHeight), 5)) placements.set(id, value);
+      const target = frame(.47, contentTop + leadHeight + (lead.length ? .12 : 0), 12.39, Math.max(1.35, contentHeight - leadHeight - tailHeight - (lead.length ? .12 : 0) - (tail.length ? .12 : 0)));
+      for (const [id, value] of scaleSourceGroup(diagramNodes, target)) placements.set(id, value);
+      annotations.forEach((node, ordinal) => {
+        const placed = placements.get(node.id);
+        if (placed) {
+          const horizontalAllowance = points(5);
+          const left = Math.max(target.x, placed.x - horizontalAllowance);
+          const right = Math.min(target.x + target.width, placed.x + placed.width + horizontalAllowance);
+          placements.set(node.id, { ...placed, x: left, width: Math.max(placed.width, right - left) });
+        }
+        components.set(node.id, { groupId: `studio-figure-field-${slideNumber}`, role: "technical-annotation", ordinal });
+      });
+      if (tail.length) for (const [id, value] of stack(tail, frame(.47, contentBottom - tailHeight, 12.39, tailHeight), 5)) placements.set(id, value);
+      generatedFigureTreatments.push({
+        id: `studio-auto-figure-field-${slideNumber}`,
+        nodeIds: diagramNodes.map((node) => node.id),
+        mode: "hybrid-rebuild",
+        verificationStatus: "verified",
+        intentSummary: "Preserve the multi-image technical callout field as one relationship-bearing evidence unit.",
+        informationInventory: ["All source images", "All short figure annotations", "All source connectors and arrows between the images"],
+        invariants: ["Do not detach cross-image arrows or alter source labels, values, sequence, topology, or technical meaning."],
+        rationale: "The arrows and labels cross between multiple images, so Studio scales the extracted images and editable annotations as one verified relationship field instead of taking a rectangular crop that could capture unrelated copy.",
+        groupFrame: target,
+        lockAspectRatio: true,
+        relationshipPolicy: "preserve-internal",
+      });
+      diagramNodes.forEach((node) => unused.delete(node.id));
+    } else if (visuals.length === 2) {
+      const narrative = content.filter((node) => !meaningfulImage(node));
+      const narrativeHeight = narrative.length ? narrativeHeightInches(narrative, 12.39, 1.10, 1.62) : 0;
+      const visualBottom = contentBottom - narrativeHeight - (narrative.length ? .16 : 0);
       visuals.forEach((visual, ordinal) => {
         const x = ordinal === 0 ? .47 : 6.78;
         const groupId = `studio-figure-${slideNumber}-${ordinal + 1}`;
         const label = takeNearest(visual, "label");
         const caption = takeNearest(visual, "caption");
-        placements.set(visual.id, contained(visual, frame(x, 1.58, 5.61, 3.88)));
+        const hasTwoHeaders = Boolean(label && caption);
+        const headerHeight = hasTwoHeaders ? .62 : label || caption ? .34 : 0;
+        const visualField = frame(x, contentTop + headerHeight + .08, 5.61, Math.max(.85, visualBottom - contentTop - headerHeight - .08));
+        const inset = points(8);
+        placements.set(visual.id, contained(visual, { ...visualField, x: visualField.x + inset, y: visualField.y + inset, width: visualField.width - inset * 2, height: visualField.height - inset * 2 }));
+        components.set(visual.id, { groupId, role: "figure-media", ordinal, frame: visualField });
         if (label) {
-          placements.set(label.id, frame(x, 1.18, 5.61, .26));
+          placements.set(label.id, frame(x, contentTop, 5.61, .26));
           components.set(label.id, { groupId, role: "figure-label", ordinal });
         }
         if (caption) {
-          placements.set(caption.id, frame(x, 5.68, 5.61, .72));
+          placements.set(caption.id, frame(x, contentTop + (label ? .32 : 0), 5.61, label ? .28 : .34));
           components.set(caption.id, { groupId, role: "figure-caption", ordinal });
         }
       });
+      if (narrative.length) for (const [id, value] of stack(narrative, frame(.47, visualBottom + .16, 12.39, narrativeHeight), 7)) placements.set(id, value);
     } else {
       const rowGap = .24;
       const rowHeight = Math.max(1.05, (5.42 - rowGap * Math.max(0, visuals.length - 1)) / Math.max(1, visuals.length));
@@ -881,7 +1148,10 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
         const groupId = `studio-figure-${slideNumber}-${ordinal + 1}`;
         const label = takeNearest(visual, "label");
         const caption = takeNearest(visual, "caption");
-        placements.set(visual.id, contained(visual, frame(2.16, y, 6.10, rowHeight)));
+        const visualField = frame(2.16, y, 6.10, rowHeight);
+        const inset = points(8);
+        placements.set(visual.id, contained(visual, { ...visualField, x: visualField.x + inset, y: visualField.y + inset, width: visualField.width - inset * 2, height: visualField.height - inset * 2 }));
+        components.set(visual.id, { groupId, role: "figure-media", ordinal, frame: visualField });
         if (label) {
           placements.set(label.id, frame(.47, y, 1.44, rowHeight));
           components.set(label.id, { groupId, role: "figure-label", ordinal });
@@ -892,8 +1162,10 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
         }
       });
     }
-    for (const [id, value] of stack(labels.filter((node) => unused.has(node.id)), frame(8.55, 1.18, 4.31, 5.42), 8)) placements.set(id, value);
-    for (const [id, value] of stack(content.filter((node) => !meaningfulImage(node)), frame(.47, 6.64, 12.39, .18), 4)) placements.set(id, value);
+    if (!(visuals.length >= 2 && fieldConnectors.length >= 1)) {
+      for (const [id, value] of stack(labels.filter((node) => unused.has(node.id)), frame(8.55, 1.18, 4.31, 5.42), 8)) placements.set(id, value);
+      if (visuals.length !== 2) for (const [id, value] of stack(content.filter((node) => !meaningfulImage(node)), frame(.47, 6.28, 12.39, .36), 4)) placements.set(id, value);
+    }
   } else if (recipe === "ornl-title-card-grid") {
     const bodies = content.filter((node) => node.kind === "text" && node.role === "body").sort((left, right) => left.zIndex - right.zIndex);
     const groupNodeIds = new Set<string>();
@@ -945,14 +1217,18 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     targetLayoutName: recipe === "template-layout" ? layout?.name : undefined,
     status: recipe === "source" ? "imported" : "designed",
     designRationale: (rationale ?? `Recompose exact source content with the shared ${recipe} ORNL web component recipe.`).trim().slice(0, 1_000),
-    figureTreatments: [...(slide.figureTreatments ?? []).filter((treatment) => treatment.id !== `studio-auto-evidence-${slideNumber}`), ...(generatedFigureTreatment ? [generatedFigureTreatment] : [])],
+    figureTreatments: [
+      ...(slide.figureTreatments ?? []).filter((treatment) => !treatment.id.startsWith("studio-auto-")),
+      ...generatedFigureTreatments,
+    ],
     constraints: [],
     nodes: slide.nodes.map((node) => {
       const component = recipe === "source" || recipe === "template-layout" ? undefined : components.get(node.id);
       if (!placements.has(node.id)) return { ...node, component };
       const nextNode = { ...node, component };
       const nextFrame = placements.get(node.id)!;
-      const nextStyle = component ? styleForComponent(nextNode) : styleForDesignedNode(nextNode);
+      const designedStyle = component ? styleForComponent(nextNode) : styleForDesignedNode(nextNode);
+      const nextStyle = recipe === "template-layout" ? { ...designedStyle, color: templateTextColor(layout, nextNode, nextFrame) ?? designedStyle.color } : designedStyle;
       return { ...nextNode, frame: nextFrame, style: fittedStyle(nextNode, nextStyle, nextFrame) };
     }),
     updatedAt: now,

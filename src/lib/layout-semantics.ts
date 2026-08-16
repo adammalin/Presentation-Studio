@@ -62,6 +62,7 @@ export interface TemplateLayoutSemantics {
 export interface LayoutContentProfile {
   titleCharacterCount: number;
   bodyBlockCount: number;
+  bodyBlockCharacterCounts?: number[];
   captionBlockCount: number;
   bodyCharacterCount: number;
   imageCount: number;
@@ -264,14 +265,30 @@ export function scoreLayoutCompatibility(layout: TemplateLayoutPreview, profile:
   else if (profile.bodyBlockCount > availableBody) { score -= Math.min(34, (profile.bodyBlockCount - availableBody) * 14); unmetNeeds.push(`Needs ${profile.bodyBlockCount} text regions; layout provides ${availableBody}.`); }
   else if (profile.bodyBlockCount > 0) { score += Math.min(14, profile.bodyBlockCount * 5); reasons.push(`Accommodates ${profile.bodyBlockCount} text region${profile.bodyBlockCount === 1 ? "" : "s"}.`); }
 
+  const primaryTextSlots = semantics.slots.filter((slot) => ["body", "content"].includes(slot.role));
+  const capacityCharacters = (capacity: TemplateSemanticSlot["capacity"]) => ({ micro: 45, short: 140, medium: 320, long: 900, visual: 260 })[capacity];
+  const largestBlock = Math.max(0, ...(profile.bodyBlockCharacterCounts ?? []));
+  const largestSlotCapacity = Math.max(0, ...primaryTextSlots.map((slot) => capacityCharacters(slot.capacity)));
+  if (largestBlock > 0 && largestSlotCapacity > 0 && largestBlock > largestSlotCapacity * 1.15) {
+    const ratio = largestBlock / largestSlotCapacity;
+    score -= Math.min(38, 14 + Math.ceil((ratio - 1) * 12));
+    unmetNeeds.push(`A ${largestBlock}-character text block exceeds the largest unsplit ${largestSlotCapacity}-character region.`);
+  } else if (largestBlock > 0 && largestSlotCapacity >= largestBlock) {
+    score += 4;
+    reasons.push("The largest exact text block fits one approved region without forced splitting.");
+  }
+
   const availableCaptions = semantics.capabilities.captionSlots + Math.max(0, availableBody - profile.bodyBlockCount);
   if (profile.captionBlockCount > availableCaptions) { score -= Math.min(24, (profile.captionBlockCount - availableCaptions) * 8); unmetNeeds.push(`Needs ${profile.captionBlockCount} short label regions; layout supports ${availableCaptions}.`); }
   else if (profile.captionBlockCount > 0) { score += Math.min(10, profile.captionBlockCount * 3); reasons.push(`Accommodates ${profile.captionBlockCount} short label${profile.captionBlockCount === 1 ? "" : "s"}.`); }
 
+  const bodySlotsReservedForCaptions = Math.max(0, profile.captionBlockCount - semantics.capabilities.captionSlots);
+  const fallbackVisualSlotsAvailable = Math.max(0, availableBody - profile.bodyBlockCount - bodySlotsReservedForCaptions);
+
   for (const [kind, count] of [["image", profile.imageCount], ["table", profile.tableCount], ["chart", profile.chartCount], ["media", profile.mediaCount]] as const) {
     if (count <= 0) continue;
     const capacity = compatibleVisualCapacity(layout, kind);
-    const totalCapacity = capacity.exact + capacity.fallback;
+    const totalCapacity = capacity.exact + Math.min(capacity.fallback, fallbackVisualSlotsAvailable);
     if (totalCapacity < count) { score -= Math.min(42, (count - totalCapacity) * 24); unmetNeeds.push(`Needs ${count} ${kind} region${count === 1 ? "" : "s"}; layout supports ${totalCapacity}.`); }
     else if (capacity.exact >= count) { score += Math.min(16, count * 6); reasons.push(`Provides purpose-built ${kind} capacity.`); }
     else { score += Math.min(6, count * 2); reasons.push(`Can compose ${kind} content inside a broad editable content region; native fit QA is still required.`); }

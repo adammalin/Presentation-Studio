@@ -4,20 +4,41 @@ import os from "node:os";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { auditPptx } from "../src/lib/pptx-audit";
-import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
+import { buildSlideRenderCatalog, buildTemplateCatalog } from "../src/lib/template-catalog";
+import { buildTemplatePreviewDeck } from "../src/lib/template-preview-deck";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { compileStudioWebScene, recomposeStudioWebSlide } from "../src/lib/studio-web-scene";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { analyzeStudioDesignImpact } from "../src/lib/studio-design-impact";
+import { contentProfileForSlide } from "../src/lib/design-work-order";
+import { rankLayoutCompatibility } from "../src/lib/layout-semantics";
 import { bindNativeMeasurement } from "../src/lib/native-measurement";
 import { calculateDesignMetrics } from "../src/lib/design-metrics";
 import { sha256 } from "../src/lib/hash";
+import { isolateNativePowerPointObjects } from "../src/lib/native-object-isolation";
 import type { NativeMeasurementResult, NativeRenderResult } from "../src/lib/desktop";
 import type { DeckJob, StudioWebScene } from "../src/types";
 
 const require = createRequire(import.meta.url);
 const { measurePowerPointNative } = require("../electron/native-measurement.cjs") as { measurePowerPointNative(input: { bytes: Uint8Array; name: string }): Promise<NativeMeasurementResult> };
 const { renderPowerPointNative } = require("../electron/native-render.cjs") as { renderPowerPointNative(input: { bytes: Uint8Array; name: string; width: number; format: "png" }): Promise<NativeRenderResult> };
+
+async function retryNative<T extends { status: string }>(operation: () => Promise<T>, accepted: (result: T) => boolean): Promise<T> {
+  let result = await operation();
+  for (let attempt = 2; attempt <= 3 && !accepted(result); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+    result = await operation();
+  }
+  return result;
+}
+
+function renderNative(input: { bytes: Uint8Array; name: string; width: number; format: "png" }) {
+  return retryNative(() => renderPowerPointNative(input), (result) => result.status === "ready" && result.renderer === "powerpoint-native" && result.authoritative);
+}
+
+function measureNative(input: { bytes: Uint8Array; name: string }) {
+  return retryNative(() => measurePowerPointNative(input), (result) => result.status === "ready" && result.authority === "powerpoint-native");
+}
 
 function argument(name: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -93,7 +114,14 @@ function nativeTextOverflowEvidence(native: NativeMeasurementResult, audit: Awai
   }));
 }
 
-export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers: number[], outputRoot: string, benchmarkPath?: string, expected?: { sourceSha256?: string; benchmarkSha256?: string }) {
+export async function qualifyStudioWebBenchmark(
+  sourcePath: string,
+  slideNumbers: number[],
+  outputRoot: string,
+  benchmarkPath?: string,
+  expected?: { sourceSha256?: string; benchmarkSha256?: string },
+  options?: { templatePath?: string; designMode?: "shared" | "template" },
+) {
   await fs.mkdir(outputRoot, { recursive: true });
   const sourceBytes = new Uint8Array(await fs.readFile(sourcePath));
   const sourceAudit = await auditPptx(sourceBytes);
@@ -103,7 +131,7 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
   const sourceDeck: DeckJob = { id: "studio-web-benchmark-source", name: path.basename(sourcePath), sourceResourceId: "studio-web-benchmark-source-resource", sourceSha256, operationScope: "reflow", templateClassification: sourceAudit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", targetTemplateConfirmedAt: new Date().toISOString(), status: "ready-for-cleanup", audit: sourceAudit, protectedSlideNumbers: [] };
   sourceDeck.scene = compilePresentationScene({ ...sourceDeck, audit: sourceAudit });
   const catalog = await buildSlideRenderCatalog(sourceBytes, path.basename(sourcePath));
-  const sourceRender = await renderPowerPointNative({ bytes: sourceBytes, name: path.basename(sourcePath), width: 2200, format: "png" });
+  const sourceRender = await renderNative({ bytes: sourceBytes, name: path.basename(sourcePath), width: 2200, format: "png" });
   if (sourceRender.status !== "ready" || sourceRender.renderer !== "powerpoint-native" || !sourceRender.authoritative) {
     throw new Error(`The private benchmark requires an authoritative Microsoft PowerPoint source render; received ${sourceRender.status} from ${sourceRender.renderer}.`);
   }
@@ -112,14 +140,51 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
     width: slide.width,
     height: slide.height,
   }]));
+  const designMode = options?.designMode ?? "shared";
+  const templateBytes = options?.templatePath ? new Uint8Array(await fs.readFile(options.templatePath)) : undefined;
+  if (designMode === "template" && !templateBytes) throw new Error("Template benchmark mode requires --template /absolute/path/to/authorized-template.potx.");
+  const templateCatalog = templateBytes ? await buildTemplateCatalog(templateBytes, path.basename(options!.templatePath!)) : undefined;
+  let templateLayoutRasters: Record<string, { data: string; width: number; height: number }> | undefined;
+  if (templateBytes && templateCatalog) {
+    const preview = await buildTemplatePreviewDeck(templateBytes);
+    if (preview.layoutParts.length !== templateCatalog.layouts.length || preview.layoutParts.some((part, index) => part !== templateCatalog.layouts[index]?.sourcePart)) throw new Error("The template benchmark layout order does not match the authorized Template Pack catalog.");
+    const templateRender = await renderNative({ bytes: preview.bytes, name: `${path.parse(options!.templatePath!).name}-layout-previews.pptx`, width: 2200, format: "png" });
+    if (templateRender.status !== "ready" || templateRender.renderer !== "powerpoint-native" || !templateRender.authoritative || templateRender.slides.length !== templateCatalog.layouts.length) throw new Error("The template benchmark requires an authoritative native render for every authorized Template Pack layout.");
+    templateLayoutRasters = Object.fromEntries(templateCatalog.layouts.map((layout, index) => {
+      const raster = templateRender.slides.find((slide) => slide.number === index + 1)!;
+      return [layout.id, { data: `data:${raster.mimeType};base64,${Buffer.from(raster.bytes).toString("base64")}`, width: raster.width, height: raster.height }];
+    }));
+  }
   let scene = compileStudioWebScene(sourceDeck, catalog);
   const mappingCompleteBeforeDesign = slideNumbers.every((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)?.contentCoverage.exactTextMapped);
-  for (const slideNumber of slideNumbers) scene = recomposeStudioWebSlide(scene, slideNumber);
+  for (const slideNumber of slideNumbers) {
+    if (designMode === "template" && templateCatalog) {
+      const recommendation = rankLayoutCompatibility(templateCatalog.layouts, contentProfileForSlide(sourceDeck, slideNumber))[0];
+      const layout = templateCatalog.layouts.find((item) => item.id === recommendation?.layoutId);
+      if (!layout || recommendation?.status === "incompatible") throw new Error(`No compatible authorized Template Pack layout is available for source slide ${slideNumber}.`);
+      scene = recomposeStudioWebSlide(scene, slideNumber, "template-layout", layout, `Benchmark the exact source content in the recommended authorized ${layout.name} Template Pack layout.`);
+    } else scene = recomposeStudioWebSlide(scene, slideNumber);
+  }
   scene = { ...scene, slides: slideNumbers.map((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)!).filter(Boolean) } as StudioWebScene;
+  const sourceFigureRasters: Record<string, { data: string; width: number; height: number }> = {};
+  for (const slide of scene.slides) {
+    for (const treatment of slide.figureTreatments.filter((item) => ["source-locked", "verified"].includes(item.verificationStatus))) {
+      const shapeIds = treatment.nodeIds.map((id) => slide.nodes.find((node) => node.id === id)).filter((node) => node?.sourceBinding === "editable-object").map((node) => node!.sourceShapeId);
+      if (!shapeIds.length) continue;
+      const isolated = await isolateNativePowerPointObjects({ sourceBytes, slideNumber: slide.slideNumber, shapeIds });
+      const rendered = await renderNative({ bytes: isolated.bytes, name: `source-slide-${slide.slideNumber}-${treatment.id}.pptx`, width: 2200, format: "png" });
+      const raster = rendered.status === "ready" ? rendered.slides[0] : undefined;
+      if (!raster || rendered.slides.length !== 1) throw new Error(`The private benchmark could not create an object-isolated PowerPoint render for ${treatment.id}.`);
+      sourceFigureRasters[treatment.id] = { data: `data:${raster.mimeType};base64,${Buffer.from(raster.bytes).toString("base64")}`, width: raster.width, height: raster.height };
+    }
+  }
   const composition = await buildStudioCompositionPptx(scene, {
     catalog,
+    templateCatalog,
     sourceSlideRasters,
+    sourceFigureRasters,
     sourceSlideText: Object.fromEntries(sourceAudit.slides.map((slide) => [slide.number, slide.text])),
+    templateLayoutRasters,
     strict: true,
     title: "Presentation Studio native benchmark",
   });
@@ -127,10 +192,10 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
   await fs.writeFile(candidatePath, composition.bytes);
   const candidateAudit = await auditPptx(composition.bytes);
   const rebuiltDeck = await candidateDeck(candidateAudit, composition.bytes, path.basename(candidatePath));
-  const nativeMeasurement = await measurePowerPointNative({ bytes: composition.bytes, name: path.basename(candidatePath) });
+  const nativeMeasurement = await measureNative({ bytes: composition.bytes, name: path.basename(candidatePath) });
   const measurement = bindNativeMeasurement(rebuiltDeck, nativeMeasurement);
   const metrics = calculateDesignMetrics(rebuiltDeck, measurement);
-  const candidateRender = await renderPowerPointNative({ bytes: composition.bytes, name: path.basename(candidatePath), width: 2200, format: "png" });
+  const candidateRender = await renderNative({ bytes: composition.bytes, name: path.basename(candidatePath), width: 2200, format: "png" });
   const candidateImages = await writeRender(candidateRender, outputRoot, "candidate", slideNumbers, true);
   const sourceImages = await writeRender(sourceRender, outputRoot, "source", slideNumbers);
   let benchmarkImages: string[] = [];
@@ -140,7 +205,7 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
     const benchmarkBytes = new Uint8Array(await fs.readFile(benchmarkPath));
     benchmarkSha256 = await sha256(benchmarkBytes);
     if (expected?.benchmarkSha256 && expected.benchmarkSha256 !== benchmarkSha256) throw new Error(`The private visual-benchmark hash changed. Expected ${expected.benchmarkSha256}, received ${benchmarkSha256}.`);
-    const benchmarkRender = await renderPowerPointNative({ bytes: benchmarkBytes, name: path.basename(benchmarkPath), width: 2200, format: "png" });
+    const benchmarkRender = await renderNative({ bytes: benchmarkBytes, name: path.basename(benchmarkPath), width: 2200, format: "png" });
     benchmarkRenderStatus = benchmarkRender.status;
     benchmarkImages = await writeRender(benchmarkRender, outputRoot, "visual-benchmark");
   }
@@ -157,14 +222,16 @@ export async function qualifyStudioWebBenchmark(sourcePath: string, slideNumbers
     noNativeTableCellClearanceViolations: metrics.totals.tableCellClearanceViolationCount === 0,
     noOffSlideObjects: metrics.totals.offSlideObjectCount === 0,
     materialCompositionBeyondTypography: designImpact.every((impact) => ["layout-redesign", "figure-redesign", "full-redesign"].includes(impact.level)),
+    ...(designMode === "template" ? { authorizedTemplateArtworkApplied: scene.slides.every((slide) => slide.recipe === "template-layout" && Boolean(slide.targetLayoutId) && composition.warnings.some((warning) => warning.startsWith(`Slide ${slide.slideNumber}: approved `))) } : {}),
   };
   const report = {
     schema: "presentation-studio/studio-web-benchmark",
     version: 1,
     generatedAt: new Date().toISOString(),
     source: { path: sourcePath, sha256: sourceSha256, slideNumbers },
+    template: templateCatalog ? { path: options?.templatePath, name: templateCatalog.name, sha256: templateCatalog.sha256, designMode, layoutCount: templateCatalog.layouts.length } : undefined,
     benchmark: benchmarkPath ? { path: benchmarkPath, sha256: benchmarkSha256, renderStatus: benchmarkRenderStatus } : undefined,
-    candidate: { path: candidatePath, sha256: await sha256(composition.bytes), recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, recipe: slide.recipe, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, ...composition },
+    candidate: { path: candidatePath, sha256: await sha256(composition.bytes), recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, ...composition },
     metrics,
     nativeTextOverflowEvidence: nativeTextOverflowEvidence(nativeMeasurement, candidateAudit),
     designImpact,
@@ -181,7 +248,9 @@ if (path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1
   const sourcePath = argument("source");
   if (!sourcePath) throw new Error("Use --source /absolute/path/to/source.pptx.");
   const outputRoot = argument("output") ?? path.join(os.tmpdir(), "presentation-studio-web-benchmark");
-  qualifyStudioWebBenchmark(sourcePath, requestedSlides(argument("slides")), outputRoot, argument("benchmark"), { sourceSha256: argument("source-sha256"), benchmarkSha256: argument("benchmark-sha256") }).then(({ report, reportPath }) => {
+  const designMode = argument("design-mode") ?? "shared";
+  if (!["shared", "template"].includes(designMode)) throw new Error("--design-mode must be shared or template.");
+  qualifyStudioWebBenchmark(sourcePath, requestedSlides(argument("slides")), outputRoot, argument("benchmark"), { sourceSha256: argument("source-sha256"), benchmarkSha256: argument("benchmark-sha256") }, { templatePath: argument("template"), designMode: designMode as "shared" | "template" }).then(({ report, reportPath }) => {
     process.stdout.write(`${JSON.stringify({ readyForHumanVisualReview: report.readyForHumanVisualReview, checks: report.checks, candidate: report.candidate.path, report: reportPath, renders: report.renders }, null, 2)}\n`);
     if (!report.readyForHumanVisualReview) process.exitCode = 1;
   }).catch((error) => {

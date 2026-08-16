@@ -285,7 +285,7 @@ const studioNodeSchema = z.object({
     cells: z.array(z.object({ id: z.string().min(1), row: z.number().int().positive(), column: z.number().int().positive(), rowSpan: z.number().int().positive(), columnSpan: z.number().int().positive(), text: z.string(), textRuns: z.array(z.string()).optional(), paragraphRunCounts: z.array(z.number().int().nonnegative()).optional(), runBreaksBefore: z.array(z.enum(["none", "line", "paragraph"])).optional(), fill: z.string().optional(), semanticColorRole: z.string().optional() })),
   }).optional(),
   mediaPart: z.string().optional(),
-  component: z.object({ groupId: z.string().min(1), role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "objective-body", "step-heading", "step-body", "figure-label", "figure-caption", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"]), ordinal: z.number().int().nonnegative().optional() }).optional(),
+  component: z.object({ groupId: z.string().min(1), role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"]), ordinal: z.number().int().nonnegative().optional(), frame: studioFrameSchema.optional() }).optional(),
   opticalInsets: z.object({
     left: z.number().nonnegative(), top: z.number().nonnegative(), right: z.number().nonnegative(), bottom: z.number().nonnegative(),
     authority: z.enum(["scene-frame", "source-estimate", "powerpoint-native"]),
@@ -316,7 +316,7 @@ const studioWebSceneSchema = z.object({
   sourceSlideSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
   rhythm: z.object({ safeMarginPt: z.number().positive(), gridPt: z.number().positive(), compactGapPt: z.number().nonnegative(), normalGapPt: z.number().nonnegative(), primaryGapPt: z.number().nonnegative(), captionGapPt: z.number().nonnegative(), titleContentGapPt: z.number().nonnegative() }).optional(),
   designMemory: z.array(z.object({
-    contentSignature: z.string().min(1).max(300), recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]), targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(),
+    contentSignature: z.string().min(1).max(300), recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]), targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(),
     rhythm: z.object({ safeMarginPt: z.number().positive(), gridPt: z.number().positive(), compactGapPt: z.number().nonnegative(), normalGapPt: z.number().nonnegative(), primaryGapPt: z.number().nonnegative(), captionGapPt: z.number().nonnegative(), titleContentGapPt: z.number().nonnegative() }),
     adoptedFromSlideNumber: z.number().int().positive(), qualityRasterSha256: z.string().length(64), recordedAt: isoTimestamp,
   })).max(80).default([]),
@@ -324,7 +324,7 @@ const studioWebSceneSchema = z.object({
   slides: z.array(z.object({
     id: z.string().min(1), slideNumber: z.number().int().positive(), sourceSlideId: z.string().min(1), sourceTextHash: z.string().regex(/^[0-9a-f]{64}$/), sourceRevision: z.string().min(1),
     contentCoverage: z.object({ exactTextMapped: z.boolean(), sourceCharacterCount: z.number().int().nonnegative(), mappedCharacterCount: z.number().int().nonnegative(), sourceTextBoxCount: z.number().int().nonnegative(), mappedTextNodeCount: z.number().int().nonnegative(), groupedOrUnsupportedTextPresent: z.boolean() }),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
     targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000),
     figureTreatments: z.array(z.object({
       id: z.string().min(1).max(180),

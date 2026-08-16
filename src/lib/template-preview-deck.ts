@@ -29,6 +29,19 @@ function minimalSlideXml(): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
 }
 
+function withoutSlideNumberPlaceholders(xml: string): string {
+  // A native layout-preview deck has one synthetic slide per layout. Leaving
+  // the inherited slide-number placeholder enabled bakes that preview ordinal
+  // into the raster (layout 6 becomes a visible "6") and is unsafe to reuse as
+  // exported template artwork. Strip only the slide-number shape from this
+  // disposable preview package; the installed template bytes remain untouched.
+  return xml.replace(/<p:sp\b[\s\S]*?<\/p:sp>/g, (shape) =>
+    /<p:ph\b[^>]*\btype=(?:"sldNum"|'sldNum')[^>]*\/?\s*>/.test(shape)
+      || /<a:fld\b[^>]*\btype=(?:"slidenum"|'slidenum')[^>]*>/.test(shape)
+      ? ""
+      : shape);
+}
+
 export async function buildTemplatePreviewDeck(templateBytes: Uint8Array): Promise<{ bytes: Uint8Array; layoutParts: string[] }> {
   if (templateBytes.byteLength < 100 || templateBytes.byteLength > 250 * 1024 * 1024) throw new Error("The installed template cannot be materialized safely.");
   const zip = await JSZip.loadAsync(templateBytes, { checkCRC32: true });
@@ -41,6 +54,12 @@ export async function buildTemplatePreviewDeck(templateBytes: Uint8Array): Promi
 
   for (const part of Object.keys(zip.files)) {
     if (/^ppt\/slides\/slide\d+\.xml$/i.test(part) || /^ppt\/slides\/_rels\/slide\d+\.xml\.rels$/i.test(part)) zip.remove(part);
+  }
+
+  for (const part of Object.keys(zip.files)) {
+    if (!/^ppt\/(?:slideMasters\/slideMaster|slideLayouts\/slideLayout)\d+\.xml$/i.test(part)) continue;
+    const file = zip.file(part);
+    if (file) zip.file(part, withoutSlideNumberPlaceholders(await file.async("string")));
   }
 
   let relationships = await relationshipsFile.async("string");

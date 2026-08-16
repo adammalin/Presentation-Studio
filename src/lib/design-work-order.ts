@@ -25,6 +25,7 @@ export function contentProfileForSlide(deck: DeckJob, slideNumber: number): Layo
   const primaryBodyTextBoxes = bodyTextBoxes.filter((textBox) => !captionTextBoxes.includes(textBox));
   const fallbackBodyCharacters = Math.max(0, slide.text.length - slide.title.length);
   const bodyCharacterCount = primaryBodyTextBoxes.length ? primaryBodyTextBoxes.reduce((sum, textBox) => sum + textBox.characterCount, 0) : bodyTextBoxes.length ? 0 : fallbackBodyCharacters;
+  const bodyBlockCharacterCounts = primaryBodyTextBoxes.length ? primaryBodyTextBoxes.map((textBox) => textBox.characterCount) : bodyTextBoxes.length ? [] : fallbackBodyCharacters > 0 ? [fallbackBodyCharacters] : [];
   const normalizedTitle = slide.title.toLowerCase();
   const desiredIntent: TemplateLayoutIntent = slideNumber === 1 ? "cover"
     : /\b(conclusion|summary|questions?|thank you)\b/.test(normalizedTitle) ? "conclusion"
@@ -35,6 +36,7 @@ export function contentProfileForSlide(deck: DeckJob, slideNumber: number): Layo
   return {
     titleCharacterCount: slide.title.trim().length,
     bodyBlockCount: primaryBodyTextBoxes.length || !textBoxes.length && fallbackBodyCharacters > 0 ? Math.max(1, primaryBodyTextBoxes.length) : 0,
+    bodyBlockCharacterCounts,
     captionBlockCount: captionTextBoxes.length,
     bodyCharacterCount,
     imageCount: slide.pictureCount,

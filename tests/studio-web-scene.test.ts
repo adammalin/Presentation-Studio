@@ -91,6 +91,155 @@ test("source-locked figure treatments preserve the technical object and add one 
   assert.throws(() => updateStudioFigureTreatment(source, figureNode.slide.slideNumber, { ...slide.figureTreatments[0], mode: "redraw-candidate", verificationStatus: "source-locked" }), /needs-content-review/i);
 });
 
+test("two labeled figures reserve a real narrative region instead of squeezing exact copy into a footer strip", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const node = (id: string, kind: StudioWebNode["kind"], role: StudioWebNode["role"], x: number, y: number, width: number, height: number, text?: string): StudioWebNode => ({
+    ...seed,
+    id,
+    sourceObjectId: id,
+    sourceShapeId: id,
+    name: id,
+    kind,
+    role,
+    text,
+    sourceParagraphs: text ? [{ index: 1, text, textHash: seed.textHash ?? "hash", characterCount: text.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [18] }] : undefined,
+    sourceFrame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 },
+    frame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 },
+    zIndex: Number(id.match(/\d+/)?.[0] ?? 0),
+    visible: true,
+    locked: false,
+  });
+  const longNarrative = "Step 1: Use the first exact source view. Step 2: Compare the second exact source view. Once the project is loaded, retain every approved instruction and technical qualifier without rewriting or hiding it in a footer-sized frame.";
+  const nodes = [
+    node("title-1", "text", "title", .34, .4, 12.57, .48, "Setup"),
+    node("body-2", "text", "body", .34, 1.9, 12.57, 4.4, longNarrative),
+    node("caption-3", "text", "caption", 2.2, 2.2, 2, .3, "First source view"),
+    node("caption-4", "text", "caption", 8.4, 2.2, 2, .3, "Second source view"),
+    node("image-5", "image", "image", 1.5, 2.7, 4.1, 2.1),
+    node("image-6", "image", "image", 8.4, 2.4, 2.4, 3.4),
+  ];
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes }] }, sourceSlide.slideNumber, "ornl-title-labeled-figure-grid");
+  const slide = designed.slides[0];
+  const body = slide.nodes.find((candidate) => candidate.id === "body-2")!;
+  const images = slide.nodes.filter((candidate) => candidate.kind === "image");
+  const visualFields = images.map((image) => image.component?.frame);
+  assert.ok(body.frame.height >= emu(1.09));
+  assert.ok(images.every((image) => image.frame.y + image.frame.height <= body.frame.y));
+  assert.ok(body.frame.y + body.frame.height <= emu(6.65));
+  assert.equal(images.every((image) => image.component?.role === "figure-media"), true);
+  assert.equal(visualFields.every(Boolean), true);
+  assert.equal(visualFields[0]?.width, visualFields[1]?.width);
+  assert.equal(visualFields[0]?.height, visualFields[1]?.height);
+  assert.ok(Math.abs(images[0].frame.width / images[0].frame.height - images[0].sourceFrame.width / images[0].sourceFrame.height) < .001);
+  assert.ok(Math.abs(images[1].frame.width / images[1].frame.height - images[1].sourceFrame.width / images[1].sourceFrame.height) < .001);
+  assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.endsWith("-visual-field")).length, 2);
+});
+
+test("cross-image callouts remain one source-locked evidence field instead of becoming detached cards", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const make = (id: string, kind: StudioWebNode["kind"], role: StudioWebNode["role"], x: number, y: number, width: number, height: number, text?: string): StudioWebNode => ({ ...seed, id, sourceObjectId: id, sourceShapeId: id, name: id, kind, role, text, sourceParagraphs: text ? [{ index: 1, text, textHash: seed.textHash ?? "hash", characterCount: text.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [14] }] : undefined, sourceFrame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, frame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, zIndex: Number(id.match(/\d+/)?.[0] ?? 0), visible: true, locked: false });
+  const nodes = [
+    make("title-1", "text", "title", .3, .4, 12.5, .5, "Technical sequence"),
+    make("body-2", "text", "body", .3, 1.2, 12.5, .6, "Use the exact source relationship field."),
+    make("image-3", "image", "image", 1.1, 2.2, 3, 2),
+    make("image-4", "image", "image", 7.8, 2.2, 3, 2),
+    make("caption-5", "text", "caption", .6, 2.5, 1.3, .3, "Input"),
+    make("caption-6", "text", "caption", 10.9, 2.5, 1.3, .3, "Output"),
+    make("connector-7", "connector", "connector", 3.9, 2.8, 4.1, .4),
+  ];
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes }] }, sourceSlide.slideNumber, "ornl-title-labeled-figure-grid");
+  const treatment = designed.slides[0].figureTreatments.find((candidate) => candidate.id.startsWith("studio-auto-figure-field"));
+  assert.ok(treatment);
+  assert.deepEqual(new Set(treatment.nodeIds), new Set(["image-3", "image-4", "caption-5", "caption-6", "connector-7"]));
+  assert.equal(treatment.relationshipPolicy, "preserve-internal");
+  assert.equal(treatment.mode, "hybrid-rebuild");
+  assert.equal(treatment.verificationStatus, "verified");
+});
+
+test("a grouped native diagram is automatically preserved while surrounding narrative remains editable", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const makeText = (id: string, text: string, binding: StudioWebNode["sourceBinding"], x: number, y: number, width: number, height: number): StudioWebNode => ({ ...seed, id, sourceObjectId: id, sourceShapeId: id, sourceBinding: binding, name: id, kind: "text", role: "body", text, sourceParagraphs: [{ index: 1, text, textHash: seed.textHash ?? "hash", characterCount: text.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [14] }], sourceFrame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, frame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, visible: true, locked: false });
+  const title = { ...makeText("title", "Theory revisit", "editable-object", .3, .4, 12.5, .5), role: "title" as const };
+  const narrative = makeText("narrative", "Where is the point of interconnection? Where is the main transformer? Preserve every exact question.", "editable-object", .3, 1.2, 12.5, 1.1);
+  const native: StudioWebNode = { ...seed, id: "native-group", sourceObjectId: "native-group", sourceShapeId: "native-group", sourceBinding: "editable-object", name: "Grouped native diagram", kind: "native-object", role: "group", text: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(2.8), y: emu(2.5), width: emu(10), height: emu(4) , rotation: 0 }, frame: { x: emu(2.8), y: emu(2.5), width: emu(10), height: emu(4), rotation: 0 }, visible: true, locked: true };
+  const embedded = makeText("embedded-label", "POI", "catalog-derived", 8.3, 3.2, .8, .3);
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, narrative, native, embedded] }] }, sourceSlide.slideNumber);
+  const slide = designed.slides[0];
+  const treatment = slide.figureTreatments.find((candidate) => candidate.id.startsWith("studio-auto-technical-figure"));
+  assert.equal(slide.recipe, "ornl-title-two-column");
+  assert.ok(treatment?.nodeIds.includes(native.id));
+  assert.ok(treatment?.nodeIds.includes(embedded.id));
+  assert.ok(slide.nodes.find((candidate) => candidate.id === narrative.id)!.frame.height >= emu(.8));
+  assert.ok(!treatment?.nodeIds.includes(narrative.id));
+});
+
+test("question-and-diagram recipe atomizes exact questions and preserves the complete native evidence unit", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const paragraphTexts = [
+    "Revisit the exact source model before comparing the evidence.",
+    "Where is the point of interconnection?",
+    "Which equipment defines the first boundary?",
+    "How do the grouped systems relate?",
+    "Which glossary terms explain the diagram?",
+  ];
+  const bodyText = paragraphTexts.join("\n");
+  const body: StudioWebNode = {
+    ...seed,
+    id: "question-body",
+    sourceObjectId: "question-body",
+    sourceShapeId: "question-body",
+    sourceBinding: "editable-object",
+    name: "Question body",
+    kind: "text",
+    role: "body",
+    text: bodyText,
+    textHash: await sha256Text(bodyText),
+    sourceParagraphs: await Promise.all(paragraphTexts.map(async (text, index) => ({ index: index + 1, text, textHash: await sha256Text(text), characterCount: text.length, bullet: false, bulletConfidence: "direct" as const, level: 0, fontFamilies: ["Aptos"], fontSizes: [18] }))),
+    sourceFrame: { x: emu(.34), y: emu(1.26), width: emu(12.57), height: emu(4.4), rotation: 0 },
+    frame: { x: emu(.34), y: emu(1.26), width: emu(12.57), height: emu(4.4), rotation: 0 },
+    visible: true,
+    locked: false,
+  };
+  const title: StudioWebNode = { ...body, id: "question-title", sourceObjectId: "question-title", sourceShapeId: "question-title", name: "Question title", role: "title", text: "Theory revisit", textHash: await sha256Text("Theory revisit"), sourceParagraphs: [{ index: 1, text: "Theory revisit", textHash: await sha256Text("Theory revisit"), characterCount: 14, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [18] }], sourceFrame: { x: emu(.34), y: emu(.4), width: emu(12.57), height: emu(.48), rotation: 0 }, frame: { x: emu(.34), y: emu(.4), width: emu(12.57), height: emu(.48), rotation: 0 } };
+  const native: StudioWebNode = { ...seed, id: "question-native", sourceObjectId: "question-native", sourceShapeId: "question-native", sourceBinding: "editable-object", name: "Grouped technical diagram", kind: "native-object", role: "group", text: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(2.83), y: emu(2.53), width: emu(10.08), height: emu(4), rotation: 0 }, frame: { x: emu(2.83), y: emu(2.53), width: emu(10.08), height: emu(4), rotation: 0 }, visible: true, locked: true };
+  const glossaryText = "POI: exact source definition";
+  const embedded: StudioWebNode = { ...body, id: "question-glossary", sourceObjectId: "question-glossary", sourceShapeId: "question-glossary", sourceBinding: "catalog-derived", name: "Diagram glossary", text: glossaryText, textHash: await sha256Text(glossaryText), sourceParagraphs: [{ index: 1, text: glossaryText, textHash: await sha256Text(glossaryText), characterCount: glossaryText.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [12] }], sourceFrame: { x: emu(8.1), y: emu(5.7), width: emu(3.2), height: emu(.7), rotation: 0 }, frame: { x: emu(8.1), y: emu(5.7), width: emu(3.2), height: emu(.7), rotation: 0 } };
+  const source = { ...scene, slides: [{ ...sourceSlide, nodes: [title, body, native, embedded] }] };
+  assert.equal(recommendedStudioRecipe(source.slides[0]), "ornl-title-question-diagram");
+  const designed = recomposeStudioWebSlide(source, sourceSlide.slideNumber);
+  const slide = designed.slides[0];
+  const questions = slide.nodes.filter((node) => node.component?.role === "question-item");
+  const intro = slide.nodes.find((node) => node.component?.role === "question-intro");
+  const treatment = slide.figureTreatments.find((candidate) => candidate.id.startsWith("studio-auto-question-diagram"));
+  assert.equal(slide.recipe, "ornl-title-question-diagram");
+  assert.equal(intro?.text, paragraphTexts[0]);
+  assert.deepEqual(questions.map((node) => node.text), paragraphTexts.slice(1));
+  assert.equal(questions.every((node) => node.sourceBinding === "semantic-atom"), true);
+  assert.ok(treatment?.nodeIds.includes(native.id));
+  assert.ok(treatment?.nodeIds.includes(embedded.id));
+  assert.equal(treatment?.verificationStatus, "source-locked");
+  assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("question-rail")).length, 1);
+  assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("question-separator")).length, 3);
+  const visibleText = slide.nodes.filter((node) => node.visible && node.kind === "text").map((node) => node.text).filter((text): text is string => Boolean(text));
+  assert.deepEqual(new Set(visibleText), new Set(["Theory revisit", ...paragraphTexts, glossaryText]));
+});
+
 test("comparison-card recipe ignores footer furniture and composes repeated semantic groups", async () => {
   const { deck, catalog } = await fixture();
   const scene = compileStudioWebScene(deck, catalog);
@@ -296,6 +445,7 @@ test("fresh composition builds converted template artwork into the same editable
     layouts: [{ id: "installed-layout", name: "ORNL content", category: "content" as const, background: "#FFFFFF", placeholderTypes: ["title", "body"], sourcePart: "ppt/slideLayouts/slideLayout1.xml", elements: [
       { id: "brand-rule", kind: "shape" as const, name: "ORNL brand rule", x: 420_000, y: 900_000, width: 1_000_000, height: 32_000, rotation: 0, geometry: "rect" as const, fill: "#007833", origin: "master" as const },
       { id: "brand-image", kind: "image" as const, name: "ORNL brand image", x: 10_900_000, y: 6_300_000, width: 700_000, height: 300_000, rotation: 0, geometry: "rect" as const, mediaId: "template-logo", origin: "master" as const },
+      { id: "unused-panel", kind: "shape" as const, name: "Unused semantic panel", x: 8_000_000, y: 1_500_000, width: 3_000_000, height: 400_000, rotation: 0, geometry: "rect" as const, fill: "#00662C", placeholderType: "body", origin: "layout" as const },
     ] }],
     media: { "template-logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=" },
     generatedAt: "2026-08-13T16:00:00.000Z",
@@ -304,7 +454,51 @@ test("fresh composition builds converted template artwork into the same editable
   const audited = await auditPptx(rebuilt.bytes);
   assert.equal(rebuilt.slideCount, 1);
   assert.equal(audited.pictures.some((picture) => picture.name === "Template · ORNL brand image"), true);
+  assert.equal(audited.editableObjects.some((object) => object.name === "Template panel · Unused semantic panel"), false);
+  const occupiedFrame = { x: 8_000_000, y: 1_500_000, width: 3_000_000, height: 400_000, rotation: 0 };
+  const firstVisibleNode = sourceSlide.nodes.find((node) => node.visible)!;
+  const occupiedScene: StudioWebScene = {
+    ...templateScene,
+    slides: [{ ...templateScene.slides[0], nodes: templateScene.slides[0].nodes.map((node) => node.id === firstVisibleNode.id ? { ...node, frame: occupiedFrame } : node) }],
+  };
+  const occupied = await buildStudioCompositionPptx(occupiedScene, { catalog, templateCatalog, strict: false });
+  const occupiedAudit = await auditPptx(occupied.bytes);
+  assert.equal(occupiedAudit.editableObjects.some((object) => object.name === "Template panel · Unused semantic panel"), true);
   assert.ok(rebuilt.bytes.length > 0);
+});
+
+test("fresh composition contains extracted images without distorting their source aspect ratio", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.visible)!;
+  const imageNode: StudioWebNode = {
+    ...seed,
+    id: "contained-image",
+    sourceObjectId: "contained-image",
+    sourceShapeId: "contained-image",
+    name: "Contained evidence image",
+    kind: "image",
+    role: "image",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    sourceFrame: { x: 0, y: 0, width: 4 * 914_400, height: 2 * 914_400, rotation: 0 },
+    frame: { x: 5 * 914_400, y: 2 * 914_400, width: 3 * 914_400, height: 3 * 914_400, rotation: 0 },
+    mediaPart: "contained-image.png",
+    style: { ...seed.style, objectFit: "contain" },
+    visible: true,
+    locked: false,
+  };
+  const scene: StudioWebScene = { ...source, slides: [{ ...sourceSlide, recipe: "ornl-title-content", status: "designed", nodes: [...sourceSlide.nodes, imageNode] }] };
+  const rebuilt = await buildStudioCompositionPptx(scene, {
+    catalog: { ...catalog, media: { ...catalog.media, "contained-image.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=" } },
+    strict: false,
+  });
+  const audited = await auditPptx(rebuilt.bytes);
+  const image = audited.pictures.find((picture) => picture.name.includes("Contained evidence image"));
+  assert.ok(image?.widthEmu && image.heightEmu);
+  assert.ok(Math.abs(image.widthEmu / image.heightEmu - 2) < .01);
 });
 
 test("build-all planning preserves source slides and routes each designed slide to its truthful PowerPoint compiler", async () => {
@@ -416,10 +610,11 @@ test("fresh composition carries a disclosed complex source figure as one PowerPo
   const rebuilt = await buildStudioCompositionPptx(scene, {
     catalog,
     sourceSlideRasters: { 1: { data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=", width: 1, height: 1 } },
+    sourceFigureRasters: { "source-locked-schematic": { data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=", width: 1, height: 1 } },
   });
   const after = await auditPptx(rebuilt.bytes);
   assert.equal(after.pictures.some((picture) => picture.name.startsWith("Source-locked · Technical schematic")), true);
-  assert.equal(rebuilt.warnings.some((warning) => warning.includes("source-locked PowerPoint-rendered evidence unit")), true);
+  assert.equal(rebuilt.warnings.some((warning) => warning.includes("source-locked PowerPoint-rendered evidence unit from an object-isolated native render")), true);
 });
 
 test("fresh composition stops before writing a slide whose grouped or unsupported text is not completely mapped", async () => {

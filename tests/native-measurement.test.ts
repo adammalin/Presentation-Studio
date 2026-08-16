@@ -29,6 +29,7 @@ test("native measurement automation closes its exact temporary presentation afte
   assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /count of slides of targetPresentation/i);
   assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /on error measurementError number measurementErrorNumber/i);
   assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /close targetPresentation saving no/i);
+  assert.match(POWERPOINT_MEASUREMENT_SCRIPT, /if \(full name of candidatePresentation as text\) is sourcePath then\s+close candidatePresentation saving no/i);
 });
 
 test("native PowerPoint measurement parser retains rendered text and cell geometry without copy", () => {

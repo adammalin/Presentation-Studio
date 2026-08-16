@@ -484,6 +484,17 @@ button.deck-row.selected { background: #eef6f1; box-shadow: inset 3px 0 var(--or
 .studio-export-toolbar small { color: #6a766f; font-size: 9px; }
 .studio-mode-chip { margin-left: auto; align-self: center; padding: 5px 8px; background: #c4f6eb; color: #00454d; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .studio-header-actions { flex-wrap: wrap; justify-content: flex-end; }
+.studio-qualification-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; background: #eef7f1; border: 1px solid #9fc5ae; border-left: 5px solid var(--ornl-green); border-radius: 0; }
+.studio-qualification-bar.objective-failure { background: #ffffff; border-color: var(--ornl-spark, #fe5000); }
+.studio-qualification-bar.revision-required,
+.studio-qualification-bar.held { background: #ffffff; border-color: var(--ornl-spark, #fe5000); }
+.studio-qualification-mark { display: grid; place-items: center; width: 34px; height: 34px; color: var(--ornl-green); background: #fff; border: 1px solid currentColor; }
+.studio-qualification-bar.objective-failure .studio-qualification-mark { color: var(--ornl-spark, #fe5000); }
+.studio-qualification-bar.revision-required .studio-qualification-mark,
+.studio-qualification-bar.held .studio-qualification-mark { color: var(--ornl-spark, #fe5000); }
+.studio-qualification-bar > div { display: grid; gap: 2px; }
+.studio-qualification-bar strong { color: var(--ink); font-size: 12px; }
+.studio-qualification-bar small { color: var(--muted); font-size: 9px; }
 .studio-figure-toolbar { display: flex; align-items: center; gap: 12px; padding: 9px 12px; }
 .studio-figure-toolbar > div:first-child { min-width: 260px; display: grid; gap: 2px; margin-right: auto; }
 .studio-figure-toolbar strong { color: #26312c; font-size: 12px; }

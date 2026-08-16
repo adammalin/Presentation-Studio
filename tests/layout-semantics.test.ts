@@ -51,4 +51,10 @@ test("ranks content, visual, and data layouts from exact-content needs", () => {
   assert.equal(rankLayoutCompatibility(candidates, dataProfile)[0].layoutId, "layout-table");
   const denseProfile: LayoutContentProfile = { titleCharacterCount: 30, bodyBlockCount: 1, captionBlockCount: 0, bodyCharacterCount: 1_100, imageCount: 0, tableCount: 0, chartCount: 0, mediaCount: 0, desiredIntent: "content" };
   assert.equal(rankLayoutCompatibility(candidates, denseProfile)[0].layoutId, "layout-content");
+  const shortStack = layout("layout-short-stack", "2-Image Short Stack", "image", [title, placeholder("body", "1", 300_000, 1_500_000, 1_700_000, 1_400_000), placeholder("pic", "1", 2_200_000, 1_500_000, 4_000_000, 1_400_000), placeholder("pic", "2", 6_500_000, 3_200_000, 4_000_000, 1_400_000)]);
+  const longVisual = layout("layout-long-visual", "1-Column Stacked Image Series", "image", [title, placeholder("body", "1", 300_000, 1_500_000, 5_500_000, 4_400_000), placeholder("pic", "1", 6_200_000, 1_500_000, 2_700_000, 2_000_000), placeholder("pic", "2", 9_100_000, 1_500_000, 2_700_000, 2_000_000)]);
+  const unsplitLongBlock: LayoutContentProfile = { titleCharacterCount: 30, bodyBlockCount: 1, bodyBlockCharacterCounts: [360], captionBlockCount: 0, bodyCharacterCount: 360, imageCount: 2, tableCount: 0, chartCount: 0, mediaCount: 0, desiredIntent: "visual" };
+  assert.equal(rankLayoutCompatibility([shortStack, longVisual], unsplitLongBlock)[0].layoutId, "layout-long-visual");
+  const oneBodyOneImage = layout("layout-shared-slot", "1-Column Key Image", "image", [title, placeholder("body", "1", 300_000, 1_500_000, 5_500_000, 4_400_000), placeholder("pic", "1", 6_200_000, 1_500_000, 5_500_000, 4_400_000)]);
+  assert.equal(rankLayoutCompatibility([oneBodyOneImage, longVisual], unsplitLongBlock)[0].layoutId, "layout-long-visual", "a body slot cannot be counted once for exact text and again as fallback image capacity");
 });

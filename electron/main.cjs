@@ -7,6 +7,7 @@ const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:c
 const { nativeRenderCapabilities, renderPowerPointNative } = require("./native-render.cjs");
 const { measurePowerPointNative, nativeMeasurementCapabilities } = require("./native-measurement.cjs");
 const { installEditorContextMenu } = require("./editor-context-menu.cjs");
+const { captureDeckQualification, finalizeDeckQualification, readQualificationEvidence, safeSegment } = require("./deck-qualification.cjs");
 
 app.setName("Presentation Studio");
 const projectRoot = path.resolve(__dirname, "..");
@@ -55,6 +56,21 @@ function activeTemplateManifestPath() {
 
 function templateSourcePath(sha256, extension) {
   return path.join(templatePackRoot(), sha256, `source.${extension}`);
+}
+
+function qualificationRunsRoot() {
+  return path.join(app.getPath("userData"), "qualification-runs");
+}
+
+function qualificationRunPath(projectId, deckId, runId) {
+  return path.join(qualificationRunsRoot(), safeSegment(projectId, "project"), safeSegment(deckId, "deck"), safeSegment(runId, "run"));
+}
+
+function validateQualificationRunPath(value) {
+  const root = path.resolve(qualificationRunsRoot());
+  const candidate = path.resolve(String(value || ""));
+  if (!candidate.startsWith(`${root}${path.sep}`)) throw new Error("The qualification run is outside Presentation Studio's private evidence folder.");
+  return candidate;
 }
 
 function privatePresentationFontRoots() {
@@ -144,11 +160,11 @@ function dispatchMcpCommand(operation, input) {
   }
   const id = randomUUID();
   return new Promise((resolve, reject) => {
-    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation);
+    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_qualification_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation);
     // A central Studio build deliberately renders and measures every slide in
     // PowerPoint before it becomes the Slides/export authority. Large decks
     // therefore need a deck-scale timeout rather than the single-slide guard.
-    const timeoutMs = operation === "build_studio_presentation" ? 600_000 : nativeRenderOperation ? 195_000 : 15_000;
+    const timeoutMs = ["build_studio_presentation", "run_deck_qualification"].includes(operation) ? 600_000 : nativeRenderOperation ? 195_000 : 15_000;
     const timer = setTimeout(() => {
       pendingMcpCommands.delete(id);
       reject(new Error("Presentation Studio did not answer the MCP request in time."));
@@ -298,6 +314,46 @@ function registerIpc() {
     const bytes = validateBinary(payload?.bytes);
     nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => measurePowerPointNative({ bytes, name, homePath: app.getPath("home") }));
     return nativeRenderQueue;
+  });
+
+  ipcMain.handle("qualification:capture", async (_event, payload) => {
+    const runId = safeSegment(payload?.runId, randomUUID());
+    const sourceName = path.basename(String(payload?.source?.name ?? "source.pptx"));
+    const candidateName = path.basename(String(payload?.candidate?.name ?? "candidate.pptx"));
+    if (!/\.pptx$/i.test(sourceName) || !/\.pptx$/i.test(candidateName)) throw new Error("Deck qualification requires source and candidate PPTX files.");
+    const sourceBytes = validateBinary(payload?.source?.bytes);
+    const candidateBytes = validateBinary(payload?.candidate?.bytes);
+    const outputRoot = qualificationRunPath(payload?.projectId, payload?.deckId, runId);
+    const width = payload?.width === undefined ? 2200 : Number(payload.width);
+    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => captureDeckQualification({
+      source: { name: sourceName, bytes: sourceBytes },
+      candidate: { name: candidateName, bytes: candidateBytes },
+      outputRoot,
+      width,
+    }));
+    return nativeRenderQueue;
+  });
+
+  ipcMain.handle("qualification:finalize", async (_event, payload) => {
+    const outputRoot = validateQualificationRunPath(payload?.outputRoot);
+    return finalizeDeckQualification({ outputRoot, report: payload?.report });
+  });
+
+  ipcMain.handle("qualification:read-slide", async (_event, payload) => {
+    const outputRoot = validateQualificationRunPath(payload?.outputRoot);
+    return readQualificationEvidence({ outputRoot, representation: payload?.representation, slideNumber: Number(payload?.slideNumber) });
+  });
+
+  ipcMain.handle("qualification:reveal", async (_event, payload) => {
+    const outputRoot = validateQualificationRunPath(payload?.outputRoot);
+    const htmlPath = path.join(outputRoot, "qa-report.html");
+    await fs.access(htmlPath);
+    const openError = await shell.openPath(htmlPath);
+    if (openError) {
+      shell.showItemInFolder(htmlPath);
+      throw new Error(`Could not open the qualification report: ${openError}`);
+    }
+    return { revealed: true, outputRoot, htmlPath };
   });
 
   ipcMain.handle("app:get-onboarding-tour-version", async () => {

@@ -455,9 +455,9 @@ export interface PresentationScene {
   preservationEnvelope: PowerPointPreservationEnvelope;
 }
 
-export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "ornl-title-challenges-evidence" | "ornl-title-process-flow" | "template-layout";
+export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "ornl-title-question-diagram" | "ornl-title-challenges-evidence" | "ornl-title-process-flow" | "template-layout";
 export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
-export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "objective-body" | "step-heading" | "step-body" | "figure-label" | "figure-caption" | "challenge-assertion" | "challenge-intro" | "challenge-body" | "process-icon" | "process-input" | "process-stage" | "process-output" | "supporting-copy" | "footer-logo" | "footer-meta";
+export type StudioComponentRole = "eyebrow" | "card-kicker" | "card-heading" | "card-body" | "objective-body" | "step-heading" | "step-body" | "figure-media" | "figure-label" | "figure-caption" | "technical-annotation" | "question-intro" | "question-item" | "challenge-assertion" | "challenge-intro" | "challenge-body" | "process-icon" | "process-input" | "process-stage" | "process-output" | "supporting-copy" | "footer-logo" | "footer-meta";
 export type StudioFigureTreatmentMode = "preserve-as-unit" | "preserve-and-frame" | "hybrid-rebuild" | "redraw-candidate";
 export type StudioFigureVerificationStatus = "source-locked" | "needs-content-review" | "verified";
 export type StudioFigureRelationshipKind = "caption-for" | "label-for" | "callout-for" | "connects-from" | "connects-to" | "contained-by";
@@ -595,7 +595,7 @@ export interface StudioWebNode {
     }>;
   };
   mediaPart?: string;
-  component?: { groupId: string; role: StudioComponentRole; ordinal?: number };
+  component?: { groupId: string; role: StudioComponentRole; ordinal?: number; frame?: StudioWebFrame };
   opticalInsets?: StudioOpticalInsets;
   style: {
     fontFamily: "Aptos";

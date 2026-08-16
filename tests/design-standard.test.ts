@@ -25,6 +25,9 @@ test("one versioned design standard drives project defaults and MCP", () => {
   assert.match(packagedStandard.studioWebDesign.designMemory, /recorded ready/i);
   assert.match(packagedStandard.componentSystem.layoutRecipes["title-challenges-evidence"].regions, /three equal.*evidence/i);
   assert.match(packagedStandard.componentSystem.layoutRecipes["title-process-flow"].regions, /source relationship and z-order/i);
+  assert.match(packagedStandard.componentSystem.layoutRecipes["title-question-diagram"].regions, /source-locked technical evidence unit/i);
+  assert.match(packagedStandard.componentSystem.components.equalEvidenceField, /differing aspect ratios.*without distortion/i);
+  assert.ok(packagedStandard.studioWebDesign.supportedRecipes.includes("ornl-title-question-diagram"));
   assert.match(packagedStandard.tableRules.join(" "), /PowerPoint-native cell clearance/i);
   assert.match(packagedStandard.studioWebDesign.conceptReference.role, /art direction/i);
   assert.match(packagedStandard.studioWebDesign.conceptReference.reconstruction, /Do not auto-trace/i);
@@ -34,6 +37,10 @@ test("one versioned design standard drives project defaults and MCP", () => {
   assert.match(packagedStandard.studioWebDesign.visualNeedWorkflow.reconstruction, /reconstruct_studio_concept.*typography-only/i);
   assert.match(packagedStandard.ornlRules.join(" "), /Do not equate ORNL branding.*green and navy panels/i);
   assert.match(packagedStandard.studioWebDesign.requiredLoop.join(" "), /at most three passes/i);
+  assert.match(packagedStandard.precisionLayout.deckQualification.reviewProtocol.join(" "), /contact sheet.*clean full-size source and candidate.*raster hashes/i);
+  assert.match(packagedStandard.precisionLayout.deckQualification.automationBoundary, /Portable CI.*self-hosted.*client decks and renders are never uploaded/i);
+  assert.deepEqual(packagedStandard.precisionLayout.deckQualification.reviewStates, ["visual-review-required", "review-complete", "revision-required", "held"]);
+  assert.match(packagedStandard.studioWebDesign.requiredLoop.join(" "), /do not qualify unchanged bytes.*three automatic attempts/i);
   assert.match(packagedStandard.ornlRules.join(" "), /existing populated ORNL title slide as sacred.*Do not recompose, restyle, move, resize, add to, remove from, or replace it/i);
 });
 

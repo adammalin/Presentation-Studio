@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-14.23-responsive-semantic-recipes",
+  "version": "2026-08-15.26-production-design-recipes",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -94,6 +94,38 @@
     ],
     "solverPolicy": "The AI chooses design intent and objects. A deterministic minimum-movement solver computes point geometry, enforces safe-region and collision constraints, and returns infeasible with concrete space recommendations instead of guessing, clipping, or silently shrinking type.",
     "nativeRevisionLoop": "Inspect, diagnose, solve, materialize, render in PowerPoint, remeasure, compare metrics, critique pixels, revise, and reject any regression with a bounded iteration count.",
+    "deckQualification": {
+      "command": "run_deck_qualification",
+      "evidence": "Reopen the exact source and central candidate in Microsoft PowerPoint, export every slide as a private 2200-pixel PNG pair, record native measurements and hashes, present a candidate overview plus clean full-slide source/candidate views, and bind diagnostic regions and reviews to the exact raster identities.",
+      "objectiveGates": [
+        "exact slide count and ordered visible text",
+        "exact native table content and merged structure",
+        "Aptos or approved symbol fonts",
+        "authoritative PowerPoint render and measurement for every slide",
+        "zero native text overflow and off-slide objects",
+        "zero native table-cell clearance violations",
+        "pixel-identical protected template slides",
+        "material design impact on every non-protected redesign slide"
+      ],
+      "repairRouting": {
+        "mcp-design": "Use shared Studio recipes, semantic constraints, table and figure operations, or the visual-needs queue for a bounded slide-design repair.",
+        "engine-code": "Reproduce the defect with a synthetic or private hash-pinned fixture, fix code on a development branch, and rerun the full regression suite before retrying the deck.",
+        "image-concept": "Revise only a governed text-free, logo-free visual-need prompt or approved concept influence; never substitute generated technical content for the source.",
+        "human-review": "Hold technical, semantic, rights, template, or brand ambiguity for the appropriate person."
+      },
+      "reviewProtocol": [
+        "Inspect every page of the candidate contact sheet to understand deck rhythm and locate anomalies.",
+        "Inspect the clean full-size source and candidate PowerPoint-native image for every slide; clean exported pixels are the default evidence surface.",
+        "Open issue crops or diagnostic overlays only to diagnose an objective finding, never as the claimed finished design.",
+        "Record one review per slide with qualification ID, candidate package SHA-256, source/candidate raster hashes, verdict, rationale, and bounded findings.",
+        "Do not rerun qualification for unchanged candidate bytes; after a repair, rebuild the one central scene and create the next immutable qualification attempt.",
+        "Compare objective blockers and major issues with the preceding attempt; stop automatic repair after three attempts and hold unresolved ambiguity for a person."
+      ],
+      "reviewStates": ["visual-review-required", "review-complete", "revision-required", "held"],
+      "historyPolicy": "Keep a bounded session history per deck so the reviewer can see attempt number, prior qualification identity, objective trend, and blocker/major deltas without adding client evidence to the project package.",
+      "automationBoundary": "Portable CI runs lint, tests, build, and the data-safety scan only. PowerPoint-native qualification runs only on an explicitly approved self-hosted workstation with Microsoft PowerPoint and synthetic or locally authorized private evidence; client decks and renders are never uploaded as CI artifacts.",
+      "acceptance": "Automated objective passes mean ready for visual review, never better by definition. Completion requires a raster-bound review for every slide, no blocker or major finding, exact original intent, coherent deck rhythm, and an independently rerendered export candidate."
+    },
     "exportAcceptance": "Before a PPTX can be saved as a completed review copy, independently rerender and remeasure the exact export bytes, verify visible-copy and table-structure hashes, compare every staged/export raster hash, and reject any native-geometry mismatch."
   },
   "studioWebDesign": {
@@ -135,6 +167,8 @@
       "Compile supported web nodes and converted template artwork to editable PowerPoint text, native tables, extracted images, and restrained ORNL vectors.",
       "Enter Rechecking original intent: inspect and remeasure the written artifact in Microsoft PowerPoint, compare it with the source reference, and revise or reject any visual, geometry, content, source-identity, or relationship regression.",
       "Run the bounded Found issues, Fixing, Rechecking loop for at most three passes. A ready verdict is withheld while native blocker or major issues remain; unresolved pass three becomes a human-review hold.",
+      "After a whole-deck build, run one immutable qualification attempt, inspect every candidate contact-sheet page, inspect clean full-size source/candidate pixels for every slide, and use diagnostic crops or overlays only when an issue needs localization.",
+      "Record raster-bound per-slide review verdicts. If revision is required, repair the one central scene, rebuild, and create a new qualification attempt with an objective trend; do not qualify unchanged bytes or exceed three automatic attempts.",
       "Build every converted slide into one central editable deck, show those exact results in Slides, bind comments to their Studio revisions, and leave external export as a separate user action."
     ],
     "antiPatterns": [
@@ -168,13 +202,16 @@
       "ornl-title-objective-columns",
       "ornl-title-steps-evidence",
       "ornl-title-labeled-figure-grid",
+      "ornl-title-question-diagram",
+      "ornl-title-challenges-evidence",
+      "ornl-title-process-flow",
       "ornl-title-table",
       "ornl-title-figure-grid",
       "template-layout"
     ]
   },
   "componentSystem": {
-    "version": 5,
+    "version": 6,
     "principle": "Compose slides from shared ORNL page, typography, content-region, figure, table, and footer components. Do not redraw each slide as an unrelated one-off canvas.",
     "page": {
       "leftInches": 0.47,
@@ -203,7 +240,7 @@
       "diagram": "Move nodes, labels, and connectors as a relationship-preserving system; never independently enlarge diagram labels until relationships break.",
       "technicalFigure": "Inventory the complete message first. Preserve a dense screenshot, code, schematic, or mixed composite as one source-locked evidence unit by default; optionally frame it with restrained ORNL geometry. A hybrid rebuild may replace only presentation annotations while retaining source screenshots and data. A full redraw remains a candidate until labels, values, sequence, grouping, causality, and source identity are verified.",
       "table": "Use the shared table component, keep the lower logo safe zone clear, and select standard or dense-technical typography from measured content density.",
-      "figureGrid": "Use consistent figure frames and caption spacing; contain source images without distortion. Keep each source figure, its exact label, and its caption bound as one reusable component when the relationship is unambiguous.",
+      "figureGrid": "Use consistent visual fields and caption spacing; contain source images without distortion. When paired figures have different aspect ratios, place them inside equal neutral evidence fields rather than stretching or cropping them. Keep each source figure, its exact label, and its caption bound as one reusable component when the relationship is unambiguous.",
       "references": "Use the shared body-list component with consistent bullet indentation, hanging indent, line spacing, and paragraph spacing."
     },
     "paragraph": {
@@ -230,6 +267,8 @@
       "objectiveColumns": "Two to four exact objective atoms arranged as equal-weight columns with one full-width ORNL accent rule per column; do not invent headings or numbers.",
       "stepsEvidence": "An ordered step stack paired with one contained source visual or evidence region; keep each heading and body relationship explicit and preserve exact wording.",
       "labeledFigureGrid": "Two to four source figures paired with their exact labels and captions in a stable reading order; use consistent frames, gaps, and caption baselines.",
+      "equalEvidenceField": "One square-cornered neutral field shared by peer figures so differing aspect ratios read as a coherent system; inset and contain the original pixels without distortion, ornamental borders, or invented detail.",
+      "questionDiagram": "One short exact introduction plus three to six exact source questions in a restrained left rail, paired with one large source-locked technical diagram on the right. Preserve the diagram's complete internal glossary and relationships.",
       "challengeEvidence": "One exact assertion, one short orienting line, three peer challenge cards, and up to two source-locked evidence regions. Preserve dense technical diagrams as one verified unit when their internal meaning cannot be safely reconstructed.",
       "processFlow": "Four source-bound inputs in a consistent two-by-two card system, followed by ordered stage and output bands plus exact supporting copy. Pair icons and labels by source relationship and z-order rather than page position.",
       "glossary": "A compact Aptos caption block below primary content with no decorative empty column.",
@@ -271,7 +310,11 @@
       },
       "title-labeled-figure-grid": {
         "useWhen": "Two to four source figures have explicit labels or captions that must stay bound to the correct visual.",
-        "regions": "titleBar plus a labeledFigureGrid with labels above, contained images in the middle, and exact captions below on shared baselines."
+        "regions": "titleBar plus a labeledFigureGrid with labels above, equalEvidenceField regions containing undistorted images in the middle, and exact captions below on shared baselines."
+      },
+      "title-question-diagram": {
+        "useWhen": "Three to six exact source questions orient one grouped technical diagram, schematic, or relationship map.",
+        "regions": "titleBar plus a compact questionDiagram rail on the left and one large source-locked technical evidence unit on the right. The rail uses one ORNL Green guide and neutral separators, not card boxes."
       },
       "title-challenges-evidence": {
         "useWhen": "One assertion introduces three peer technical challenges and the source contains a dense schematic, screenshot, or related evidence that must remain exact.",

@@ -7,6 +7,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const { promisify } = require("node:util");
 const {
   classifyPowerPointAutomationError,
+  closeExactPowerPointPresentation,
   describePowerPointAutomationError,
   macSessionLocked,
   runPowerPointAutomationWithStartupRecovery,
@@ -63,6 +64,18 @@ const POWERPOINT_RENDER_SCRIPT = `on run argv
         try
           close targetPresentation saving no
         end try
+      else
+        -- The open command may have created the presentation before a
+        -- startup-window error prevented the exact binding above.
+        repeat with presentationIndex from 1 to (count of presentations)
+          set candidatePresentation to presentation presentationIndex
+          try
+            if (full name of candidatePresentation as text) is sourcePath then
+              close candidatePresentation saving no
+              exit repeat
+            end if
+          end try
+        end repeat
       end if
       error renderError number renderErrorNumber
     end try
@@ -246,6 +259,7 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
       warnings: [],
     };
   } finally {
+    await closeExactPowerPointPresentation(sourcePath);
     await fs.rm(jobRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }

@@ -21,6 +21,7 @@ export interface StudioCompositionExportOptions {
   catalog?: SlideRenderCatalog;
   templateCatalog?: TemplateCatalog;
   sourceSlideRasters?: Record<number, { data: string; width: number; height: number }>;
+  sourceFigureRasters?: Record<string, { data: string; width: number; height: number }>;
   sourceSlideText?: Record<number, string>;
   templateLayoutRasters?: Record<string, { data: string; width: number; height: number }>;
   strict?: boolean;
@@ -230,6 +231,44 @@ function addConvertedTemplateArtwork(
   const layout = templateCatalog?.layouts.find((item) => item.id === sourceSlide.targetLayoutId);
   if (!layout || !templateCatalog) throw new Error(`Slide ${sourceSlide.slideNumber} references a converted ORNL template layout that is not available in the active Template Pack.`);
   slide.background = { color: hex(layout.background, sourceSlide.background) };
+  const xScale = PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches / (templateCatalog.slideWidth / EMU_PER_INCH);
+  const yScale = PRESENTATION_DESIGN_STANDARD.defaults.slide.heightInches / (templateCatalog.slideHeight / EMU_PER_INCH);
+  const frame = (element: TemplatePreviewElement) => ({
+    x: inches(element.x) * xScale,
+    y: inches(element.y) * yScale,
+    w: inches(element.width) * xScale,
+    h: inches(element.height) * yScale,
+  });
+  const addPlaceholderPanels = () => {
+    const seen = new Set<string>();
+    const occupiedByContent = (bounds: { x: number; y: number; w: number; h: number }) => sourceSlide.nodes.some((node) => {
+      if (!node.visible || ["footer", "slide-number", "date", "logo"].includes(node.role)) return false;
+      const nodeBounds = { x: inches(node.frame.x), y: inches(node.frame.y), w: inches(node.frame.width), h: inches(node.frame.height) };
+      const tolerance = .08;
+      return Math.abs(nodeBounds.x - bounds.x) <= tolerance
+        && Math.abs(nodeBounds.y - bounds.y) <= tolerance
+        && Math.abs(nodeBounds.w - bounds.w) <= tolerance
+        && Math.abs(nodeBounds.h - bounds.h) <= tolerance;
+    });
+    for (const element of layout.elements) {
+      if (!element.placeholderType || element.placeholderType === "pic" || !element.fill || element.kind !== "shape") continue;
+      const key = [element.placeholderType, element.x, element.y, element.width, element.height, element.fill, element.stroke ?? ""].join(":");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const bounds = frame(element);
+      // Placeholder fills are semantic content furniture, not background
+      // artwork. Emit a panel only when a Studio node actually occupies that
+      // slot; otherwise layouts such as the three-column green bar produce
+      // empty colored boxes that were never part of the requested design.
+      if (!occupiedByContent(bounds)) continue;
+      slide.addShape(pptx.ShapeType.rect, {
+        ...bounds,
+        line: element.stroke && (element.strokeWidth ?? 0) > 0 ? { color: hex(element.stroke, "DBDCDB"), width: Math.max(.1, (element.strokeWidth ?? 0) / 12_700) } : { color: "FFFFFF", transparency: 100 },
+        fill: { color: hex(element.fill, "FFFFFF"), transparency: Math.round((1 - (element.opacity ?? 1)) * 100) },
+        objectName: `Template panel · ${element.name}`,
+      });
+    }
+  };
   const nativeLayoutRaster = templateLayoutRasters?.[layout.id];
   if (nativeLayoutRaster) {
     slide.addImage({
@@ -241,16 +280,9 @@ function addConvertedTemplateArtwork(
       altText: `Authoritative Microsoft PowerPoint render of the approved ORNL ${layout.name} layout artwork. Studio content remains editable above this immutable template base.`,
     });
     warnings.push(`Slide ${sourceSlide.slideNumber}: approved ${layout.name} template artwork is embedded as one PowerPoint-native rendered base so master/layout imagery and strokes remain visually exact; Studio content above it remains editable.`);
+    addPlaceholderPanels();
     return;
   }
-  const xScale = PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches / (templateCatalog.slideWidth / EMU_PER_INCH);
-  const yScale = PRESENTATION_DESIGN_STANDARD.defaults.slide.heightInches / (templateCatalog.slideHeight / EMU_PER_INCH);
-  const frame = (element: TemplatePreviewElement) => ({
-    x: inches(element.x) * xScale,
-    y: inches(element.y) * yScale,
-    w: inches(element.width) * xScale,
-    h: inches(element.height) * yScale,
-  });
   for (const element of layout.elements.filter((item) => !item.placeholderType)) {
     const bounds = frame(element);
     if (element.kind === "image") {
@@ -275,6 +307,7 @@ function addConvertedTemplateArtwork(
     const shape = element.geometry === "ellipse" ? pptx.ShapeType.ellipse : element.geometry === "line" ? pptx.ShapeType.line : pptx.ShapeType.rect;
     slide.addShape(shape, { ...bounds, rotate: element.rotation, line, fill, objectName: `Template · ${element.name}` });
   }
+  addPlaceholderPanels();
 }
 
 /**
@@ -453,7 +486,9 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
           warnings.push(message);
           continue;
         }
-        const targetFrame = extractedData ? node.frame : containFigureFrame(node.frame, cropFrame, undefined);
+        const targetFrame = node.style.objectFit === "contain"
+          ? containFigureFrame(node.frame, cropFrame, undefined)
+          : node.frame;
         slide.addImage({
           data,
           x: inches(targetFrame.x), y: inches(targetFrame.y), w: inches(targetFrame.width), h: inches(targetFrame.height),
@@ -471,7 +506,8 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
     for (const treatment of sourceLockedTreatments) {
       const nodes = treatment.nodeIds.map((id) => sourceSlide.nodes.find((node) => node.id === id)).filter((node): node is StudioWebNode => Boolean(node?.visible));
       if (!nodes.length) continue;
-      const raster = options.sourceSlideRasters?.[sourceSlide.slideNumber];
+      const isolatedRaster = options.sourceFigureRasters?.[treatment.id];
+      const raster = isolatedRaster ?? options.sourceSlideRasters?.[sourceSlide.slideNumber];
       if (!raster) {
         const message = `Slide ${sourceSlide.slideNumber}: source-locked figure ${treatment.id} requires the authoritative PowerPoint source raster.`;
         if (strict) throw new Error(message);
@@ -489,7 +525,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
         altText: `Source-locked technical evidence preserved from slide ${sourceSlide.slideNumber}. ${treatment.intentSummary}`.slice(0, 500),
       });
       imageCount += 1;
-      warnings.push(`Slide ${sourceSlide.slideNumber}: ${treatment.intentSummary} is preserved as one source-locked PowerPoint-rendered evidence unit.`);
+      warnings.push(`Slide ${sourceSlide.slideNumber}: ${treatment.intentSummary} is preserved as one source-locked PowerPoint-rendered evidence unit${isolatedRaster ? " from an object-isolated native render" : ""}.`);
     }
   }
   const output = await pptx.write({ outputType: "uint8array", compression: true });

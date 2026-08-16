@@ -19,7 +19,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
   try {
     await client.connect(transport);
     const result = await client.listTools();
-    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["attach_studio_concept_reference", "build_studio_presentation", "create_studio_visual_need", "fit_scene_to_layout", "get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_contact_sheet", "get_deck_design_work_order", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_resource_preview", "get_slide_design_context", "get_slide_design_work_order", "get_slide_inspection_packet", "get_slide_measurements", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_studio_concept_reference", "get_studio_slide_critique", "get_studio_visual_need_brief", "get_studio_web_scene", "get_template_layout_catalog", "get_template_layout_render", "hold_studio_visual_need", "list_decks", "list_design_threads", "list_resources", "list_studio_visual_needs", "preview_studio_fresh_composition", "recommend_slide_layouts", "reconstruct_studio_concept", "record_proposal_visual_critique", "record_studio_visual_critique", "refine_studio_layout", "reject_design_proposal", "remove_studio_concept_reference", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_group_layout", "solve_and_stage_safe_region", "solve_and_stage_table_layout", "solve_and_stage_text_fit", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_studio_web_design", "stage_table_design_update"]);
+    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["attach_studio_concept_reference", "build_studio_presentation", "create_studio_visual_need", "fit_scene_to_layout", "get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_contact_sheet", "get_deck_design_work_order", "get_deck_qualification", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_qualification_contact_sheet", "get_qualification_slide", "get_resource_preview", "get_slide_design_context", "get_slide_design_work_order", "get_slide_inspection_packet", "get_slide_measurements", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_studio_concept_reference", "get_studio_slide_critique", "get_studio_visual_need_brief", "get_studio_web_scene", "get_template_layout_catalog", "get_template_layout_render", "hold_studio_visual_need", "list_decks", "list_design_threads", "list_resources", "list_studio_visual_needs", "preview_studio_fresh_composition", "recommend_slide_layouts", "reconstruct_studio_concept", "record_deck_qualification_review", "record_proposal_visual_critique", "record_studio_visual_critique", "refine_studio_layout", "reject_design_proposal", "remove_studio_concept_reference", "run_deck_qualification", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_group_layout", "solve_and_stage_safe_region", "solve_and_stage_table_layout", "solve_and_stage_text_fit", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_studio_web_design", "stage_table_design_update"]);
     const contractTool = result.tools.find((tool) => tool.name === "get_design_contract");
     assert.match(contractTool?.description ?? "", /improving every slide/i);
     const contract = await client.callTool({ name: "get_design_contract", arguments: {} });
@@ -60,6 +60,24 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     const centralBuildTool = result.tools.find((tool) => tool.name === "build_studio_presentation");
     assert.match(centralBuildTool?.description ?? "", /one persisted Studio Web Scene/i);
     assert.match(centralBuildTool?.description ?? "", /does not save or export/i);
+    const qualificationTool = result.tools.find((tool) => tool.name === "run_deck_qualification");
+    assert.match(qualificationTool?.description ?? "", /every slide.*private 2,200-pixel PNG/i);
+    assert.match(qualificationTool?.description ?? "", /does not.*prove that the design is better/i);
+    assert.equal(qualificationTool?.annotations?.destructiveHint, false);
+    const qualificationLedgerTool = result.tools.find((tool) => tool.name === "get_deck_qualification");
+    assert.match(qualificationLedgerTool?.description ?? "", /metadata alone cannot establish visual quality/i);
+    assert.equal(qualificationLedgerTool?.annotations?.readOnlyHint, true);
+    const qualificationSlideTool = result.tools.find((tool) => tool.name === "get_qualification_slide");
+    assert.match(qualificationSlideTool?.description ?? "", /full-resolution Microsoft PowerPoint-native PNG/i);
+    assert.match(qualificationSlideTool?.description ?? "", /issue crop/i);
+    assert.equal(qualificationSlideTool?.annotations?.readOnlyHint, true);
+    const qualificationSheetTool = result.tools.find((tool) => tool.name === "get_qualification_contact_sheet");
+    assert.match(qualificationSheetTool?.description ?? "", /up to 40 authoritative PowerPoint-native/i);
+    assert.equal(qualificationSheetTool?.annotations?.readOnlyHint, true);
+    const qualificationReviewTool = result.tools.find((tool) => tool.name === "record_deck_qualification_review");
+    assert.match(qualificationReviewTool?.description ?? "", /bound to both raster hashes/i);
+    assert.match(qualificationReviewTool?.description ?? "", /does not change slide design/i);
+    assert.equal(qualificationReviewTool?.annotations?.destructiveHint, false);
     const refineStudioTool = result.tools.find((tool) => tool.name === "refine_studio_layout");
     assert.match(refineStudioTool?.description ?? "", /PowerPoint-native rendered text bounds/i);
     assert.match(refineStudioTool?.description ?? "", /relationship-preserving groups/i);
@@ -178,6 +196,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-objective-columns/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-steps-evidence/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-labeled-figure-grid/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-question-diagram/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /fresh-composition/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeFrames/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeStyles/);

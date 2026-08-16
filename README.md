@@ -9,12 +9,15 @@ The application never overwrites an imported deck. It embeds source bytes in a s
 - Existing populated ORNL title slides are sacred, source-preserved brand compositions. Studio and MCP cannot recompose, restyle, move, resize, add to, remove from, or replace them; full-deck builds transplant the exact native title-slide XML together with its approved layout, master, theme, and related media. New presentations instead use an approved ORNL title layout and edit only its intended placeholders.
 - A persisted `presentation-studio/web-scene` version-5 design model that normalizes imported content onto a canonical 13.333 × 7.5-inch React/HTML/CSS canvas while retaining source-coordinate bindings and explicit editable/catalog/semantic-atom provenance; shared ORNL title/content, two-column, repeated comparison-card, objective-column, steps/evidence, challenge/evidence, process-flow, labeled-figure-grid, table, figure-grid, footer, and converted-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and a read-only source reference. Slides, comments, per-slide builds, full-deck build, and export now resolve against this one scene revision. Converted Template Pack images/vectors/fills compile with native editable text, images, vectors, and tables; exact visible-copy, source-order, table-grid, merged-cell, semantic-color, and cell-break round trips are tested.
 - A hash-pinned, ignored private-golden harness qualifies six representative EMT communication jobs against source and prior design references without committing customer content. Its objective gate writes a fresh editable PPTX, rerenders and remeasures it through Microsoft PowerPoint, and requires exact text/table structure, Aptos, zero true overflow, zero off-slide objects, native table-cell clearance, and material design impact before full-size visual review.
+- A complete private deck-qualification runner available as **Inspect all**, `npm run qualify:deck`, and MCP `run_deck_qualification`. It reopens the immutable source and exact central candidate in Microsoft PowerPoint, writes one 2,200-pixel PNG per slide for both, records native measurements and hashes, opens on a clean candidate overview, and provides exact full-slide comparison plus optional issue crops/diagnostic overlays. MCP can inspect paged contact sheets and record raster-bound `ready`, `revise`, or `hold` reviews. A changed build creates a new attempt with objective trend; unchanged bytes are not rerun and unresolved automatic attempt three is held. Objective passes mean ready for visual review, never better by definition.
 - A governed **Concept → Editable** path: a generated or human-supplied image remains an immutable `concept-only` Resource, receives separate bounded-preview permission, and records only the composition, hierarchy, negative-space, color, figure, image-treatment, or rhythm characteristics the user/agent may follow. Generated wording, logos, data, claims, and technical details remain untrusted; Studio reconstructs the approved direction as editable objects and validates it through PowerPoint.
 - A model-independent **visual-needs queue** for layout concepts, figure concepts, image treatments, supporting visuals, and diagram rebuilds. Each source-hash-bound brief defaults to abstract structure only, selects an affirmative restrained/balanced/expressive ORNL recipe, requests one text-free/logo-free concept raster, closes forbidden content, and can be fulfilled by any MCP-capable AI without embedding a provider in Studio. Human attach/detach controls use explicitly Preview-authorized image Resources; the need progresses through concept, editable reconstruction, and PowerPoint-native review instead of treating generated pixels as the slide.
 - A deterministic **concept zones → editable reconstruction** bridge. `reconstruct_studio_concept` maps only the approved normalized title, visual, evidence, caption, and other zones to exact source-bound Studio nodes through a shared recipe; it never traces generated pixels or copies generated content. Studio reports material design impact and refuses to advance a visual need when the result is unchanged, typography-only, or a small cleanup instead of the requested layout, image, figure, or verified-diagram reconstruction.
 - The active ORNL Brand Agent V2.3.2 prompt and 20-file Knowledge package may be mirrored into `.presentation-studio/private-brand-agent-v2.3.2` for local development reference. That directory is ignored, never packaged or committed, and informs the normalized design standard rather than becoming an automatic external-upload source.
 - Constraint-driven collaborative layout in that same scene: deck rhythm tokens, PowerPoint-bound optical insets, safe/center/peer guides, grid snapping, Shift multi-select, atomic relationship-group movement, persistent optical/structural alignment, equal-gap distribution, and safe-region fitting. MCP models use `refine_studio_layout` instead of inventing correction coordinates.
 - Source-locked technical-figure decisions shared by the canvas and MCP: preserve a dense figure as one evidence unit, preserve and frame it with restrained ORNL geometry, record a hybrid rebuild that retains source screenshots/data, or hold a full redraw candidate for content verification. The original remains visible until any replacement passes its information/relationship invariants and PowerPoint-native intent review.
+- Object-isolated PowerPoint evidence for fresh compositions. When a source-locked technical group is reused inside a new web-designed layout, Studio builds a private one-slide render source that hides neighboring top-level shapes while retaining the complete requested PowerPoint group, then places that native raster as one meaning-preserving unit. This avoids accidental title, footer, or nearby-object leakage without tracing or flattening the rest of the slide.
+- Production design recipes for question-plus-diagram, coupled-evidence, paired-evidence, challenge, process, objective, table, and comparison communication jobs. Question pages receive a deliberate prompt rail and dominant technical evidence field; paired figures receive equal neutral fields with source aspect ratios preserved instead of one-off redraws.
 - First-class figure controls add a group frame, normalized crop and focal point, aspect lock, and explicit caption/label/callout/connector relationships. Complete source-locked figures can move through layout constraints without unlocking or reconstructing their internal technical content.
 - Multi-file `.pptx` import with bounded OOXML preflight, unsafe-path checks, and expanded-size/compression-ratio limits.
 - App-wide drag-and-drop and Resources file-picker intake for presentations, documents, data, images, audio, video, and SVG assets.
@@ -88,10 +91,27 @@ To qualify representative slides through fresh composition and Microsoft PowerPo
 ```sh
 npm run benchmark:studio-web -- --source /absolute/path/source.pptx --slides 2,6,21 --output /tmp/presentation-studio-web-benchmark
 
+# Exercise exact installed-template artwork and semantic layout selection locally.
+# The authorized template, source deck, candidates, and renders remain outside Git.
+npm run benchmark:studio-web -- --source /absolute/path/source.pptx --slides 2,6,21 --template /absolute/path/authorized-template.potx --design-mode template --output /tmp/presentation-studio-template-benchmark
+
 # Private hash-pinned visual regression; the manifest, source deck, benchmark
 # deck, renders, and acceptance ledger remain outside Git.
 npm run benchmark:private-golden -- --manifest /absolute/path/private-golden-manifest.json --output /tmp/presentation-studio-private-golden
+
+# Full source/candidate deck qualification. The output folder must be new and
+# remains private local evidence outside Git.
+npm run qualify:deck -- --source /absolute/path/source.pptx --candidate /absolute/path/candidate.pptx --output /absolute/path/new-qualification-run --protected-slides 1
+
+# Portable release checks: typecheck, tests, production build, and data-safety.
+npm run quality
+
+# Approved local/self-hosted PowerPoint workstation only: portable checks,
+# desktop smoke, and the synthetic native canary. No client deck is uploaded.
+npm run quality:native
 ```
+
+The hosted GitHub workflow runs only the portable lane. The manual native workflow requires an explicitly provisioned self-hosted macOS runner with Microsoft PowerPoint and uses the synthetic canary; defining the workflow does not provision or authorize a runner. The full boundary and evidence contract are documented in [docs/QUALITY-PIPELINE.md](docs/QUALITY-PIPELINE.md).
 
 To run the MCP server manually:
 
@@ -105,10 +125,10 @@ Print a model-independent MCP client configuration:
 node scripts/configure-mcp.mjs
 ```
 
-The desktop app must be open for project-specific tools. `get_design_contract` is always available so any MCP-capable model can read the required behavior before working. Read operations beyond basic app status/design instructions and every proposal tool require the user to enable the visible AI session switch. Resource metadata also requires a per-Resource session choice. MCP cannot apply a proposal, save a project, export a deck, or retrieve imported Resource bytes or extracted document text.
+The desktop app must be open for project-specific tools. `get_design_contract` is always available so any MCP-capable model can read the required behavior before working. Read operations beyond basic app status/design instructions and every proposal tool require the user to enable the visible AI session switch. Resource metadata also requires a per-Resource session choice. MCP can build a private local qualification evidence bundle, read contact sheets and exact slide images, request issue crops/overlays, and record raster-bound qualification reviews. Those review records modify only private evidence: MCP still cannot apply a proposal, save a project, export a deck to a user destination, or retrieve imported Resource bytes or extracted document text.
 
 ## Data boundary
 
-Do not commit official ORNL templates or extracted template assets, client presentations, papers, manuscripts, project packages, recovery files, extracted text, previews, or exports. Synthetic fixtures are generated locally under `fixtures/generated/`. Imported files remain local and are copied into the user's project package by SHA-256; their original paths are never needed to reopen the project.
+Do not commit official ORNL templates or extracted template assets, client presentations, papers, manuscripts, project packages, recovery files, extracted text, qualification runs, previews, or exports. Synthetic fixtures are generated locally under `fixtures/generated/`. Imported files remain local and are copied into the user's project package by SHA-256; their original paths are never needed to reopen the project. App-created qualification evidence lives under the local Presentation Studio application-data folder and contains PNGs plus content-minimized measurement/report metadata, not another persisted PPTX copy.
 
 Project encryption covers packaged JSON and Resource bytes only. It does not encrypt the external originals or separately exported PowerPoint, PDF, SVG, or PNG files.

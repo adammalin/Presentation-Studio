@@ -17,7 +17,9 @@ export interface SlideDesignMetrics {
   verticalGapMadPt?: number;
   safeRegionViolationCount: number;
   offSlideObjectCount: number;
+  offSlideObjectIds: string[];
   textOverflowCount: number;
+  textOverflowObjectIds: string[];
   minimumTableCellClearancePt?: number;
   minimumTableHorizontalClearancePt?: number;
   minimumTableVerticalClearancePt?: number;
@@ -187,6 +189,7 @@ export function calculateSlideDesignMetrics(deck: DeckJob, packet: NativeMeasure
     return box && !isIntentionalEdgeDecoration(deck, object, slideWidthPt, slideHeightPt) && (box.left < -GEOMETRY_TOLERANCE_PT || box.top < -GEOMETRY_TOLERANCE_PT || box.left + box.width > slideWidthPt + GEOMETRY_TOLERANCE_PT || box.top + box.height > slideHeightPt + GEOMETRY_TOLERANCE_PT);
   });
   const tables = tableMetrics(objects);
+  const overflowingText = textObjects.filter((object) => textOverflows(deck, object));
   const move = movement(objects, baseline);
   const warnings: string[] = [];
   if (packet.authority !== "powerpoint-native") warnings.push("Rendered-text and cell-clearance metrics use OOXML fallback estimates; native PowerPoint measurement is required for final acceptance.");
@@ -199,7 +202,9 @@ export function calculateSlideDesignMetrics(deck: DeckJob, packet: NativeMeasure
     verticalGapMadPt: gaps.length > 1 ? rounded(mad(gaps)!) : undefined,
     safeRegionViolationCount: safeViolations.length,
     offSlideObjectCount: offSlide.length,
-    textOverflowCount: textObjects.filter((object) => textOverflows(deck, object)).length,
+    offSlideObjectIds: offSlide.map((object) => object.objectId),
+    textOverflowCount: overflowingText.length,
+    textOverflowObjectIds: overflowingText.map((object) => object.objectId),
     minimumTableCellClearancePt: tables.minimumClearance === undefined ? undefined : rounded(tables.minimumClearance),
     minimumTableHorizontalClearancePt: tables.minimumHorizontalClearance === undefined ? undefined : rounded(tables.minimumHorizontalClearance),
     minimumTableVerticalClearancePt: tables.minimumVerticalClearance === undefined ? undefined : rounded(tables.minimumVerticalClearance),

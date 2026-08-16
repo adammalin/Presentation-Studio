@@ -3,7 +3,7 @@
 ## Product and Technical Specification
 
 - **Status:** Working foundation; phased implementation in progress
-- **Specification version:** 1.6 - Responsive semantic recipes and native private-golden qualification
+- **Specification version:** 1.8 - Closed-loop native deck qualification
 - **Date:** 2026-08-14
 - **Repository:** `adammalin/Presentation-Studio`
 - **Distribution boundary:** Source-based installation only; no application installers
@@ -123,6 +123,24 @@ Private regression uses a local hash-pinned manifest containing only absolute so
 Recipe selection is a communication-structure decision, not a choice of generic decoration. Studio distinguishes parallel objectives, dense category comparisons, assertion/challenge/evidence pages, multi-input process flows, tables, and labeled figure sets from their exact source paragraphs, images, connectors, and native-table graph. The challenge/evidence recipe composes one assertion, one orienting line, three peer challenge cards, and separate technical evidence regions. The process recipe binds four source inputs to their exact icons and labels by source relationship and z-order, then composes ordered process and output bands beside exact supporting copy. Bottom-of-slide technical objects are not classified as footer furniture solely because of their vertical position.
 
 Responsive text fitting is conservative and PowerPoint-aware: it estimates line demand before writing, retains minimum readable sizes, then independently measures the editable candidate in Microsoft PowerPoint. Native table-cell clearance, true text overflow, safe/off-slide geometry, exact visible-copy sequence, exact table grid/merges, semantic color preservation, and material design impact are required objective gates. Known PowerPoint bullet-glyph bounding overhang receives a narrowly bounded tolerance; ordinary clipping remains a failure. The ignored six-slide EMT suite qualifies these rules without adding source or benchmark presentation bytes to version control.
+
+### 0.9 Specification 1.7 implementation increment: full-deck qualification evidence
+
+After the central Studio revision builds successfully, **Inspect all** creates a new private local qualification run. Presentation Studio reopens both the immutable source and the exact central candidate in Microsoft PowerPoint, exports every slide from each as a 2,200-pixel PNG, records renderer/version/package/raster identities and native measurements, and writes a self-contained HTML/JSON evidence bundle. The run stores no extra candidate PPTX and remains outside the project package, Git, and external export destination.
+
+The objective ledger verifies exact slide count, ordered visible-text hashes, native table content and merged structure, approved presentation fonts, authoritative render/measurement coverage, true text fit, off-slide geometry, native table-cell clearance, pixel-identical protected template slides, and material design impact on every non-protected redesign slide. A passing ledger means only `visual-review-required`; it never claims the candidate is better. A human or authorized MCP model must open both source and candidate images for every slide at full size and judge hierarchy, alignment, spacing, balance, tables, figures, template fidelity, deck consistency, and original intent.
+
+Failures are routed by cause rather than patched indiscriminately. `mcp-design` issues return to the shared Studio scene and semantic solvers. `engine-code` issues require a reproducible synthetic or private hash-pinned regression before code changes. `image-concept` issues return only to the governed text-free, logo-free visual-needs prompt and editable reconstruction path. `human-review` holds technical, semantic, rights, template, or brand ambiguity. The MCP operations `run_deck_qualification`, `get_deck_qualification`, `get_qualification_contact_sheet`, `get_qualification_slide`, and `record_deck_qualification_review` expose this loop without applying proposals, saving the project, or exporting a presentation to a user destination.
+
+### 0.10 Specification 1.8 implementation increment: closed-loop review and automation
+
+Qualification is an immutable attempt, not a mutable checkbox. The report opens with the clean candidate overview, keeps every clean source/candidate slide pair as the primary evidence, and reveals selected-object crops or diagnostic overlays only when a reviewer asks to localize an issue. Every objective issue may bind to a normalized region derived from the exact PowerPoint-native object or table measurement. The app and MCP can also create bounded candidate contact sheets for deck-rhythm inspection without replacing full-size review.
+
+A human or authorized MCP model records slide reviews against the exact qualification ID, candidate package SHA-256, and source/candidate raster SHA-256 identities. A review contains a `ready`, `revise`, or `hold` verdict, concise rationale, and bounded findings. Ready is withheld while that slide has an objective blocker or major issue. `review-complete` is possible only when every slide is reviewed and the deck has no objective failure; otherwise the attempt remains `visual-review-required`, becomes `revision-required`, or is `held`. Recording a review changes only private qualification evidence and never edits the scene, accepts a proposal, saves the project, or exports a deck.
+
+After a repair, Studio rebuilds the one central scene and creates a new qualification attempt. It does not rerender unchanged candidate bytes. A bounded session history records prior qualification identity, candidate hash, attempt number, objective trend, and blocker/major deltas; unresolved authorized-AI work is held after attempt three. This creates the required `Found issues → Fixing → Rechecking original intent` loop without hiding regression or allowing a self-declared aesthetic pass.
+
+Automation has two explicitly different lanes. Portable CI runs TypeScript checking, unit/integration tests, the production build, and repository data-safety checks. It cannot claim PowerPoint fidelity. The native lane is manual and requires an approved self-hosted workstation with Microsoft PowerPoint; it runs only the synthetic precision-layout canary unless a separately authorized local operator supplies private evidence. Neither lane uploads client presentations, ORNL template bytes, qualification images, or private reports as CI artifacts. See `docs/QUALITY-PIPELINE.md` for the operational boundary.
 
 ---
 

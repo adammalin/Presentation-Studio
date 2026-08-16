@@ -7,6 +7,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const { promisify } = require("node:util");
 const {
   classifyPowerPointAutomationError: classifyMeasurementError,
+  closeExactPowerPointPresentation,
   describePowerPointAutomationError,
   macSessionLocked,
   runPowerPointAutomationWithStartupRecovery,
@@ -136,6 +137,18 @@ ${POWERPOINT_MEASUREMENT_BODY}
         try
           close targetPresentation saving no
         end try
+      else
+        -- The open command may have created the presentation before a
+        -- startup-window error prevented the exact binding above.
+        repeat with presentationIndex from 1 to (count of presentations)
+          set candidatePresentation to presentation presentationIndex
+          try
+            if (full name of candidatePresentation as text) is sourcePath then
+              close candidatePresentation saving no
+              exit repeat
+            end if
+          end try
+        end repeat
       end if
       error "PowerPoint-native measurement failed during " & measurementStage & ": " & measurementError number measurementErrorNumber
     end try
@@ -326,6 +339,7 @@ async function measurePowerPointNative({ bytes: inputBytes, name = "presentation
     if (stat.size > MAX_MEASUREMENT_BYTES) throw new Error("The native measurement result exceeds the 64 MB safety limit.");
     return parsePowerPointMeasurement(await fs.readFile(measurementPath, "utf8"), { sourceSha256: digest });
   } finally {
+    await closeExactPowerPointPresentation(sourcePath);
     await fs.rm(jobRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }

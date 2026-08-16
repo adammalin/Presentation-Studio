@@ -130,6 +130,47 @@ server.registerTool("build_studio_presentation", {
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("build_studio_presentation", input, (result) => `Built and PowerPoint-validated all ${result.slideCount} slides in the central Studio presentation for ${result.deck.name}. Slides and export now reference scene ${result.sceneRevision}. No file was saved or exported.`));
 
+server.registerTool("run_deck_qualification", {
+  title: "Build the native deck qualification evidence bundle",
+  description: "Reopen the exact current central Studio candidate and immutable source in Microsoft PowerPoint, export every slide from both as a private 2,200-pixel PNG, remeasure the candidate, and write a local evidence bundle with exact-content, table-structure, Aptos, overflow, off-slide, protected-template, and material-design-impact checks. The report routes slide-design failures to bounded MCP work, repeated engine defects to code regression work, and visual-asset needs to the governed concept queue. This does not apply a proposal, save the project, export the presentation to a user destination, or prove that the design is better; every candidate PNG still requires full-size visual review.",
+  inputSchema: { deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }) },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("run_deck_qualification", input, (result) => `Qualified all ${result.report.totals.slides} source/candidate slide pairs for ${result.deck.name}. Found ${result.report.issues.length} routed objective issue${result.report.issues.length === 1 ? "" : "s"}; full-size visual review remains required.`));
+
+server.registerTool("get_deck_qualification", {
+  title: "Read the latest deck qualification ledger",
+  description: "Read the exact current central Studio scene's objective qualification checks, per-slide issue IDs, repair routing, PowerPoint provenance, and pending visual-review requirements without returning file bytes or images. Follow with get_qualification_slide for the source and candidate pixels of every slide; metadata alone cannot establish visual quality.",
+  inputSchema: { deckId: z.string().min(1).max(120) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_deck_qualification", input, (result) => `Read qualification ${result.report.id} for ${result.deck.name}: ${result.report.status}, ${result.report.issues.length} routed issue${result.report.issues.length === 1 ? "" : "s"}.`));
+
+server.registerTool("get_qualification_slide", {
+  title: "View one exact qualification slide image",
+  description: "Return a full-resolution Microsoft PowerPoint-native PNG, a precise native-measurement issue crop, or a temporary diagnostic overlay from the latest source/candidate qualification pair. Request both clean full representations for every slide; use crops and overlays only to locate named issues, never as finished-slide artwork or as a substitute for full-size visual judgment.",
+  inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), representation: z.enum(["source", "candidate"]).default("candidate"), view: z.enum(["full", "issue-crop", "diagnostic-overlay"]).default("full"), issueId: z.string().min(1).max(180).optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImage("get_qualification_slide", input, (result) => `Viewed the exact ${result.representation} PowerPoint-native ${result.view.replaceAll("-", " ")} for slide ${result.slideNumber} of ${result.deck.name}.`));
+
+server.registerTool("get_qualification_contact_sheet", {
+  title: "View a qualification deck overview",
+  description: "Return one page of up to 40 authoritative PowerPoint-native source or exact central-candidate thumbnails from the latest qualification. Use all pages to find cross-slide hierarchy, pacing, density, repetition, table, figure, and consistency outliers; then inspect every clean full slide pair before recording visual review.",
+  inputSchema: { deckId: z.string().min(1).max(120), representation: z.enum(["source", "candidate"]).default("candidate"), page: z.number().int().min(1).default(1) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => callImage("get_qualification_contact_sheet", input, (result) => `Viewed ${result.representation} qualification overview page ${result.page} of ${result.pageCount}, slides ${result.firstSlideNumber}–${result.lastSlideNumber}.`));
+
+server.registerTool("record_deck_qualification_review", {
+  title: "Record revision-bound full-deck visual review",
+  description: "Record visual verdicts for 1–40 exact source/candidate slide pairs after inspecting their clean full-resolution PowerPoint images. Every verdict is bound to both raster hashes, the candidate SHA-256, and the scene revision. A ready verdict is withheld when objective issues or major visual findings remain. Authorized-AI retries are capped at three before hold. This writes only private qualification metadata; it does not change slide design, save the project, export PowerPoint, or constitute formal ORNL approval.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120), expectedSceneRevision: z.string().min(1).max(500), qualificationId: z.string().min(1).max(180), candidateSha256: z.string().length(64),
+    reviews: z.array(z.object({
+      slideNumber: z.number().int().min(1), sourceRasterSha256: z.string().length(64), candidateRasterSha256: z.string().length(64), verdict: z.enum(["ready", "revise", "hold"]), rationale: z.string().min(1).max(2_000),
+      findings: z.array(z.object({ category: z.enum(["hierarchy", "alignment", "spacing", "layout-balance", "table-quality", "figure-clarity", "template-fidelity", "deck-consistency", "source-intent", "other"]), severity: z.enum(["major", "minor"]), message: z.string().min(1).max(1_000), repairRoute: z.enum(["mcp-design", "engine-code", "image-concept", "human-review"]) })).max(12).default([]),
+    })).min(1).max(40),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("record_deck_qualification_review", input, (result) => result.status === "review-complete" ? `Recorded exact-pixel visual review for all ${result.visualAcceptance.reviewedSlideCount} slides. The deck is ready for human draft review; this is not formal ORNL approval.` : `Recorded ${result.visualAcceptance.reviewedSlideCount} visual reviews; ${result.visualAcceptance.revisionSlideCount} need revision and ${result.visualAcceptance.heldSlideCount} are held.`));
+
 server.registerTool("list_resources", {
   title: "List authorized project Resources",
   description: "List metadata for project Resources that a person explicitly shared for the current app session. Requires AI session access. Never returns original file bytes or extracted document text.",
@@ -216,7 +257,7 @@ server.registerTool("reconstruct_studio_concept", {
     expectedSceneRevision: z.string().min(1).max(500),
     slideNumber: z.number().int().min(1),
     referenceId: z.string().min(1).max(180),
-    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
+    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("reconstruct_studio_concept", input, (result) => `Reconstructed concept ${result.referenceId} into ${result.mappedNodeIds.length} editable source-bound element${result.mappedNodeIds.length === 1 ? "" : "s"} on Studio slide ${result.slideNumber}. Build and inspect the PowerPoint-native result before review; nothing was saved or exported.`));
@@ -394,7 +435,7 @@ server.registerTool("stage_studio_web_design", {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
     compilerMode: z.literal("fresh-composition").default("fresh-composition"),
     layoutId: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),

@@ -50,6 +50,7 @@ test("native render automation closes its exact temporary presentation after suc
   assert.match(POWERPOINT_RENDER_SCRIPT, /save targetPresentation/i);
   assert.match(POWERPOINT_RENDER_SCRIPT, /on error renderError number renderErrorNumber/i);
   assert.match(POWERPOINT_RENDER_SCRIPT, /close targetPresentation saving no/i);
+  assert.match(POWERPOINT_RENDER_SCRIPT, /if \(full name of candidatePresentation as text\) is sourcePath then\s+close candidatePresentation saving no/i);
 });
 
 test("reads native JPEG dimensions before slide images enter the renderer", () => {
@@ -82,9 +83,14 @@ test("PowerPoint automation diagnostics surface actionable conditions without ec
 });
 
 test("PowerPoint startup-window recovery is bounded to an empty presentation session", async () => {
-  const { runPowerPointAutomationWithStartupRecovery } = require("../electron/powerpoint-automation-error.cjs") as {
+  const { POWERPOINT_CLOSE_EXACT_SCRIPT, runPowerPointAutomationWithStartupRecovery } = require("../electron/powerpoint-automation-error.cjs") as {
+    POWERPOINT_CLOSE_EXACT_SCRIPT: string;
     runPowerPointAutomationWithStartupRecovery(options: { action: string; run(): Promise<string>; presentationCount(): Promise<number>; quit(): Promise<void> }): Promise<string>;
   };
+  assert.doesNotMatch(POWERPOINT_CLOSE_EXACT_SCRIPT, /active presentation/i);
+  assert.match(POWERPOINT_CLOSE_EXACT_SCRIPT, /application "Microsoft PowerPoint" is running/i);
+  assert.match(POWERPOINT_CLOSE_EXACT_SCRIPT, /full name of candidatePresentation as text/i);
+  assert.match(POWERPOINT_CLOSE_EXACT_SCRIPT, /close candidatePresentation saving no/i);
   let attempts = 0;
   let quits = 0;
   const recovered = await runPowerPointAutomationWithStartupRecovery({

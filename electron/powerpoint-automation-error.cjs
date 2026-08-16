@@ -1,3 +1,39 @@
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
+
+const execFileAsync = promisify(execFile);
+
+// A timed-out or startup-window-blocked AppleScript can open a bridge copy
+// before the caller binds targetPresentation. Close only the exact bridge
+// path during Node cleanup so an orphan cannot block the next user open.
+const POWERPOINT_CLOSE_EXACT_SCRIPT = `on run argv
+  set sourcePath to item 1 of argv
+  if application "Microsoft PowerPoint" is running then
+    tell application "Microsoft PowerPoint"
+      repeat with presentationIndex from 1 to (count of presentations)
+        set candidatePresentation to presentation presentationIndex
+        try
+          if (full name of candidatePresentation as text) is sourcePath then
+            close candidatePresentation saving no
+            exit repeat
+          end if
+        end try
+      end repeat
+    end tell
+  end if
+  return "closed"
+end run`;
+
+async function closeExactPowerPointPresentation(sourcePath) {
+  if (!sourcePath) return false;
+  try {
+    await execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_CLOSE_EXACT_SCRIPT, sourcePath], { timeout: 10_000, maxBuffer: 64 * 1024 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function automationErrorText(error) {
   return [error?.stderr, error?.stdout, error?.message, error?.code, error?.signal].filter(Boolean).join("\n");
 }
@@ -61,9 +97,11 @@ async function runPowerPointAutomationWithStartupRecovery({ action = "process", 
 }
 
 module.exports = {
+  POWERPOINT_CLOSE_EXACT_SCRIPT,
   automationErrorText,
   boundedPowerPointDetail,
   classifyPowerPointAutomationError,
+  closeExactPowerPointPresentation,
   describePowerPointAutomationError,
   macSessionLocked,
   runPowerPointAutomationWithStartupRecovery,

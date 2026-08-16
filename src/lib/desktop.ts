@@ -1,3 +1,5 @@
+import type { DeckQualificationReport, QualificationRenderSummary } from "./deck-qualification";
+
 export interface PickedBinaryFile {
   name: string;
   filePath: string;
@@ -134,6 +136,14 @@ export interface NativeMeasurementCapabilities {
   sessionLocked?: boolean;
 }
 
+export interface DeckQualificationCaptureResult {
+  outputRoot: string;
+  sourceRender: QualificationRenderSummary;
+  candidateRender: QualificationRenderSummary;
+  sourceMeasurement: NativeMeasurementResult;
+  candidateMeasurement: NativeMeasurementResult;
+}
+
 export interface DesktopBridge {
   isDesktop: true;
   platform: string;
@@ -152,6 +162,10 @@ export interface DesktopBridge {
   getNativeMeasurementCapabilities(): Promise<NativeMeasurementCapabilities>;
   renderPowerPoint(payload: { name: string; bytes: Uint8Array; width?: number; format?: "jpeg" | "png" }): Promise<NativeRenderResult>;
   measurePowerPoint(payload: { name: string; bytes: Uint8Array }): Promise<NativeMeasurementResult>;
+  captureDeckQualification(payload: { projectId: string; deckId: string; runId: string; width?: number; source: { name: string; bytes: Uint8Array }; candidate: { name: string; bytes: Uint8Array } }): Promise<DeckQualificationCaptureResult>;
+  finalizeDeckQualification(payload: { outputRoot: string; report: DeckQualificationReport }): Promise<{ outputRoot: string; reportPath: string; htmlPath: string }>;
+  readDeckQualificationSlide(payload: { outputRoot: string; representation: "source" | "candidate"; slideNumber: number }): Promise<{ mimeType: "image/png"; bytes: Uint8Array; filePath: string }>;
+  revealDeckQualification(payload: { outputRoot: string }): Promise<{ revealed: boolean; outputRoot: string; htmlPath: string }>;
   getOnboardingTourVersion(): Promise<{ version: string | null }>;
   setOnboardingTourVersion(version: string): Promise<{ saved: boolean; version: string }>;
   openUserGuide(): Promise<{ opened: boolean; path?: string }>;
