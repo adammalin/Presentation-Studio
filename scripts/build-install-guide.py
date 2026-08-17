@@ -92,6 +92,7 @@ styles = {
     "step": ParagraphStyle("step", parent=base["BodyText"], fontName=FONT_REGULAR, fontSize=9.2, leading=13.2, textColor=INK),
     "code": ParagraphStyle("code", parent=base["Code"], fontName="Courier", fontSize=7.8, leading=11, textColor=NAVY, backColor=SOFT, borderPadding=8, borderColor=GRAPHITE, borderWidth=0.5, spaceBefore=4, spaceAfter=9),
     "code_one_line": ParagraphStyle("code_one_line", parent=base["Code"], fontName="Courier", fontSize=5.25, leading=9, textColor=NAVY, backColor=SOFT, borderPadding=7, borderColor=GRAPHITE, borderWidth=0.5, spaceBefore=4, spaceAfter=9, splitLongWords=False),
+    "prompt": ParagraphStyle("prompt", parent=base["Code"], fontName="Courier", fontSize=6.6, leading=9.1, textColor=NAVY, backColor=SOFT, borderPadding=8, borderColor=GRAPHITE, borderWidth=0.5, spaceBefore=4, spaceAfter=9),
     "callout": ParagraphStyle("callout", parent=base["BodyText"], fontName=FONT_REGULAR, fontSize=9, leading=13.5, textColor=INK),
     "center": ParagraphStyle("center", parent=base["BodyText"], fontName=FONT_BOLD, fontSize=9, leading=13, textColor=NAVY, alignment=TA_CENTER),
     "step_number": ParagraphStyle("step_number", parent=base["BodyText"], fontName=FONT_BOLD, fontSize=9, leading=13, textColor=WHITE, alignment=TA_CENTER),
@@ -179,6 +180,39 @@ mcp_table = Table([
 ], colWidths=[3.42 * inch, 3.42 * inch])
 mcp_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, 0), GREEN), ("BACKGROUND", (1, 0), (1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE), ("BACKGROUND", (0, 1), (-1, 1), SOFT), ("BOX", (0, 0), (-1, -1), 0.7, GRAPHITE), ("INNERGRID", (0, 0), (-1, -1), 0.5, GRAPHITE), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 10), ("RIGHTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9)]))
 story += [mcp_table, Spacer(1, 0.16 * inch), callout("Current MCP boundary", "Authorized MCP models can inspect, stage semantic design changes, build private local candidates, and record qualification evidence. They cannot overwrite an original, save the project, export to a user destination, or distribute an output."), Spacer(1, 0.12 * inch), callout("Local connection", "The STDIO server reaches the active app through a per-session token on a loopback-only bridge. The token descriptor is written with private local permissions and removed when the app closes."), PageBreak()]
+
+session_prompt = """Connect to the Presentation Studio MCP and work in the currently open project.
+
+First, read the Presentation Studio design contract, check the app status, inventory the authorized project Resources, and inspect the installed ORNL Template Pack. Confirm that you can read the source content - not merely filenames or metadata. If anything required is inaccessible, tell me exactly what must be shared or attached. Do not invent missing content.
+
+Create a polished, editable, 16:9 ORNL presentation from the supplied source materials.
+
+Content direction:
+- Organize the material into a clear narrative using assertion-evidence slides.
+- Give each slide one primary takeaway and supporting evidence.
+- You may condense source prose, but preserve technical meaning, names, numbers, units, qualifications, and attribution.
+- Preserve approved or locked copy exactly. Do not introduce unsupported claims, data, diagrams, or conclusions.
+- Infer routine structure and design choices. Ask only about genuine audience, technical, content-authority, or approval ambiguities.
+
+Design direction:
+- Use Aptos and the current approved ORNL Template Pack.
+- For a new title slide, use an approved ORNL title layout and edit only intended placeholders. Never alter its artwork, marks, master, or layout.
+- Make substantive whole-slide composition decisions using shared Studio recipes and compatible ORNL layouts. Do not merely keep the source arrangement or make text smaller.
+- Establish one deck-wide system for titles, spacing, alignment, figures, captions, tables, colors, and repeated components.
+- Use authorized Resource images only when they support the message. Preserve technical figures as relationship-aware groups unless a verified editable reconstruction is clearer.
+- Keep tables editable and readable; preserve meaning-bearing colors.
+
+Workflow:
+1. Develop the narrative and slide plan.
+2. Create the presentation in the single central Studio HTML/CSS scene.
+3. Build the complete editable PowerPoint candidate.
+4. Inspect the PowerPoint-native contact sheet and every full-size candidate slide.
+5. Run Found issues -> Fixing -> Rechecking original intent. Correct overflow, alignment, hierarchy, spacing, tables, missing imagery, and message drift.
+6. Do not call the presentation ready while any blocker or major visual issue remains.
+
+Use your best design judgment and minimize routine questions. Leave the completed central design visible for my review. Do not save or export the final PowerPoint until I explicitly request it."""
+
+story += [p("Start a ChatGPT Desktop design session", "h1"), p("Use this after Presentation Studio is open, the MCP connection is enabled, and the approved project material is in place. Copy the complete prompt below into a fresh ChatGPT Desktop conversation."), p(session_prompt.replace("\n", "<br/>"), "prompt"), callout("Current 0.2.1 limitation", "Presentation Studio can package document Resources, but MCP currently returns only authorized Resource metadata and bounded image previews - not extracted document text. It also cannot create a brand-new deck directly from document-only Resources. For now, attach the same cleared source documents directly to ChatGPT Desktop and add a starter PowerPoint to Presentation Studio. Use only material approved for the selected AI environment.", FORGE), PageBreak()]
 
 story += [p("Projects, encryption, and verification", "h1"), p("Project formats", "h2")]
 project_table = Table([

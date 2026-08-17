@@ -602,6 +602,8 @@ async function createWindow() {
       const selected = await mainWindow.webContents.executeJavaScript(`(() => { const label = ${JSON.stringify(captureView)}; const button = [...document.querySelectorAll('.rail-items > button')].find((item) => item.textContent?.trim() === label); if (!button) return false; button.click(); return true; })()`);
       if (!selected) throw new Error(`The capture view ${captureView} was not found.`);
       await new Promise((resolve) => setTimeout(resolve, 150));
+      const viewReady = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.app-shell') && document.body.innerText.trim().length > 100)").catch(() => false);
+      if (!viewReady) throw new Error(`The capture view ${captureView} caused the renderer shell to disappear or become blank.`);
     }
     if (captureResourceFixture) {
       const added = await mainWindow.webContents.executeJavaScript(`(() => { const input = document.querySelector('#web-resource-picker'); if (!input) return false; const transfer = new DataTransfer(); transfer.items.add(new File(['Synthetic assertion\\n\\nSynthetic evidence for local UI qualification.'], 'synthetic-source.md', { type: 'text/markdown' })); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);

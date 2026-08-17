@@ -9,7 +9,7 @@ const capture = path.join(os.tmpdir(), `presentation-studio-smoke-${process.pid}
 const electronBin = path.join(root, "node_modules", "electron", "cli.js");
 const child = spawn(process.execPath, [electronBin, "."], {
   cwd: root,
-  env: { ...process.env, PRESENTATION_STUDIO_SMOKE_TEST: "1", PRESENTATION_STUDIO_CAPTURE_PATH: capture },
+  env: { ...process.env, PRESENTATION_STUDIO_SMOKE_TEST: "1", PRESENTATION_STUDIO_CAPTURE_PATH: capture, PRESENTATION_STUDIO_CAPTURE_VIEW: process.env.PRESENTATION_STUDIO_CAPTURE_VIEW || "Slides" },
   // The smoke flow drives the renderer itself. Do not let terminal input
   // accidentally advance the focused onboarding control while it is measured.
   stdio: ["ignore", "inherit", "inherit"],
@@ -27,5 +27,5 @@ if (width < 1200 || height < 700) throw new Error(`Electron smoke capture is une
 // The flat ORNL UI compresses efficiently, so compressed byte size is only a
 // coarse blank-image guard. Dimension checks above remain stable as styling
 // changes make otherwise healthy screenshots larger or smaller on disk.
-if (stats.size < 20_000) throw new Error("Electron smoke capture may be blank or incomplete.");
+if (stats.size < 30_000) throw new Error("Electron smoke capture may be blank or incomplete.");
 console.log(`Electron smoke passed with a ${width} x ${height}, ${stats.size.toLocaleString()}-byte renderer capture.`);

@@ -84,6 +84,45 @@ node scripts/configure-mcp.mjs --write /absolute/path/to/mcp-config.json
 
 Presentation Studio must be open. The MCP server uses STDIO and connects to the active app through a per-session token on a loopback-only bridge. The in-app AI session switch is off by default. MCP can inspect, stage semantic design changes, build private local candidates, and record qualification evidence. It cannot overwrite an original, save a project, export to a user destination, or distribute an output.
 
+## Start a ChatGPT Desktop design session
+
+Use this after Presentation Studio is open, the MCP connection is enabled, and the approved project material is in place:
+
+```text
+Connect to the Presentation Studio MCP and work in the currently open project.
+
+First, read the Presentation Studio design contract, check the app status, inventory the authorized project Resources, and inspect the installed ORNL Template Pack. Confirm that you can read the source content - not merely filenames or metadata. If anything required is inaccessible, tell me exactly what must be shared or attached. Do not invent missing content.
+
+Create a polished, editable, 16:9 ORNL presentation from the supplied source materials.
+
+Content direction:
+- Organize the material into a clear narrative using assertion-evidence slides.
+- Give each slide one primary takeaway and supporting evidence.
+- You may condense source prose, but preserve technical meaning, names, numbers, units, qualifications, and attribution.
+- Preserve approved or locked copy exactly. Do not introduce unsupported claims, data, diagrams, or conclusions.
+- Infer routine structure and design choices. Ask only about genuine audience, technical, content-authority, or approval ambiguities.
+
+Design direction:
+- Use Aptos and the current approved ORNL Template Pack.
+- For a new title slide, use an approved ORNL title layout and edit only intended placeholders. Never alter its artwork, marks, master, or layout.
+- Make substantive whole-slide composition decisions using shared Studio recipes and compatible ORNL layouts. Do not merely keep the source arrangement or make text smaller.
+- Establish one deck-wide system for titles, spacing, alignment, figures, captions, tables, colors, and repeated components.
+- Use authorized Resource images only when they support the message. Preserve technical figures as relationship-aware groups unless a verified editable reconstruction is clearer.
+- Keep tables editable and readable; preserve meaning-bearing colors.
+
+Workflow:
+1. Develop the narrative and slide plan.
+2. Create the presentation in the single central Studio HTML/CSS scene.
+3. Build the complete editable PowerPoint candidate.
+4. Inspect the PowerPoint-native contact sheet and every full-size candidate slide.
+5. Run Found issues -> Fixing -> Rechecking original intent. Correct overflow, alignment, hierarchy, spacing, tables, missing imagery, and message drift.
+6. Do not call the presentation ready while any blocker or major visual issue remains.
+
+Use your best design judgment and minimize routine questions. Leave the completed central design visible for my review. Do not save or export the final PowerPoint until I explicitly request it.
+```
+
+Current 0.2.1 limitation: Presentation Studio can package document Resources, but MCP currently returns only authorized Resource metadata and bounded image previews - not extracted document text. It also cannot create a brand-new deck directly from document-only Resources. For now, attach the same cleared source documents directly to ChatGPT Desktop and add a starter PowerPoint to Presentation Studio. Use only material approved for the selected AI environment.
+
 ## Project files and encryption
 
 - `.pstudio` is a ZIP-based self-contained package with canonical project JSON and immutable-by-hash Resources.
