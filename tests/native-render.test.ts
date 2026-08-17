@@ -25,18 +25,21 @@ test("native rasterizer readiness resolves symlinks and proves the executable ca
   try {
     const binDirectory = path.join(root, "bundled poppler", "bin");
     mkdirSync(binDirectory, { recursive: true });
-    const target = path.join(binDirectory, "pdftoppm");
-    writeFileSync(target, "#!/usr/bin/env bash\n[ \"$1\" = \"-v\" ]\n", { mode: 0o755 });
-    chmodSync(target, 0o755);
+    const target = path.join(binDirectory, process.platform === "win32" ? "pdftoppm.exe" : "pdftoppm");
+    if (process.platform === "win32") symlinkSync(process.execPath, target);
+    else {
+      writeFileSync(target, "#!/usr/bin/env bash\n[ \"$1\" = \"-v\" ]\n", { mode: 0o755 });
+      chmodSync(target, 0o755);
+    }
     const linkedDirectory = path.join(root, "consumer project", "node_modules", ".bin");
     mkdirSync(linkedDirectory, { recursive: true });
-    const link = path.join(linkedDirectory, "pdftoppm");
+    const link = path.join(linkedDirectory, process.platform === "win32" ? "pdftoppm.exe" : "pdftoppm");
     symlinkSync(target, link);
 
     assert.equal(validatePdfRasterizer(link), realpathSync(target));
 
-    const broken = path.join(binDirectory, "broken-pdftoppm");
-    writeFileSync(broken, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    const broken = path.join(binDirectory, process.platform === "win32" ? "broken-pdftoppm.exe" : "broken-pdftoppm");
+    writeFileSync(broken, process.platform === "win32" ? "not an executable" : "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
     chmodSync(broken, 0o755);
     assert.equal(validatePdfRasterizer(broken), null);
   } finally {
