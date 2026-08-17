@@ -63,6 +63,47 @@ test("clones a complete native layout/master dependency graph and remaps only th
   assert.match(presentationRelationships ?? "", new RegExp(result.receipt.clonedMasterPart.replace("ppt/", "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   const contentTypes = await output.file("[Content_Types].xml")?.async("text");
   assert.match(contentTypes ?? "", new RegExp(result.receipt.clonedLayoutPart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const presentation = await output.file("ppt/presentation.xml")!.async("text");
+  const masterAndLayoutIds = [...presentation.matchAll(/<p:sldMasterId\b[^>]*\bid="(\d+)"/g)].map((match) => match[1]);
+  for (const masterPart of Object.keys(output.files).filter((name) => /^ppt\/slideMasters\/slideMaster\d+\.xml$/i.test(name))) {
+    const masterXml = await output.file(masterPart)!.async("text");
+    masterAndLayoutIds.push(...[...masterXml.matchAll(/<p:sldLayoutId\b[^>]*\bid="(\d+)"/g)].map((match) => match[1]));
+  }
+  assert.equal(new Set(masterAndLayoutIds).size, masterAndLayoutIds.length);
+});
+
+test("isolates one selected layout instead of cloning every sibling on its master", async () => {
+  const { bytes, templateBytes, command } = await fixture({ distinctTemplateLayout: true });
+  const template = await JSZip.loadAsync(templateBytes);
+  const masterPart = Object.keys(template.files).find((name) => /^ppt\/slideMasters\/slideMaster\d+\.xml$/i.test(name));
+  assert.ok(masterPart);
+  const masterRelationshipsPart = masterPart.replace("ppt/slideMasters/", "ppt/slideMasters/_rels/") + ".rels";
+  const layoutParts = Object.keys(template.files).filter((name) => /^ppt\/slideLayouts\/slideLayout\d+\.xml$/i.test(name));
+  const siblingNumber = Math.max(...layoutParts.map((name) => Number(name.match(/slideLayout(\d+)\.xml$/i)?.[1] ?? 0))) + 1;
+  const siblingPart = `ppt/slideLayouts/slideLayout${siblingNumber}.xml`;
+  const siblingRelationshipsPart = `ppt/slideLayouts/_rels/slideLayout${siblingNumber}.xml.rels`;
+  template.file(siblingPart, await template.file(command.templateLayoutPart)!.async("uint8array"));
+  const sourceLayoutRelationshipsPart = command.templateLayoutPart.replace("ppt/slideLayouts/", "ppt/slideLayouts/_rels/") + ".rels";
+  template.file(siblingRelationshipsPart, await template.file(sourceLayoutRelationshipsPart)!.async("uint8array"));
+  const siblingRelationshipId = "rId999";
+  const masterRelationships = await template.file(masterRelationshipsPart)!.async("text");
+  template.file(masterRelationshipsPart, masterRelationships.replace(/<\/Relationships>\s*$/i, `<Relationship Id="${siblingRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${siblingNumber}.xml"/></Relationships>`));
+  const masterXml = await template.file(masterPart)!.async("text");
+  template.file(masterPart, masterXml.replace(/<\/p:sldLayoutIdLst>/i, `<p:sldLayoutId id="4294960000" r:id="${siblingRelationshipId}"/></p:sldLayoutIdLst>`));
+  const expandedTemplateBytes = await template.generateAsync({ type: "uint8array" });
+  const result = await cloneTemplateLayoutForSlide({
+    sourceBytes: bytes,
+    templateBytes: expandedTemplateBytes,
+    command: { ...command, templateSha256: await sha256(expandedTemplateBytes) },
+  });
+  assert.equal(result.receipt.clonedLayoutCount, 1);
+  assert.ok(result.receipt.clonedMasterPart);
+  const output = await JSZip.loadAsync(result.bytes);
+  const clonedMasterRelationshipsPart = result.receipt.clonedMasterPart.replace("ppt/slideMasters/", "ppt/slideMasters/_rels/") + ".rels";
+  const clonedMasterRelationships = await output.file(clonedMasterRelationshipsPart)!.async("text");
+  assert.equal((clonedMasterRelationships.match(/relationships\/slideLayout/g) ?? []).length, 1);
+  const clonedMasterXml = await output.file(result.receipt.clonedMasterPart)!.async("text");
+  assert.equal((clonedMasterXml.match(/<p:sldLayoutId\b/g) ?? []).length, 1);
 });
 
 test("reuses an exact approved layout already in the source package without duplicating masters", async () => {

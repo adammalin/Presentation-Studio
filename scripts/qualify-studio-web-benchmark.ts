@@ -16,6 +16,8 @@ import { bindNativeMeasurement } from "../src/lib/native-measurement";
 import { calculateDesignMetrics } from "../src/lib/design-metrics";
 import { sha256 } from "../src/lib/hash";
 import { isolateNativePowerPointObjects, nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
+import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
+import { isProtectedOrnlTemplateSlide } from "../src/lib/template-guardrails";
 import type { NativeMeasurementResult, NativeRenderResult } from "../src/lib/desktop";
 import type { DeckJob, StudioWebScene } from "../src/types";
 
@@ -129,6 +131,7 @@ export async function qualifyStudioWebBenchmark(
   const sourceSha256 = await sha256(sourceBytes);
   if (expected?.sourceSha256 && expected.sourceSha256 !== sourceSha256) throw new Error(`The private source hash changed. Expected ${expected.sourceSha256}, received ${sourceSha256}.`);
   const sourceDeck: DeckJob = { id: "studio-web-benchmark-source", name: path.basename(sourcePath), sourceResourceId: "studio-web-benchmark-source-resource", sourceSha256, operationScope: "reflow", templateClassification: sourceAudit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", targetTemplateConfirmedAt: new Date().toISOString(), status: "ready-for-cleanup", audit: sourceAudit, protectedSlideNumbers: [] };
+  sourceDeck.protectedSlideNumbers = slideNumbers.filter((slideNumber) => isProtectedOrnlTemplateSlide(sourceDeck, slideNumber));
   sourceDeck.scene = compilePresentationScene({ ...sourceDeck, audit: sourceAudit });
   const catalog = await buildSlideRenderCatalog(sourceBytes, path.basename(sourcePath));
   const sourceRender = await renderNative({ bytes: sourceBytes, name: path.basename(sourcePath), width: 2200, format: "png" });
@@ -158,6 +161,7 @@ export async function qualifyStudioWebBenchmark(
   let scene = compileStudioWebScene(sourceDeck, catalog);
   const mappingCompleteBeforeDesign = slideNumbers.every((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)?.contentCoverage.exactTextMapped);
   for (const slideNumber of slideNumbers) {
+    if (isProtectedOrnlTemplateSlide(sourceDeck, slideNumber)) continue;
     if (designMode === "template" && templateCatalog) {
       const recommendation = rankLayoutCompatibility(templateCatalog.layouts, contentProfileForSlide(sourceDeck, slideNumber))[0];
       const layout = templateCatalog.layouts.find((item) => item.id === recommendation?.layoutId);
@@ -188,14 +192,24 @@ export async function qualifyStudioWebBenchmark(
     strict: true,
     title: "Presentation Studio native benchmark",
   });
+  if (argument("debug-unprotected") === "true") {
+    await fs.writeFile(path.join(outputRoot, "studio-web-benchmark-before-protected-slide-preservation.pptx"), composition.bytes);
+  }
+  let candidateBytes = composition.bytes;
+  let candidateWarnings = composition.warnings;
+  for (const slideNumber of sourceDeck.protectedSlideNumbers) {
+    const preserved = await preserveNativeSlide({ destinationBytes: candidateBytes, sourceBytes, slideNumber });
+    candidateBytes = preserved.bytes;
+    candidateWarnings = [...candidateWarnings, `Slide ${slideNumber}: preserved the approved native ORNL template composition, layout, master, theme, and ${preserved.receipt.copiedMediaCount} related media part${preserved.receipt.copiedMediaCount === 1 ? "" : "s"}.`];
+  }
   const candidatePath = path.join(outputRoot, "studio-web-benchmark.pptx");
-  await fs.writeFile(candidatePath, composition.bytes);
-  const candidateAudit = await auditPptx(composition.bytes);
-  const rebuiltDeck = await candidateDeck(candidateAudit, composition.bytes, path.basename(candidatePath));
-  const nativeMeasurement = await measureNative({ bytes: composition.bytes, name: path.basename(candidatePath) });
+  await fs.writeFile(candidatePath, candidateBytes);
+  const candidateAudit = await auditPptx(candidateBytes);
+  const rebuiltDeck = await candidateDeck(candidateAudit, candidateBytes, path.basename(candidatePath));
+  const nativeMeasurement = await measureNative({ bytes: candidateBytes, name: path.basename(candidatePath) });
   const measurement = bindNativeMeasurement(rebuiltDeck, nativeMeasurement);
   const metrics = calculateDesignMetrics(rebuiltDeck, measurement);
-  const candidateRender = await renderNative({ bytes: composition.bytes, name: path.basename(candidatePath), width: 2200, format: "png" });
+  const candidateRender = await renderNative({ bytes: candidateBytes, name: path.basename(candidatePath), width: 2200, format: "png" });
   const candidateImages = await writeRender(candidateRender, outputRoot, "candidate", slideNumbers, true);
   const sourceImages = await writeRender(sourceRender, outputRoot, "source", slideNumbers);
   let benchmarkImages: string[] = [];
@@ -209,31 +223,43 @@ export async function qualifyStudioWebBenchmark(
     benchmarkRenderStatus = benchmarkRender.status;
     benchmarkImages = await writeRender(benchmarkRender, outputRoot, "visual-benchmark");
   }
-  const fonts = [...new Set(candidateAudit.fonts.map((font) => font.family))];
+  const candidateProtectedSlideNumbers = new Set(sourceDeck.protectedSlideNumbers.map((slideNumber) => slideNumbers.indexOf(slideNumber) + 1).filter((slideNumber) => slideNumber > 0));
+  const editableTextBoxes = candidateAudit.textBoxes.filter((textBox) => !candidateProtectedSlideNumbers.has(textBox.slideNumber));
+  const editableTables = candidateAudit.tables.filter((table) => !candidateProtectedSlideNumbers.has(table.slideNumber));
+  const fonts = [...new Set([...editableTextBoxes.flatMap((textBox) => textBox.fontFamilies), ...editableTables.flatMap((table) => table.cellFonts)])];
+  const overflowEvidence = nativeTextOverflowEvidence(nativeMeasurement, candidateAudit).filter((item) => !candidateProtectedSlideNumbers.has(item.slideNumber));
   const designImpact = scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, ...analyzeStudioDesignImpact(slide) }));
+  const protectedSlideHashes = await Promise.all(sourceDeck.protectedSlideNumbers.map(async (slideNumber) => {
+    const source = sourceRender.status === "ready" ? sourceRender.slides.find((slide) => slide.number === slideNumber) : undefined;
+    const candidateIndex = slideNumbers.indexOf(slideNumber) + 1;
+    const candidate = candidateRender.status === "ready" ? candidateRender.slides.find((slide) => slide.number === candidateIndex) : undefined;
+    return { slideNumber, source: source ? await sha256(source.bytes) : undefined, candidate: candidate ? await sha256(candidate.bytes) : undefined };
+  }));
   const checks = {
     mappingCompleteBeforeDesign,
     exactVisibleTextSequence: exactSelectedText(sourceAudit, candidateAudit, slideNumbers),
     exactNativeTableGrid: exactSelectedTableGrid(sourceAudit, candidateAudit, slideNumbers),
-    allEditableTextUsesAptosOrSymbolFont: candidateAudit.textBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos" || ["Wingdings", "Symbol"].includes(family))) && candidateAudit.tables.every((table) => table.cellFonts.every((family) => family === "Aptos")),
+    allEditableTextUsesAptosOrSymbolFont: editableTextBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos" || ["Wingdings", "Symbol"].includes(family))) && editableTables.every((table) => table.cellFonts.every((family) => family === "Aptos")),
     nativePowerPointRenderReady: candidateRender.status === "ready" && candidateRender.renderer === "powerpoint-native" && candidateRender.authoritative,
     nativePowerPointMeasurementReady: nativeMeasurement.status === "ready" && nativeMeasurement.authority === "powerpoint-native",
-    noNativeTextOverflow: metrics.totals.textOverflowCount === 0,
+    noNativeTextOverflow: overflowEvidence.length === 0,
     noNativeTableCellClearanceViolations: metrics.totals.tableCellClearanceViolationCount === 0,
     noOffSlideObjects: metrics.totals.offSlideObjectCount === 0,
-    materialCompositionBeyondTypography: designImpact.every((impact) => ["layout-redesign", "figure-redesign", "full-redesign"].includes(impact.level)),
+    protectedSlidesRemainPixelIdentical: protectedSlideHashes.every((slide) => Boolean(slide.source) && slide.source === slide.candidate),
+    materialCompositionBeyondTypography: designImpact.every((impact) => sourceDeck.protectedSlideNumbers.includes(impact.sourceSlideNumber) || ["layout-redesign", "figure-redesign", "full-redesign"].includes(impact.level)),
     ...(designMode === "template" ? { authorizedTemplateArtworkApplied: scene.slides.every((slide) => slide.recipe === "template-layout" && Boolean(slide.targetLayoutId) && composition.warnings.some((warning) => warning.startsWith(`Slide ${slide.slideNumber}: approved `))) } : {}),
   };
   const report = {
     schema: "presentation-studio/studio-web-benchmark",
     version: 1,
     generatedAt: new Date().toISOString(),
-    source: { path: sourcePath, sha256: sourceSha256, slideNumbers },
+    source: { path: sourcePath, sha256: sourceSha256, classification: sourceAudit.classification, slideNumbers, protectedSlideNumbers: sourceDeck.protectedSlideNumbers },
     template: templateCatalog ? { path: options?.templatePath, name: templateCatalog.name, sha256: templateCatalog.sha256, designMode, layoutCount: templateCatalog.layouts.length } : undefined,
     benchmark: benchmarkPath ? { path: benchmarkPath, sha256: benchmarkSha256, renderStatus: benchmarkRenderStatus } : undefined,
-    candidate: { path: candidatePath, sha256: await sha256(composition.bytes), recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, ...composition },
+    candidate: { path: candidatePath, sha256: await sha256(candidateBytes), recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, warnings: candidateWarnings, textNodeCount: composition.textNodeCount, tableCount: composition.tableCount, imageCount: composition.imageCount, ignoredSourceFurnitureCount: composition.ignoredSourceFurnitureCount, generatedComponentCount: composition.generatedComponentCount },
     metrics,
-    nativeTextOverflowEvidence: nativeTextOverflowEvidence(nativeMeasurement, candidateAudit),
+    nativeTextOverflowEvidence: overflowEvidence,
+    protectedSlideHashes,
     designImpact,
     renders: { source: sourceImages, candidate: candidateImages, visualBenchmark: benchmarkImages },
     checks,

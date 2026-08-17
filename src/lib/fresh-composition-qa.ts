@@ -1,6 +1,7 @@
 import type { NativeMeasurementResult } from "./desktop";
 
 export interface FreshCompositionTextOverflow {
+  slideNumber: number;
   name: string;
   edges: Array<"left" | "top" | "right" | "bottom">;
 }
@@ -26,7 +27,7 @@ export function nativeTextOverflows(measurement: NativeMeasurementResult, tolera
       text.left + text.width > inner.right + tolerancePt ? "right" as const : undefined,
       text.top + text.height > inner.bottom + tolerancePt ? "bottom" as const : undefined,
     ].filter((edge): edge is FreshCompositionTextOverflow["edges"][number] => Boolean(edge));
-    if (edges.length) failures.push({ name: shape.name ?? `slide-${slide.number}-shape-${shape.shapeIndex}`, edges });
+    if (edges.length) failures.push({ slideNumber: slide.number, name: shape.name ?? `slide-${slide.number}-shape-${shape.shapeIndex}`, edges });
   }
   return failures;
 }

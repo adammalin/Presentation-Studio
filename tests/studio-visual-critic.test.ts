@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { NativeMeasurementResult } from "../src/lib/desktop";
 import { critiqueStudioSlide } from "../src/lib/studio-visual-critic";
+import { applyStudioDeterministicRepairPass } from "../src/lib/studio-repair-pass";
 import type { StudioWebNode, StudioWebScene } from "../src/types";
 
 const PT = 12_700;
@@ -39,4 +40,31 @@ test("Studio critic combines PowerPoint overflow, optical alignment, and hierarc
 
 test("Studio critic refuses non-native measurement evidence", () => {
   assert.throws(() => critiqueStudioSlide(scene(), 1, { ...measurement(), authority: "direct-ooxml" }), /Microsoft PowerPoint/i);
+});
+
+test("deterministic Studio repair replays native optical constraints and restores title hierarchy without changing copy", () => {
+  const source = scene();
+  const sourceText = source.slides[0].nodes.map((node) => node.text);
+  const result = applyStudioDeterministicRepairPass(source, 1, measurement());
+  assert.equal(result.requiresNativeRerender, true);
+  assert.equal(result.actions.some((action) => action.operation === "reapply-constraint" && action.status === "fixed"), true);
+  assert.equal(result.actions.some((action) => action.operation === "restore-title-hierarchy" && action.status === "fixed"), true);
+  assert.equal(result.actions.some((action) => action.issueId.startsWith("overflow") && action.status === "deferred"), true);
+  assert.deepEqual(result.scene.slides[0].nodes.map((node) => node.text), sourceText);
+  assert.equal(result.scene.slides[0].nodes.find((node) => node.id === "title")?.style.fontSizePt, 30);
+});
+
+test("deterministic Studio repair grows a vertically overflowing text frame only by native measured need", () => {
+  const source = scene();
+  source.slides[0] = { ...source.slides[0], constraints: [], nodes: source.slides[0].nodes.map((node) => node.id === "title" ? { ...node, style: { ...node.style, fontSizePt: 32 } } : node.id === "body" ? { ...node, style: { ...node.style, fontSizePt: 16 } } : node) };
+  const native = measurement();
+  native.slides[0].shapes[0].text!.renderedBoundsPt = { left: 24, top: 30, width: 290, height: 35 };
+  native.slides[0].shapes[1].text!.renderedBoundsPt = { left: 32, top: 120, width: 150, height: 70 };
+  const before = source.slides[0].nodes.find((node) => node.id === "body")!.frame;
+  const result = applyStudioDeterministicRepairPass(source, 1, native);
+  const after = result.scene.slides[0].nodes.find((node) => node.id === "body")!.frame;
+  assert.equal(result.actions.some((action) => action.operation === "grow-text-frame" && action.status === "fixed"), true);
+  assert.ok(after.height > before.height);
+  assert.equal(after.x, before.x);
+  assert.equal(after.y, before.y);
 });

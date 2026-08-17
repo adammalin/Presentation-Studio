@@ -15,11 +15,11 @@ test("MCP image metadata never duplicates encoded or raw raster payloads", () =>
 test("standard STDIO MCP server advertises bounded audit, Resource, and proposal tools", async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, "mcp", "server.mjs")] });
-  const client = new Client({ name: "presentation-studio-test", version: "0.1.0" });
+  const client = new Client({ name: "presentation-studio-test", version: "0.2.0" });
   try {
     await client.connect(transport);
     const result = await client.listTools();
-    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["attach_studio_concept_reference", "build_studio_presentation", "create_studio_visual_need", "fit_scene_to_layout", "get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_contact_sheet", "get_deck_design_work_order", "get_deck_qualification", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_qualification_contact_sheet", "get_qualification_slide", "get_resource_preview", "get_slide_design_context", "get_slide_design_work_order", "get_slide_inspection_packet", "get_slide_measurements", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_studio_concept_reference", "get_studio_slide_critique", "get_studio_visual_need_brief", "get_studio_web_scene", "get_template_layout_catalog", "get_template_layout_render", "hold_studio_visual_need", "list_decks", "list_design_threads", "list_resources", "list_studio_visual_needs", "preview_studio_fresh_composition", "recommend_slide_layouts", "reconstruct_studio_concept", "record_deck_qualification_review", "record_proposal_visual_critique", "record_studio_visual_critique", "refine_studio_layout", "reject_design_proposal", "remove_studio_concept_reference", "run_deck_qualification", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_group_layout", "solve_and_stage_safe_region", "solve_and_stage_table_layout", "solve_and_stage_text_fit", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_studio_web_design", "stage_table_design_update"]);
+    assert.deepEqual(result.tools.map((tool) => tool.name).sort(), ["attach_studio_concept_reference", "author_studio_connector", "build_studio_presentation", "clear_studio_table_continuation", "create_studio_visual_need", "fit_scene_to_layout", "get_app_status", "get_cleanup_rule_profile", "get_deck_audit", "get_deck_contact_sheet", "get_deck_design_work_order", "get_deck_qualification", "get_deck_scene_summary", "get_design_contract", "get_design_thread", "get_pending_proposal_manifest", "get_qualification_contact_sheet", "get_qualification_slide", "get_resource_preview", "get_slide_design_context", "get_slide_design_work_order", "get_slide_inspection_packet", "get_slide_measurements", "get_slide_render", "get_slide_render_comparison", "get_slide_scene", "get_studio_concept_reference", "get_studio_deck_consistency", "get_studio_slide_critique", "get_studio_visual_need_brief", "get_studio_web_scene", "get_template_layout_catalog", "get_template_layout_render", "hold_studio_visual_need", "list_decks", "list_design_threads", "list_resources", "list_studio_visual_needs", "plan_studio_table_continuation", "preview_studio_fresh_composition", "publish_studio_component_style", "publish_studio_table_exemplar", "recommend_slide_layouts", "reconstruct_studio_concept", "record_deck_qualification_review", "record_proposal_visual_critique", "record_studio_visual_critique", "refine_studio_layout", "refine_studio_table", "reject_design_proposal", "remove_studio_concept_reference", "repair_studio_objective_issues", "run_deck_qualification", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_group_layout", "solve_and_stage_safe_region", "solve_and_stage_table_layout", "solve_and_stage_text_fit", "stage_designer_cleanup", "stage_font_cleanup", "stage_slide_geometry_update", "stage_slide_layout_update", "stage_slide_native_layout", "stage_slide_recomposition", "stage_slide_visual_design", "stage_studio_web_design", "stage_table_design_update"]);
     const contractTool = result.tools.find((tool) => tool.name === "get_design_contract");
     assert.match(contractTool?.description ?? "", /improving every slide/i);
     const contract = await client.callTool({ name: "get_design_contract", arguments: {} });
@@ -82,6 +82,32 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(refineStudioTool?.description ?? "", /PowerPoint-native rendered text bounds/i);
     assert.match(refineStudioTool?.description ?? "", /relationship-preserving groups/i);
     assert.equal(refineStudioTool?.annotations?.destructiveHint, false);
+    const refineTableTool = result.tools.find((tool) => tool.name === "refine_studio_table");
+    assert.match(refineTableTool?.description ?? "", /stable node and cell IDs/i);
+    assert.match(refineTableTool?.description ?? "", /merged spans.*semantic color role/i);
+    assert.equal(refineTableTool?.annotations?.destructiveHint, false);
+    const tableExemplarTool = result.tools.find((tool) => tool.name === "publish_studio_table_exemplar");
+    assert.match(tableExemplarTool?.description ?? "", /same column count, header-row count, header merge pattern, and body merge pattern/i);
+    assert.match(tableExemplarTool?.description ?? "", /never copies cell content/i);
+    assert.match(tableExemplarTool?.description ?? "", /semantic colors/i);
+    assert.equal(tableExemplarTool?.annotations?.destructiveHint, false);
+    const tableContinuationTool = result.tools.find((tool) => tool.name === "plan_studio_table_continuation");
+    assert.match(tableContinuationTool?.description ?? "", /do not split a merged cell/i);
+    assert.match(tableContinuationTool?.description ?? "", /automatically materialized as editable output slides/i);
+    assert.equal(tableContinuationTool?.annotations?.destructiveHint, false);
+    const connectorTool = result.tools.find((tool) => tool.name === "author_studio_connector");
+    assert.match(connectorTool?.description ?? "", /verified editable-diagram/i);
+    assert.match(connectorTool?.description ?? "", /rejects guessed topology/i);
+    assert.equal(connectorTool?.annotations?.destructiveHint, false);
+    const consistencyTool = result.tools.find((tool) => tool.name === "get_studio_deck_consistency");
+    assert.match(consistencyTool?.description ?? "", /title-grid outliers/i);
+    assert.match(consistencyTool?.description ?? "", /related table structural styles/i);
+    assert.equal(consistencyTool?.annotations?.readOnlyHint, true);
+    const componentTool = result.tools.find((tool) => tool.name === "publish_studio_component_style");
+    assert.match(componentTool?.description ?? "", /same semantic role and light\/dark surface class/i);
+    assert.match(componentTool?.description ?? "", /exact wording, data, geometry/i);
+    assert.match(componentTool?.description ?? "", /protected ORNL template slides/i);
+    assert.equal(componentTool?.annotations?.destructiveHint, false);
     const studioCritiqueTool = result.tools.find((tool) => tool.name === "get_studio_slide_critique");
     assert.match(studioCritiqueTool?.description ?? "", /original PowerPoint slide/i);
     assert.match(studioCritiqueTool?.description ?? "", /Found issues/i);
@@ -209,8 +235,8 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(inspectionTool?.description ?? "", /Found issues/i);
     assert.match(inspectionTool?.description ?? "", /Rechecking original intent/i);
     const freshCompositionTool = result.tools.find((tool) => tool.name === "preview_studio_fresh_composition");
-    assert.match(freshCompositionTool?.description ?? "", /genuinely new editable native PowerPoint slide/i);
-    assert.match(freshCompositionTool?.description ?? "", /exact visible source text/i);
+    assert.match(freshCompositionTool?.description ?? "", /genuinely new editable native PowerPoint output slides/i);
+    assert.match(freshCompositionTool?.description ?? "", /exact source\/output text/i);
     assert.match(freshCompositionTool?.description ?? "", /does not preserve the imported master/i);
     assert.match(freshCompositionTool?.description ?? "", /never applies, saves, exports, or overwrites/i);
     assert.equal(freshCompositionTool?.annotations?.destructiveHint, false);

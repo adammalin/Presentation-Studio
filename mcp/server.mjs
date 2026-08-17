@@ -5,7 +5,7 @@ import { PresentationAppClient, PresentationAppUnavailableError } from "./presen
 import { DESIGN_CONTRACT, designContractMessage } from "./design-contract.mjs";
 import { stripImagePayloads } from "./image-payload.mjs";
 
-const server = new McpServer({ name: "presentation-studio-local", version: "0.1.0" });
+const server = new McpServer({ name: "presentation-studio-local", version: "0.2.0" });
 const client = new PresentationAppClient();
 
 function success(result, message) {
@@ -91,16 +91,39 @@ server.registerTool("get_studio_web_scene", {
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_studio_web_scene", input, (result) => `Read ${result.slide.nodes.length} semantic web nodes for slide ${result.slide.slideNumber} of ${result.deck.name}; recommended recipe: ${result.slide.recommendedRecipe}.`));
 
+server.registerTool("get_studio_deck_consistency", {
+  title: "Review repeated design systems across the Studio deck",
+  description: "Read a deterministic revision-bound review of title-grid outliers, repeated component typography, and related table structural styles across the one canonical Studio scene. Findings identify exact slide and node IDs but make no changes. Use this after individual slide design and before whole-deck qualification; preserve intentional semantic table-color differences and judge final appearance through PowerPoint-native pixels.",
+  inputSchema: { deckId: z.string().min(1).max(120) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_studio_deck_consistency", input, (result) => `Reviewed ${result.review.designedSlideCount} designed slides in ${result.deck.name} and found ${result.review.issueCount} deck-system difference${result.review.issueCount === 1 ? "" : "s"}.`));
+
+server.registerTool("publish_studio_component_style", {
+  title: "Publish one reusable Studio component style",
+  description: "Adopt the complete style of one source-bound repeated Studio component instance and propagate it to compatible instances with the same semantic role and light/dark surface class. This is the safe deck-system operation for repeated headings, captions, labels, objective copy, process stages, and related recipe components. It preserves every node's exact wording, data, geometry, source binding, semantic table colors, and protected ORNL template slides. Build affected slides and run get_studio_deck_consistency afterward; nothing is saved or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    nodeId: z.string().min(1).max(180),
+    name: z.string().min(1).max(120).optional(),
+    targetSlideNumbers: z.array(z.number().int().min(1)).min(1).max(200).optional(),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("publish_studio_component_style", input, (result) => `Published ${result.component.name} to ${result.component.affectedNodeCount} compatible component instance${result.component.affectedNodeCount === 1 ? "" : "s"} across ${result.component.affectedSlideNumbers.length} slide${result.component.affectedSlideNumbers.length === 1 ? "" : "s"}. Exact content and geometry remain locked; build and inspect the affected PowerPoint results.`));
+
 server.registerTool("preview_studio_fresh_composition", {
   title: "Build and view a fresh editable Studio composition",
-  description: "Compile one already-designed Studio HTML/CSS slide into a genuinely new editable native PowerPoint slide, validate exact visible source text and native table content/merged structure, render the written artifact with Microsoft PowerPoint, and return that authoritative PNG for AI visual critique. This is the fresh-composition path for weak source layouts: it deliberately replaces source coordinates and design furniture instead of overlaying them. It does not preserve the imported master, animations, transitions, or unsupported PowerPoint internals, and it never applies, saves, exports, or overwrites the project or source file.",
+  description: "Compile one already-designed Studio HTML/CSS source slide into one or more genuinely new editable native PowerPoint output slides, validate exact source/output text and native table content/merged structure, render every written artifact slide with Microsoft PowerPoint, and return all authoritative PNGs for AI visual critique. A ready merge-safe native table continuation plan intentionally creates multiple outputs with repeated headers. This is the fresh-composition path for weak source layouts: it deliberately replaces source coordinates and design furniture instead of overlaying them. It does not preserve the imported master, animations, transitions, or unsupported PowerPoint internals, and it never applies, saves, exports, or overwrites the project or source file.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, (input) => callImage("preview_studio_fresh_composition", input, (result) => `Built a fresh editable PowerPoint composition for slide ${result.slide.number} of ${result.deck.name}, passed exact-copy guards, and rendered the written artifact authoritatively in Microsoft PowerPoint. Nothing was applied, saved, exported, or overwritten.`));
+}, (input) => callImages("preview_studio_fresh_composition", input, (result) => `Built ${result.editablePowerPoint.slideCount} fresh editable PowerPoint output slide${result.editablePowerPoint.slideCount === 1 ? "" : "s"} from source slide ${result.slide.number} of ${result.deck.name}, passed explicit source/output exact-copy guards, and rendered every written artifact slide authoritatively in Microsoft PowerPoint. Nothing was applied, saved, exported, or overwritten.`));
 
 server.registerTool("get_studio_slide_critique", {
   title: "Find issues in the exact Studio export result",
@@ -108,6 +131,21 @@ server.registerTool("get_studio_slide_critique", {
   inputSchema: { deckId: z.string().min(1).max(120), slideNumber: z.number().int().min(1), expectedSceneRevision: z.string().min(1).max(500) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => callImages("get_studio_slide_critique", input, (result) => `Found ${result.critique.issues.length} objective issue${result.critique.issues.length === 1 ? "" : "s"} on Studio slide ${result.slideNumber}; compare the original and export-result images before recording pass ${result.critique.iteration.currentPass}/3.`));
+
+server.registerTool("repair_studio_objective_issues", {
+  title: "Fix bounded PowerPoint-native Studio issues",
+  description: "Apply one conservative deterministic Fixing pass to the exact issues returned by get_studio_slide_critique. Studio may minimally fit a complete relationship group into the safe region, replay a recorded optical alignment or equal-gap constraint, grow one editable text frame by the minimum PowerPoint-measured amount when collision-free, or restore title hierarchy within the ORNL type ceiling. It defers horizontal clipping, ambiguous figures, dense content, unsafe growth, table semantics, and material composition choices instead of shrinking everything or guessing coordinates. Exact wording, data, table structure, source-significant colors, and the sacred ORNL title slide remain locked. Every material change invalidates the old raster and requires a fresh PowerPoint build and critique; nothing is saved or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    expectedRasterSha256: z.string().length(64),
+    slideNumber: z.number().int().min(1),
+    issueIds: z.array(z.string().min(1).max(180)).max(30).optional(),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("repair_studio_objective_issues", input, (result) => result.requiresNativeRerender ? `Fixed ${result.fixedIssueIds.length} bounded native issue${result.fixedIssueIds.length === 1 ? "" : "s"} on slide ${result.slideNumber}; ${result.deferredIssueIds.length} issue${result.deferredIssueIds.length === 1 ? "" : "s"} remain deferred. Rebuild and inspect the new PowerPoint raster before judgment.` : `No safe deterministic geometry change was available on slide ${result.slideNumber}; follow the ${result.deferredIssueIds.length} deferred design route${result.deferredIssueIds.length === 1 ? "" : "s"}.`));
 
 server.registerTool("record_studio_visual_critique", {
   title: "Record a bounded Studio visual-quality pass",
@@ -509,6 +547,110 @@ server.registerTool("refine_studio_layout", {
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("refine_studio_layout", input, (result) => `Applied ${result.constraints.length} high-level Studio layout constraint${result.constraints.length === 1 ? "" : "s"} to slide ${result.slideNumber} using ${result.evidenceAuthority} evidence. Build and inspect the exact current revision; nothing was saved or exported.`));
+
+server.registerTool("refine_studio_table", {
+  title: "Refine one source-bound Studio table",
+  description: "Edit one native Studio table component by stable node and cell IDs. Set complete column widths and row heights in inches, header-row count, global or per-cell/per-edge border treatment, default padding, and bounded cell styles while preserving every source cell's exact text, order, merged spans, source-significant semantic color role, and native editability. Use edge rules for deliberate header separators, totals, and semantic group boundaries instead of forcing a full grid. Use the table IDs and current dimensions from get_studio_web_scene; do not infer missing cells, overwrite a semantic fill, or alter technical meaning. Build the exact slide afterward and inspect PowerPoint-native cell measurements. Nothing is saved or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    tableNodeId: z.string().min(1).max(180),
+    columnWidthsInches: z.array(z.number().min(.35).max(20)).max(30).optional(),
+    rowHeightsInches: z.array(z.number().min(.18).max(10)).max(100).optional(),
+    headerRows: z.number().int().min(0).max(20).optional(),
+    borderMode: z.enum(["none", "subtle", "full"]).optional(),
+    borderColor: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+    borderWidthPt: z.number().min(0).max(6).optional(),
+    defaultPaddingPt: z.number().min(0).max(36).optional(),
+    cellStyles: z.array(z.object({
+      cellId: z.string().min(1).max(180),
+      fill: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+      color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+      fontSizePt: z.number().min(10).max(40).optional(),
+      fontWeight: z.union([z.literal(400), z.literal(600), z.literal(700)]).optional(),
+      textAlign: z.enum(["left", "center", "right"]).optional(),
+      verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+      paddingPt: z.number().min(0).max(36).optional(),
+      borders: z.object({
+        top: z.object({ type: z.enum(["none", "solid", "dash"]), color: z.string().regex(/^#[0-9a-f]{6}$/i), widthPt: z.number().min(0).max(6) }).optional(),
+        right: z.object({ type: z.enum(["none", "solid", "dash"]), color: z.string().regex(/^#[0-9a-f]{6}$/i), widthPt: z.number().min(0).max(6) }).optional(),
+        bottom: z.object({ type: z.enum(["none", "solid", "dash"]), color: z.string().regex(/^#[0-9a-f]{6}$/i), widthPt: z.number().min(0).max(6) }).optional(),
+        left: z.object({ type: z.enum(["none", "solid", "dash"]), color: z.string().regex(/^#[0-9a-f]{6}$/i), widthPt: z.number().min(0).max(6) }).optional(),
+      }).optional(),
+    })).max(200).default([]),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("refine_studio_table", input, (result) => `Refined ${result.table.rows} × ${result.table.columns} source-bound table ${result.table.nodeId} on slide ${result.slideNumber}. Exact cell copy, merge topology, and semantic roles remain locked; build and inspect the PowerPoint-native result before review.`));
+
+server.registerTool("publish_studio_table_exemplar", {
+  title: "Publish one approved Studio table exemplar",
+  description: "Adopt the current source-bound table's approved visual treatment as a reusable deck definition and apply it to structurally compatible tables. Compatibility requires the same column count, header-row count, header merge pattern, and body merge pattern. The operation propagates column proportions, borders, padding, typography, alignment, and nonsemantic fills only; it never copies cell content, changes merged topology, or overwrites source-significant semantic colors. Build every affected slide and inspect native PowerPoint table measurements afterward. Nothing is saved or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    tableNodeId: z.string().min(1).max(180),
+    name: z.string().min(1).max(120).optional(),
+    targetSlideNumbers: z.array(z.number().int().min(1)).max(200).optional(),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("publish_studio_table_exemplar", input, (result) => `Published ${result.definition.name} and updated ${result.affectedTableNodeIds.length} structurally compatible native table${result.affectedTableNodeIds.length === 1 ? "" : "s"}. Exact content, merge topology, and semantic fills remain locked; rebuild the affected slides.`));
+
+server.registerTool("plan_studio_table_continuation", {
+  title: "Plan a merge-safe Studio table continuation",
+  description: "Create or replace a revision-bound continuation plan for one source-bound native table. Studio repeats identified header rows and partitions body rows only at boundaries that do not split a merged cell. It records blockers instead of hiding rows, dropping cells, rasterizing the table, or shrinking below the ORNL minimum. A ready plan is automatically materialized as editable output slides by the next slide or Build-all PowerPoint compilation and validated against the explicit source-to-output map. This operation updates only the local Studio design; nothing is saved to disk or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    tableNodeId: z.string().min(1).max(180),
+    maximumBodyRowsPerSlide: z.number().int().min(1).max(40).default(8),
+    rationale: z.string().min(1).max(1_000).optional(),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("plan_studio_table_continuation", input, (result) => result.plan.status === "ready" ? `Planned ${result.plan.segments.length} merge-safe continuation slides with ${result.plan.headerRows} repeated header row${result.plan.headerRows === 1 ? "" : "s"}. The next PowerPoint build materializes and validates them; nothing has been saved or exported.` : `Continuation planning is held: ${result.plan.blockers.join(" ")}`));
+
+server.registerTool("clear_studio_table_continuation", {
+  title: "Clear one Studio table continuation plan",
+  description: "Remove a stored continuation plan from one table without changing the source-bound table, its content, or its visual design. Nothing is saved or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    tableNodeId: z.string().min(1).max(180),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("clear_studio_table_continuation", input, () => "Cleared the stored continuation plan. The native source-bound table remains unchanged."));
+
+server.registerTool("author_studio_connector", {
+  title: "Author one verified editable diagram connector",
+  description: "Bind one existing Studio connector to two stable endpoint nodes inside the same verified editable-diagram figure treatment. Choose explicit attachment sides, line treatment, and arrowheads. Studio rejects guessed topology, endpoints outside the verified figure, source-locked figures, and stale scene revisions. The connector remains editable in PowerPoint and follows its endpoint nodes on the Studio canvas. Build and inspect the PowerPoint-native result afterward; nothing is saved or exported.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    expectedSceneRevision: z.string().min(1).max(500),
+    slideNumber: z.number().int().min(1),
+    connectorNodeId: z.string().min(1).max(180),
+    fromNodeId: z.string().min(1).max(180),
+    toNodeId: z.string().min(1).max(180),
+    fromSide: z.enum(["top", "right", "bottom", "left", "center"]),
+    toSide: z.enum(["top", "right", "bottom", "left", "center"]),
+    stroke: z.string().regex(/^#[0-9a-f]{6}$/i).default("#00662C"),
+    widthPt: z.number().min(.25).max(8).default(1.5),
+    dash: z.enum(["solid", "dash", "dashDot"]).default("solid"),
+    beginArrow: z.enum(["none", "arrow", "diamond", "oval", "stealth", "triangle"]).default("none"),
+    endArrow: z.enum(["none", "arrow", "diamond", "oval", "stealth", "triangle"]).default("triangle"),
+    addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("author_studio_connector", input, (result) => `Bound verified editable connector ${result.connector.nodeId} from ${result.connector.fromNodeId} to ${result.connector.toNodeId} on slide ${result.slideNumber}. Build and inspect the PowerPoint-native result before review.`));
 
 server.registerTool("stage_font_cleanup", {
   title: "Stage conservative font cleanup",

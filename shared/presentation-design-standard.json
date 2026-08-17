@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-15.26-production-design-recipes",
+  "version": "2026-08-17.29-native-table-continuation-build",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -89,8 +89,11 @@
       "atomic multi-region scene fitting to one approved layout with bounded proportional scaling",
       "PowerPoint-measured text fitting without clipping or type-floor regression",
       "cell-level table fitting",
+      "structure-compatible approved table exemplar propagation without copying content or semantic fills",
+      "merge-aware native table continuation planning and editable PowerPoint materialization with repeated header semantics",
       "approved-layout semantic recomposition",
-      "Studio-scene optical alignment, equal-gap distribution, deck-grid snapping, and relationship-preserving safe-region fitting"
+      "Studio-scene optical alignment, equal-gap distribution, deck-grid snapping, and relationship-preserving safe-region fitting",
+      "revision-bound deterministic repair of safe-region, recorded alignment, collision-free measured text growth, and title-hierarchy findings"
     ],
     "solverPolicy": "The AI chooses design intent and objects. A deterministic minimum-movement solver computes point geometry, enforces safe-region and collision constraints, and returns infeasible with concrete space recommendations instead of guessing, clipping, or silently shrinking type.",
     "nativeRevisionLoop": "Inspect, diagnose, solve, materialize, render in PowerPoint, remeasure, compare metrics, critique pixels, revise, and reject any regression with a bounded iteration count.",
@@ -452,10 +455,12 @@
   "tableRules": [
     "Treat every supported table as a native structured table, never as a generic group or flattened image.",
     "Preserve exact cell text, row and column order, merged-cell topology, notes, and semantic color meaning unless the user explicitly authorizes a change.",
-    "Resolve table typography, padding, borders, fills, alignment, captions, and source treatment from one versioned table profile for all compatible tables.",
+    "Resolve table typography, padding, global and per-cell edge rules, fills, alignment, captions, and source treatment from one versioned table profile for all compatible tables.",
+    "Use deliberate per-edge rules for header separators, totals, and semantic groups instead of forcing every table into a full grid; never overwrite a source-significant cell fill during later AI or human styling.",
+    "Publish an approved table exemplar only as a style definition. Apply it solely to tables with matching columns, header rows, header merge pattern, and body merge pattern; never copy exemplar cell content or meaning-bearing fills.",
     "Measure every cell with the final font and width. Check wrapping, clipping, minimum readable type, padding, row height, column balance, merge constraints, contrast, and separation from adjacent objects.",
     "Require PowerPoint-native cell clearance after the editable candidate is written; a browser-canvas fit or OOXML estimate alone cannot qualify a table.",
-    "Do not solve an oversized table by hiding rows, dropping cells, rasterizing it, or shrinking below the rule-profile minimum. Propose a compatible table layout or a continuation slide with repeated header semantics.",
+    "Do not solve an oversized table by hiding rows, dropping cells, rasterizing it, or shrinking below the rule-profile minimum. Plan continuation slides with repeated header semantics, break body rows only between merge-safe groups, materialize the ready plan during the next editable PowerPoint build, and record a blocker when no safe boundary exists.",
     "Verify exact cell-content and structure hashes before Apply and after editable PowerPoint export, then inspect the independently rendered export for optical quality."
   ],
   "ornlRules": [
@@ -472,7 +477,7 @@
     "Compare source and proposal to confirm that approved content and technical objects remain present.",
     "Recheck every treated figure against the original human reference: exact wording, labels, values, source visual identity or disclosed verified replacement, grouping, arrows, sequence, causality, and technical intent.",
     "Inspect the independently rendered export at slide scale and at readable zoom; do not rely only on object coordinates or an internal canvas preview.",
-    "Repair every observed defect, re-export, and re-inspect the affected slide plus the deck contact sheet.",
+    "Repair every observed defect, re-export, and re-inspect the affected slide plus the deck contact sheet. Apply only collision-checked deterministic fixes supported by the exact native measurement; defer material composition and technical ambiguity instead of guessing.",
     "Reject the export before the save dialog if its independently rerendered slide hashes or native measurements differ from the staged proposal."
   ],
   "askOnlyWhen": [

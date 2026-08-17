@@ -9,11 +9,13 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { atomizeStudioWebSlide, compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioFigureTreatment, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { atomizeStudioWebSlide, compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
 import { nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
+import { adoptStudioComponentStyle, compatibleStudioComponentInstances } from "../src/lib/studio-component-library";
+import { planStudioTableContinuation, publishStudioTableExemplar } from "../src/lib/studio-table-workflow";
 import { sha256, sha256Text } from "../src/lib/hash";
 import type { DeckJob, StudioWebNode, StudioWebScene } from "../src/types";
 
@@ -173,8 +175,13 @@ test("cross-image callouts remain one source-locked evidence field instead of be
   assert.ok(treatment);
   assert.deepEqual(new Set(treatment.nodeIds), new Set(["image-3", "image-4", "caption-5", "caption-6", "connector-7"]));
   assert.equal(treatment.relationshipPolicy, "preserve-internal");
-  assert.equal(treatment.mode, "hybrid-rebuild");
-  assert.equal(treatment.verificationStatus, "verified");
+  assert.equal(treatment.mode, "preserve-as-unit");
+  assert.equal(treatment.verificationStatus, "source-locked");
+  const plainDesigned = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes }] }, sourceSlide.slideNumber, "ornl-title-figure-grid");
+  const plainTreatment = plainDesigned.slides[0].figureTreatments.find((candidate) => candidate.id.startsWith("studio-auto-figure-field"));
+  assert.ok(plainTreatment);
+  assert.deepEqual(new Set(plainTreatment.nodeIds), new Set(["image-3", "image-4", "caption-5", "caption-6", "connector-7"]));
+  assert.equal(plainTreatment.relationshipPolicy, "preserve-internal");
 });
 
 test("a grouped native diagram is automatically preserved while surrounding narrative remains editable", async () => {
@@ -418,7 +425,9 @@ test("semantic atomization turns one exact multi-paragraph source box into reusa
   const atoms = designed.slides[0].nodes.filter((node) => node.sourceBinding === "semantic-atom");
   assert.equal(atoms.length, 3);
   assert.equal(atoms.every((node) => node.component?.role === "objective-body"), true);
-  assert.equal(studioGeneratedComponents(designed.slides[0]).filter((component) => component.id.includes("objective")).length, 3);
+  const objectiveComponents = studioGeneratedComponents(designed.slides[0]).filter((component) => component.id.includes("objective"));
+  assert.equal(objectiveComponents.length, 6);
+  assert.equal(objectiveComponents.every((component) => component.lineWidthPt === 0), true);
   assert.equal(studioGeometryRequests(deck, designed, 1).some((request) => atoms.some((node) => node.sourceObjectId === request.objectId)), false);
   assert.equal(studioVisualDesignRequest(designed, 1).textStyles.some((request) => atoms.some((node) => node.sourceObjectId === request.objectId)), false);
 });
@@ -575,6 +584,21 @@ test("source-preserved title composition remains visually locked while exact tex
   assert.match(rebuilt.receipt.clonedLayoutPart, /^ppt\/slideLayouts\/slideLayout\d+\.xml$/);
   assert.match(rebuilt.receipt.clonedMasterPart ?? "", /^ppt\/slideMasters\/slideMaster\d+\.xml$/);
   assert.equal(rebuilt.receipt.sourceSlideSha256, minimalAudit.slides[0].sourcePartSha256);
+  const rebuiltZip = await JSZip.loadAsync(rebuilt.bytes);
+  const preservedRelationships = await rebuiltZip.file("ppt/slides/_rels/slide1.xml.rels")!.async("text");
+  assert.match(preservedRelationships, /relationships\/notesSlide/);
+  const relationshipIds = [...preservedRelationships.matchAll(/\bId="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(new Set(relationshipIds).size, relationshipIds.length);
+  const twoSlideDestination = await buildStudioCompositionPptx({
+    ...source,
+    slides: source.slides.slice(0, 2).map((slide) => ({ ...slide, status: "designed" as const, recipe: "ornl-title-content" as const })),
+  }, { catalog, strict: false });
+  const shifted = await preserveNativeSlide({ destinationBytes: twoSlideDestination.bytes, sourceBytes: minimalSourceBytes, sourceSlideNumber: 1, destinationSlideNumber: 2 });
+  const shiftedAudit = await auditPptx(shifted.bytes);
+  assert.equal(shiftedAudit.slideCount, 2);
+  assert.equal(shiftedAudit.slides[1].textHash, minimalAudit.slides[0].textHash);
+  assert.equal(shifted.receipt.sourceSlideNumber, 1);
+  assert.equal(shifted.receipt.destinationSlideNumber, 2);
 });
 
 test("fresh table composition preserves an explicit visible cell break in the editable PowerPoint grid", async () => {
@@ -600,6 +624,197 @@ test("fresh table composition preserves an explicit visible cell break in the ed
   assert.equal(rebuiltCell?.text, updatedText);
   assert.equal(rebuiltCell?.runBreaksBefore?.some((value) => value !== "none"), true);
   assert.deepEqual(after.tables.map((table) => table.structureHash), deck.audit?.tables.map((table) => table.structureHash));
+});
+
+test("first-class Studio table design survives project persistence and editable PowerPoint export without changing source cells or merge topology", async () => {
+  const { deck, catalog } = await fixture();
+  let scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides.find((slide) => slide.nodes.some((node) => node.kind === "table" && node.table));
+  const sourceTable = sourceSlide?.nodes.find((node) => node.kind === "table" && node.table);
+  assert.ok(sourceSlide && sourceTable?.table);
+  const sourceCells = sourceTable.table.cells.map((cell) => ({ id: cell.id, row: cell.row, column: cell.column, rowSpan: cell.rowSpan, columnSpan: cell.columnSpan, text: cell.text, semanticColorRole: cell.semanticColorRole }));
+  scene = recomposeStudioWebSlide(scene, sourceSlide.slideNumber, "ornl-title-table", undefined, "Use one consistent editable ORNL table component.");
+  const designedTable = scene.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!.nodes.find((node) => node.id === sourceTable.id)!;
+  const firstCell = designedTable.table!.cells[0];
+  scene = updateStudioTableDesign(scene, sourceSlide.slideNumber, sourceTable.id, { borderMode: "none", borderWidthPt: 0, defaultPaddingPt: { top: 5, right: 8, bottom: 5, left: 8 } });
+  scene = resizeStudioTableColumn(scene, sourceSlide.slideNumber, sourceTable.id, 1, designedTable.frame.width * .4);
+  scene = resizeStudioTableRow(scene, sourceSlide.slideNumber, sourceTable.id, 1, designedTable.frame.height * .24);
+  scene = updateStudioTableCellDesign(scene, sourceSlide.slideNumber, sourceTable.id, firstCell.id, { fill: "#00662C", color: "#FFFFFF", fontSizePt: 15, fontWeight: 700, textAlign: "center", verticalAlign: "middle", borders: { top: { type: "none", color: "#DBDCDB", widthPt: 0 }, bottom: { type: "solid", color: "#00662C", widthPt: 2 } } });
+  scene = updateStudioTableCellDesign(scene, sourceSlide.slideNumber, sourceTable.id, firstCell.id, { fontSizePt: 16 });
+  const resultTable = scene.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!.nodes.find((node) => node.id === sourceTable.id)!;
+  const resultCells = resultTable.table!.cells.map((cell) => ({ id: cell.id, row: cell.row, column: cell.column, rowSpan: cell.rowSpan, columnSpan: cell.columnSpan, text: cell.text, semanticColorRole: cell.semanticColorRole }));
+  const design = resolvedStudioTableDesign(resultTable);
+  assert.deepEqual(resultCells, sourceCells);
+  assert.equal(design.borderMode, "none");
+  assert.ok(design.columnWidths[0] > .35);
+  assert.ok(design.rowHeights[0] > .2);
+  assert.deepEqual(design.cellStyles.find((item) => item.cellId === firstCell.id), { cellId: firstCell.id, fill: "#00662C", color: "#FFFFFF", fontSizePt: 16, fontWeight: 700, textAlign: "center", verticalAlign: "middle", borders: { top: { type: "none", color: "#DBDCDB", widthPt: 0 }, bottom: { type: "solid", color: "#00662C", widthPt: 2 } } });
+  deck.studioScene = scene;
+  const project = createProject("First-class table persistence");
+  project.decks = [deck];
+  const parsed = projectSchema.parse(project);
+  const parsedTable = parsed.decks[0].studioScene?.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)?.nodes.find((node) => node.id === sourceTable.id);
+  assert.equal(parsedTable?.table?.design?.borderMode, "none");
+  assert.equal(parsedTable?.table?.design?.cellStyles[0]?.borders?.bottom?.color, "#00662C");
+  const rebuilt = await buildStudioCompositionPptx({ ...scene, slides: [scene.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!] }, { catalog, strict: false, title: "Editable Studio table" });
+  const after = await auditPptx(rebuilt.bytes);
+  const sourceAuditTable = deck.audit!.tables.find((table) => table.id === sourceTable.tableId)!;
+  const afterTable = after.tables[0];
+  assert.ok(afterTable);
+  assert.equal(afterTable.structureHash, sourceAuditTable.structureHash);
+  assert.deepEqual(afterTable.cells?.filter((cell) => !cell.horizontalMergeContinuation && !cell.verticalMergeContinuation).map((cell) => cell.text), sourceAuditTable.cells?.filter((cell) => !cell.horizontalMergeContinuation && !cell.verticalMergeContinuation).map((cell) => cell.text));
+});
+
+test("approved table exemplars propagate only to compatible structures and preserve semantic fills", async () => {
+  const { deck, catalog } = await fixture();
+  let scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides.find((slide) => slide.nodes.some((node) => node.kind === "table" && node.table));
+  const sourceTable = sourceSlide?.nodes.find((node) => node.kind === "table" && node.table);
+  const targetSlide = scene.slides.find((slide) => slide.slideNumber !== sourceSlide?.slideNumber);
+  assert.ok(sourceSlide && sourceTable?.table && targetSlide);
+  scene = updateStudioTableDesign(scene, sourceSlide.slideNumber, sourceTable.id, { borderMode: "none", borderWidthPt: 0, defaultPaddingPt: { top: 5, right: 8, bottom: 5, left: 8 } });
+  const styledSource = scene.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!.nodes.find((node) => node.id === sourceTable.id)!;
+  const semanticSourceCell = styledSource.table!.cells.find((cell) => cell.row > 1) ?? styledSource.table!.cells.at(-1)!;
+  const targetTable: StudioWebNode = {
+    ...styledSource,
+    id: "studio-compatible-target-table",
+    sourceObjectId: "compatible-target-table",
+    sourceShapeId: "compatible-target-table",
+    name: "Compatible semantic table",
+    frame: { ...styledSource.frame },
+    sourceFrame: { ...styledSource.sourceFrame },
+    table: {
+      ...styledSource.table!,
+      cells: styledSource.table!.cells.map((cell) => ({
+        ...cell,
+        id: `target-${cell.id}`,
+        ...(cell.id === semanticSourceCell.id ? { fill: "#B50094", semanticColorRole: "source-category-plasma" } : {}),
+      })),
+      design: {
+        ...resolvedStudioTableDesign(styledSource),
+        borderMode: "full",
+        borderWidthPt: 2,
+        cellStyles: [],
+      },
+    },
+  };
+  scene = { ...scene, slides: scene.slides.map((slide) => slide.slideNumber !== targetSlide.slideNumber ? slide : { ...slide, nodes: [...slide.nodes, targetTable] }) };
+  const beforeTarget = scene.slides.find((slide) => slide.slideNumber === targetSlide.slideNumber)!.nodes.find((node) => node.id === targetTable.id)!;
+  const beforeContent = beforeTarget.table!.cells.map((cell) => ({ id: cell.id, text: cell.text, row: cell.row, column: cell.column, rowSpan: cell.rowSpan, columnSpan: cell.columnSpan, fill: cell.fill, semanticColorRole: cell.semanticColorRole }));
+  const result = publishStudioTableExemplar(scene, { slideNumber: sourceSlide.slideNumber, tableNodeId: styledSource.id, name: "Approved minimal technical table" });
+  const afterTarget = result.scene.slides.find((slide) => slide.slideNumber === targetSlide.slideNumber)!.nodes.find((node) => node.id === targetTable.id)!;
+  const afterContent = afterTarget.table!.cells.map((cell) => ({ id: cell.id, text: cell.text, row: cell.row, column: cell.column, rowSpan: cell.rowSpan, columnSpan: cell.columnSpan, fill: cell.fill, semanticColorRole: cell.semanticColorRole }));
+  const afterDesign = resolvedStudioTableDesign(afterTarget);
+  const targetSemanticCellId = `target-${semanticSourceCell.id}`;
+  assert.deepEqual(afterContent, beforeContent);
+  assert.equal(afterDesign.borderMode, "none");
+  assert.equal(afterDesign.defaultPaddingPt.left, 8);
+  assert.equal(afterTarget.table!.cells.find((cell) => cell.id === targetSemanticCellId)?.fill, "#B50094");
+  assert.notEqual(afterDesign.cellStyles.find((style) => style.cellId === targetSemanticCellId)?.fill, "#FFFFFF");
+  assert.equal(result.affectedTableNodeIds.includes(targetTable.id), true);
+  assert.equal(result.scene.tableLibrary?.[0]?.name, "Approved minimal technical table");
+  deck.studioScene = result.scene;
+  const project = createProject("Table exemplar persistence");
+  project.decks = [deck];
+  const parsed = projectSchema.parse(project);
+  assert.equal(parsed.decks[0].studioScene?.tableLibrary?.[0]?.compatibility.columns, sourceTable.table.columns);
+});
+
+test("table continuation planning repeats headers and never splits a merged body unit", async () => {
+  const { deck, catalog } = await fixture();
+  let scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides.find((slide) => slide.nodes.some((node) => node.kind === "table" && node.table));
+  const sourceTable = sourceSlide?.nodes.find((node) => node.kind === "table" && node.table);
+  assert.ok(sourceSlide && sourceTable?.table);
+  const rows = 10;
+  const columns = 2;
+  const cells: NonNullable<StudioWebNode["table"]>["cells"] = [];
+  for (let row = 1; row <= rows; row += 1) {
+    if (row !== 5) cells.push({ id: `continuation-r${row}c1`, row, column: 1, rowSpan: row === 4 ? 2 : 1, columnSpan: 1, text: `R${row}C1` });
+    cells.push({ id: `continuation-r${row}c2`, row, column: 2, rowSpan: 1, columnSpan: 1, text: `R${row}C2` });
+  }
+  const denseTable: StudioWebNode = {
+    ...sourceTable,
+    id: "continuation-table",
+    sourceObjectId: "continuation-table",
+    sourceShapeId: "continuation-table",
+    table: {
+      rows,
+      columns,
+      cells,
+      design: {
+        ...resolvedStudioTableDesign(sourceTable),
+        headerRows: 1,
+        columnWidths: [.5, .5],
+        rowHeights: Array.from({ length: rows }, () => 1 / rows),
+        cellStyles: [],
+      },
+    },
+  };
+  scene = {
+    ...scene,
+    slides: scene.slides.map((slide) => slide.slideNumber !== sourceSlide.slideNumber ? slide : {
+      ...slide,
+      recipe: "ornl-title-table",
+      status: "designed",
+      nodes: slide.nodes.map((node) => node.id === sourceTable.id ? denseTable : node),
+    }),
+  };
+  const result = planStudioTableContinuation(scene, { slideNumber: sourceSlide.slideNumber, tableNodeId: denseTable.id, maximumBodyRowsPerSlide: 3 });
+  assert.equal(result.plan.status, "ready");
+  assert.equal(result.plan.segments.length, 4);
+  assert.equal(result.plan.segments.some((segment) => segment.bodyRowStart <= 4 && segment.bodyRowEnd >= 5), true);
+  assert.equal(result.plan.segments.some((segment) => segment.bodyRowEnd === 4 || segment.bodyRowStart === 5), false);
+  const headerIds = new Set(cells.filter((cell) => cell.row === 1).map((cell) => cell.id));
+  assert.equal(result.plan.segments.every((segment) => [...headerIds].every((id) => segment.sourceCellIds.includes(id))), true);
+  const bodyIds = cells.filter((cell) => cell.row > 1).map((cell) => cell.id);
+  assert.deepEqual(result.plan.segments.flatMap((segment) => segment.sourceCellIds.filter((id) => !headerIds.has(id))).sort(), [...bodyIds].sort());
+  const blocked = planStudioTableContinuation(scene, { slideNumber: sourceSlide.slideNumber, tableNodeId: denseTable.id, maximumBodyRowsPerSlide: 1 });
+  assert.equal(blocked.plan.status, "blocked");
+  assert.match(blocked.plan.blockers.join(" "), /merged unit/i);
+  deck.studioScene = result.scene;
+  const project = createProject("Continuation persistence");
+  project.decks = [deck];
+  assert.equal(projectSchema.parse(project).decks[0].studioScene?.tableContinuationPlans?.[0]?.segments.length, 4);
+  const targetScene = { ...result.scene, slides: result.scene.slides.filter((slide) => slide.slideNumber === sourceSlide.slideNumber) };
+  const rebuilt = await buildStudioCompositionPptx(targetScene, { catalog, strict: false, title: "Native table continuation" });
+  assert.equal(rebuilt.slideCount, 4);
+  assert.deepEqual(rebuilt.outputSlides.map((slide) => slide.sourceSlideNumber), [sourceSlide.slideNumber, sourceSlide.slideNumber, sourceSlide.slideNumber, sourceSlide.slideNumber]);
+  assert.deepEqual(rebuilt.outputSlides.map((slide) => slide.continuation?.segmentOrdinal), [1, 2, 3, 4]);
+  const audit = await auditPptx(rebuilt.bytes);
+  assert.equal(audit.slideCount, 4);
+  assert.equal(audit.tables.length, 4);
+  assert.equal(audit.tables.every((table) => (table.cells ?? []).some((cell) => cell.text === "R1C1") && (table.cells ?? []).some((cell) => cell.text === "R1C2")), true);
+});
+
+test("verified Studio connector authoring binds stable endpoints and exports one editable PowerPoint connector", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides[0];
+  const seed = sourceSlide.nodes[0];
+  assert.ok(seed);
+  const box = (id: string, x: number): StudioWebNode => ({ ...seed, id, sourceObjectId: id, sourceShapeId: id, sourceBinding: "semantic-atom", name: id, kind: "shape", role: "other", sourceFrame: { x, y: 2 * 914_400, width: 2 * 914_400, height: 1 * 914_400, rotation: 0 }, frame: { x, y: 2 * 914_400, width: 2 * 914_400, height: 1 * 914_400, rotation: 0 }, visible: true, locked: false, exactContent: false, text: undefined, textHash: undefined, sourceParagraphs: undefined, table: undefined, tableId: undefined, connector: undefined, mediaPart: undefined });
+  const from = box("verified-from", 2 * 914_400);
+  const to = box("verified-to", 8 * 914_400);
+  const connector: StudioWebNode = { ...box("verified-connector", 4 * 914_400), kind: "connector", role: "connector", frame: { x: 4 * 914_400, y: 2.5 * 914_400, width: 4 * 914_400, height: 1, rotation: 0 } };
+  let scene: StudioWebScene = { ...source, slides: [{ ...sourceSlide, recipe: "ornl-title-content", status: "designed", contentCoverage: { exactTextMapped: true, sourceCharacterCount: 0, mappedCharacterCount: 0, sourceTextBoxCount: 0, mappedTextNodeCount: 0, groupedOrUnsupportedTextPresent: false }, nodes: [from, to, connector], figureTreatments: [] }] };
+  scene = updateStudioFigureTreatment(scene, sourceSlide.slideNumber, { id: "verified-diagram", nodeIds: [from.id, to.id, connector.id], mode: "redraw-candidate", verificationStatus: "verified", intentSummary: "One verified causal relationship", informationInventory: ["Source", "Destination", "Directed connector"], invariants: ["Direction and endpoint identity remain unchanged."], rationale: "The relationship has been verified from authoritative source content.", relationshipPolicy: "editable-diagram" });
+  scene = updateStudioConnectorDesign(scene, sourceSlide.slideNumber, connector.id, { fromNodeId: from.id, toNodeId: to.id, fromSide: "right", toSide: "left", stroke: "#00662C", widthPt: 1.5, dash: "solid", beginArrow: "none", endArrow: "triangle", verificationStatus: "verified" });
+  const authored = scene.slides[0].nodes.find((node) => node.id === connector.id)!;
+  assert.equal(authored.connector?.fromNodeId, from.id);
+  assert.deepEqual(scene.slides[0].figureTreatments[0].relationships, [{ fromNodeId: connector.id, toNodeId: from.id, kind: "connects-from" }, { fromNodeId: connector.id, toNodeId: to.id, kind: "connects-to" }]);
+  const priorX = authored.frame.x;
+  scene = updateStudioWebNodeFrame(scene, sourceSlide.slideNumber, from.id, { ...from.frame, x: from.frame.x + .5 * 914_400 });
+  assert.notEqual(scene.slides[0].nodes.find((node) => node.id === connector.id)?.frame.x, priorX);
+  deck.studioScene = scene;
+  const project = createProject("Verified connector persistence");
+  project.decks = [deck];
+  assert.equal(projectSchema.parse(project).decks[0].studioScene?.slides[0].nodes.find((node) => node.id === connector.id)?.connector?.verificationStatus, "verified");
+  const rebuilt = await buildStudioCompositionPptx(scene, { catalog, title: "Verified connector" });
+  const after = await auditPptx(rebuilt.bytes);
+  const exportedConnector = after.editableObjects.find((object) => /verified-connector/i.test(object.name));
+  assert.ok(exportedConnector);
+  assert.equal(exportedConnector.kind, "shape");
 });
 
 test("fresh composition carries a disclosed complex source figure as one PowerPoint-rendered evidence unit", async () => {
@@ -688,4 +903,41 @@ test("human canvas edits remain bounded and the self-contained project persists 
   const parsed = projectSchema.parse(project);
   assert.equal(parsed.decks[0].studioScene?.revision, styled.revision);
   assert.equal(studioSceneNeedsRebuild(parsed.decks[0]), false);
+});
+
+test("a reusable component definition propagates style only to compatible instances and survives project persistence", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const seed = source.slides.flatMap((slide) => slide.nodes).find((node) => node.kind === "text" && !node.locked);
+  assert.ok(seed);
+  const sourceFrame = { x: 914_400, y: 1_828_800, width: 3_657_600, height: 914_400, rotation: 0 };
+  const first: StudioWebNode = { ...seed, id: "component-source", sourceObjectId: "component-source", sourceShapeId: "component-source", text: "Exact source component copy", frame: sourceFrame, sourceFrame, component: { groupId: "component-group-1", role: "supporting-copy" }, style: { ...seed.style, fontSizePt: 19, fontWeight: 600, color: "#00454D", paddingPt: { top: 4, right: 6, bottom: 4, left: 6 } } };
+  const second: StudioWebNode = { ...seed, id: "component-target", sourceObjectId: "component-target", sourceShapeId: "component-target", text: "Different exact target copy", frame: { ...sourceFrame, y: 2_971_800 }, sourceFrame: { ...sourceFrame, y: 2_971_800 }, component: { groupId: "component-group-2", role: "supporting-copy" }, style: { ...seed.style, fontSizePt: 13, fontWeight: 400, color: "#373A36", paddingPt: { ...seed.style.paddingPt } } };
+  const dark: StudioWebNode = { ...second, id: "component-dark", sourceObjectId: "component-dark", sourceShapeId: "component-dark", text: "Dark surface variant", component: { groupId: "component-group-3", role: "supporting-copy" }, style: { ...second.style, background: "#00454D", color: "#FFFFFF" } };
+  const scene: StudioWebScene = {
+    ...source,
+    slides: [
+      { ...source.slides[0], status: "designed", recipe: "ornl-title-content", background: "#FFFFFF", nodes: [first] },
+      { ...source.slides[1], status: "designed", recipe: "ornl-title-content", background: "#FFFFFF", nodes: [second, dark] },
+    ],
+  };
+  assert.deepEqual(compatibleStudioComponentInstances(scene, scene.slides[0].slideNumber, first.id), [{ slideNumber: scene.slides[0].slideNumber, nodeId: first.id }, { slideNumber: scene.slides[1].slideNumber, nodeId: second.id }]);
+  const before = scene.slides.flatMap((slide) => slide.nodes.map((node) => ({ id: node.id, text: node.text, frame: node.frame })));
+  const result = adoptStudioComponentStyle(scene, { slideNumber: scene.slides[0].slideNumber, nodeId: first.id });
+  const after = result.scene.slides.flatMap((slide) => slide.nodes.map((node) => ({ id: node.id, text: node.text, frame: node.frame })));
+  const updatedSecond = result.scene.slides[1].nodes.find((node) => node.id === second.id)!;
+  const unchangedDark = result.scene.slides[1].nodes.find((node) => node.id === dark.id)!;
+  assert.deepEqual(after, before);
+  assert.equal(result.affectedNodeIds.length, 2);
+  assert.equal(updatedSecond.style.fontSizePt, 19);
+  assert.equal(updatedSecond.style.color, "#00454D");
+  assert.match(updatedSecond.component?.definitionId ?? "", /supporting-copy-light/);
+  assert.equal(unchangedDark.style.fontSizePt, 13);
+  assert.equal(result.scene.componentLibrary?.length, 1);
+  deck.studioScene = result.scene;
+  const project = createProject("Reusable component persistence");
+  project.decks = [deck];
+  const parsed = projectSchema.parse(project);
+  assert.equal(parsed.decks[0].studioScene?.componentLibrary?.[0].role, "supporting-copy");
+  assert.equal(parsed.decks[0].studioScene?.slides[1].nodes.find((node) => node.id === second.id)?.component?.definitionId, result.definition.id);
 });

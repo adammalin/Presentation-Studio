@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertSacredOrnlTitleSlideIntegrity, isSacredOrnlTitleSlide, unsupportedSourceSlideNumbers } from "../src/lib/template-guardrails";
-import type { StudioWebScene } from "../src/types";
+import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlClosingSlide, isSacredOrnlTitleSlide, unsupportedSourceSlideNumbers } from "../src/lib/template-guardrails";
+import type { DeckJob, StudioWebScene } from "../src/types";
 
 const ornlDeck = { targetTemplateId: "ornl-16x9-v1", templateClassification: "current-ornl" as const };
 
@@ -25,6 +25,18 @@ test("existing ORNL title slides are sacred source-preserved compositions", () =
   assert.equal(isSacredOrnlTitleSlide(ornlDeck, 2), false);
   assert.equal(isSacredOrnlTitleSlide({ ...ornlDeck, templateClassification: "sponsor" }, 1), false);
   assert.doesNotThrow(() => assertSacredOrnlTitleSlideIntegrity(ornlDeck, scene("source")));
-  assert.throws(() => assertSacredOrnlTitleSlideIntegrity(ornlDeck, scene("template-layout")), /title slide is sacred/i);
+  assert.throws(() => assertSacredOrnlTitleSlideIntegrity(ornlDeck, scene("template-layout")), /template composition.*sacred/i);
   assert.deepEqual(unsupportedSourceSlideNumbers(ornlDeck, scene("source")), []);
+});
+
+test("a final text-only ORNL Thank you slide remains approved source template composition", () => {
+  const audit = { slides: [
+    { number: 1, text: "Presentation title" },
+    { number: 13, text: "Thank you" },
+  ] } as DeckJob["audit"];
+  const deck = { ...ornlDeck, audit };
+  assert.equal(isSacredOrnlClosingSlide(deck, 13), true);
+  assert.equal(isProtectedOrnlTemplateSlide(deck, 13), true);
+  assert.equal(isSacredOrnlClosingSlide(deck, 12), false);
+  assert.equal(isSacredOrnlClosingSlide({ ...deck, audit: { ...audit!, slides: [...audit!.slides.slice(0, -1), { ...audit!.slides.at(-1)!, text: "Conclusions and next steps" }] } }, 13), false);
 });

@@ -188,6 +188,13 @@ async function templateClosure(template: JSZip, initialLayoutPart: string): Prom
     for (const relationship of relationshipRecords(rels)) {
       if (relationship.external) throw new Error(`The approved layout dependency ${part} contains an external relationship.`);
       const target = resolveRelationshipTarget(part, relationship.target);
+      // A layout points to its master, and a master points back to every sibling
+      // layout in the template. Following all of those reverse edges imports an
+      // entire second template hierarchy when only one concrete layout is needed.
+      // Keep the selected layout edge and the master's real visual dependencies.
+      if (/^ppt\/slideMasters\/slideMaster\d+\.xml$/i.test(part)
+        && relationship.type === RELATIONSHIP_TYPE_SLIDE_LAYOUT
+        && target !== initial) continue;
       if (!ALLOWED_TEMPLATE_PART.test(target)) throw new Error(`The approved layout dependency graph includes unsupported part ${target}.`);
       if (!visited.has(target)) pending.push(target);
     }
@@ -234,9 +241,29 @@ function rewriteRelationships(xml: string, sourcePart: string, destinationPart: 
     if (!target) throw new Error(`A relationship in ${sourcePart} has no target.`);
     const resolved = resolveRelationshipTarget(sourcePart, target);
     const mapped = mapping.get(resolved);
+    if (!mapped
+      && /^ppt\/slideMasters\/slideMaster\d+\.xml$/i.test(sourcePart)
+      && decodeXml(attributeValue(rawAttributes, "Type") ?? "") === RELATIONSHIP_TYPE_SLIDE_LAYOUT) return "";
     if (!mapped) throw new Error(`The cloned relationship graph omitted ${resolved}.`);
     return `<Relationship${setAttribute(rawAttributes, "Target", relativeTarget(destinationPart, mapped))}/>`;
   });
+}
+
+function pruneMasterLayoutIds(masterXml: string, keptRelationshipIds: Set<string>): string {
+  let kept = 0;
+  const xml = masterXml.replace(/<p:sldLayoutIdLst\b([^>]*)>([\s\S]*?)<\/p:sldLayoutIdLst>/i, (_whole, attributes: string, content: string) => {
+    const filtered = content.replace(/<p:sldLayoutId\b([^>]*?)\/>/g, (entry: string, entryAttributes: string) => {
+      const relationshipId = decodeXml(attributeValue(entryAttributes, "r:id") ?? "");
+      if (!keptRelationshipIds.has(relationshipId)) return "";
+      kept += 1;
+      return entry;
+    });
+    return `<p:sldLayoutIdLst${attributes}>${filtered}</p:sldLayoutIdLst>`;
+  });
+  if (kept !== keptRelationshipIds.size || kept === 0) {
+    throw new Error("The selected native layout could not be isolated from its slide master.");
+  }
+  return xml;
 }
 
 function nextRelationshipId(xml: string): string {
@@ -265,8 +292,12 @@ function addContentTypes(destinationXml: string, templateXml: string, mapping: M
   return result;
 }
 
-async function maximumLayoutId(destination: JSZip): Promise<number> {
+async function maximumMasterOrLayoutId(destination: JSZip): Promise<number> {
   let maximum = 0;
+  const presentation = await text(destination, "ppt/presentation.xml");
+  for (const match of presentation.matchAll(/<p:sldMasterId\b[^>]*\bid=(?:"(\d+)"|'(\d+)')/g)) {
+    maximum = Math.max(maximum, Number(match[1] ?? match[2] ?? 0));
+  }
   for (const part of Object.keys(destination.files).filter((name) => /^ppt\/slideMasters\/slideMaster\d+\.xml$/i.test(name))) {
     const xml = await text(destination, part);
     for (const match of xml.matchAll(/<p:sldLayoutId\b[^>]*\bid=(?:"(\d+)"|'(\d+)')/g)) maximum = Math.max(maximum, Number(match[1] ?? match[2] ?? 0));
@@ -329,7 +360,9 @@ export async function cloneTemplateLayoutForSlide(input: {
   const closure = await templateClosure(template, targetLayoutPart);
   if (closure.size > 160) throw new Error(`The approved layout dependency graph is unexpectedly large (${closure.size} parts).`);
   const mapping = await destinationMap(destination, template, closure);
-  let nextLayoutId = (await maximumLayoutId(destination)) + 1;
+  let nextMasterOrLayoutId = (await maximumMasterOrLayoutId(destination)) + 1;
+  const masterId = nextMasterOrLayoutId++;
+  let nextLayoutId = nextMasterOrLayoutId;
   for (const sourcePart of [...closure].sort()) {
     const destinationPart = mapping.get(sourcePart)!;
     const bytes = await template.file(sourcePart)!.async("uint8array");
@@ -337,6 +370,15 @@ export async function cloneTemplateLayoutForSlide(input: {
     if (/\.xml$/i.test(sourcePart)) {
       let xml = new TextDecoder().decode(bytes);
       if (/^ppt\/slideMasters\//i.test(sourcePart)) {
+        const sourceRelationships = template.file(relationshipPart(sourcePart));
+        if (!sourceRelationships) throw new Error(`The approved slide master ${sourcePart} has no relationships part.`);
+        const keptLayoutRelationshipIds = new Set(
+          relationshipRecords(await sourceRelationships.async("text"))
+            .filter((relationship) => relationship.type === RELATIONSHIP_TYPE_SLIDE_LAYOUT
+              && mapping.has(resolveRelationshipTarget(sourcePart, relationship.target)))
+            .map((relationship) => relationship.id),
+        );
+        xml = pruneMasterLayoutIds(xml, keptLayoutRelationshipIds);
         const replaced = replaceLayoutIds(xml, nextLayoutId);
         xml = replaced.xml;
         nextLayoutId = replaced.nextId;
@@ -365,8 +407,6 @@ export async function cloneTemplateLayoutForSlide(input: {
   destination.file("ppt/_rels/presentation.xml.rels", presentationRelationships);
 
   let presentation = await text(destination, "ppt/presentation.xml");
-  const existingMasterIds = [...presentation.matchAll(/<p:sldMasterId\b[^>]*\bid=(?:"(\d+)"|'(\d+)')/g)].map((match) => Number(match[1] ?? match[2] ?? 0));
-  const masterId = Math.max(2_147_483_647, ...existingMasterIds) + 1;
   if (masterId > 4_294_967_295) throw new Error("The PowerPoint master ID range is exhausted.");
   if (/<p:sldMasterIdLst\b[^>]*>/i.test(presentation)) presentation = presentation.replace(/<\/p:sldMasterIdLst>/i, `<p:sldMasterId id="${masterId}" r:id="${presentationRelationshipId}"/></p:sldMasterIdLst>`);
   else presentation = presentation.replace(/<p:notesMasterIdLst\b/i, `<p:sldMasterIdLst><p:sldMasterId id="${masterId}" r:id="${presentationRelationshipId}"/></p:sldMasterIdLst><p:notesMasterIdLst`);

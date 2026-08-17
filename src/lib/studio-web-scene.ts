@@ -1,9 +1,12 @@
 import type {
   DeckJob,
   SceneSemanticRole,
+  StudioConnectorDesign,
   StudioFigureTreatment,
   StudioLayoutRecipe,
   StudioDeckRhythm,
+  StudioTableCellDesign,
+  StudioTableDesign,
   StudioWebFrame,
   StudioWebNode,
   StudioWebScene,
@@ -66,7 +69,8 @@ function previewElementFor(catalog: SlideRenderCatalog | undefined, slideNumber:
   const slide = catalog?.slides.find((item) => item.number === slideNumber);
   if (!slide) return undefined;
   const suffixes = [`-${shapeId}`, `-${shapeId}-text`];
-  return slide.elements.find((element) => (!kind || element.kind === kind) && suffixes.some((suffix) => element.id.endsWith(suffix)))
+  return slide.elements.find((element) => (!kind || element.kind === kind) && element.sourceShapeId === shapeId)
+    ?? slide.elements.find((element) => (!kind || element.kind === kind) && suffixes.some((suffix) => element.id.endsWith(suffix)))
     ?? slide.elements.find((element) => (!kind || element.kind === kind) && element.id.includes(`-${shapeId}-`));
 }
 
@@ -166,7 +170,21 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
     textHash: textBox?.textHash,
     sourceParagraphs: textBox?.paragraphs,
     tableId: table?.id,
-    table: table ? { rows: table.rowCount, columns: table.columnCount, cells: tableCells ?? [] } : undefined,
+    table: table ? {
+      rows: table.rowCount,
+      columns: table.columnCount,
+      cells: tableCells ?? [],
+      design: {
+        headerRows: table.rowCount > 0 ? 1 : 0,
+        columnWidths: Array.from({ length: Math.max(1, table.columnCount) }, () => 1 / Math.max(1, table.columnCount)),
+        rowHeights: Array.from({ length: Math.max(1, table.rowCount) }, () => 1 / Math.max(1, table.rowCount)),
+        borderMode: "subtle",
+        borderColor: "#DBDCDB",
+        borderWidthPt: .75,
+        defaultPaddingPt: { top: 4, right: 7, bottom: 4, left: 7 },
+        cellStyles: [],
+      },
+    } : undefined,
     mediaPart: preview?.mediaId,
     opticalInsets: textBox ? {
       left: Math.max(0, Math.round(textBox.opticalLeftOffsetEmu * studioSlideSize.width / audit.slideSize.width)),
@@ -330,6 +348,9 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
     sourceSlideSize: { ...deck.audit.slideSize },
     rhythm: defaultStudioDeckRhythm(),
     designMemory: [],
+    componentLibrary: [],
+    tableLibrary: [],
+    tableContinuationPlans: [],
     designSystem: {
       id: "ornl-presentation-web-v1",
       standardVersion: PRESENTATION_DESIGN_STANDARD.version,
@@ -365,7 +386,8 @@ function styleForDesignedNode(node: StudioWebNode): StudioWebNode["style"] {
   if (node.role === "title") return { ...node.style, fontFamily: "Aptos", fontSizePt: 29.25, fontWeight: 700, lineHeight: 1.02, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
   if (node.role === "caption" || node.role === "label") return { ...node.style, fontFamily: "Aptos", fontSizePt: 14, fontWeight: 400, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
   if (node.kind === "table") return { ...node.style, fontFamily: "Aptos", fontSizePt: node.style.fontSizePt, fontWeight: 400, lineHeight: 1.05, color: palette.darkMatter, background: palette.polar, borderColor: palette.graphite, borderWidthPt: .75, textAlign: "left", verticalAlign: "middle", paddingPt: { top: 4, right: 6, bottom: 4, left: 6 } };
-  return { ...node.style, fontFamily: "Aptos", fontSizePt: Math.max(16, Math.min(22, node.style.fontSizePt)), fontWeight: node.style.fontWeight === 700 ? 600 : node.style.fontWeight, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: node.kind === "image" ? "contain" : node.style.objectFit };
+  const presentationBodySize = node.kind === "text" && node.role === "body" && (node.text?.length ?? 0) > 360 ? PRESENTATION_DESIGN_STANDARD.defaults.typography.bodyMinimumPt : Math.max(16, Math.min(22, node.style.fontSizePt));
+  return { ...node.style, fontFamily: "Aptos", fontSizePt: presentationBodySize, fontWeight: node.style.fontWeight === 700 ? 600 : node.style.fontWeight, lineHeight: 1.08, color: palette.darkMatter, background: undefined, borderColor: undefined, borderWidthPt: 0, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: node.kind === "image" ? "contain" : node.style.objectFit };
 }
 
 function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
@@ -375,7 +397,7 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "card-kicker") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1, color: [palette.ornlGreen, palette.infinity, palette.hydro, palette.darkMatter][node.component.ordinal ?? 0] ?? palette.ornlGreen };
   if (node.component?.role === "card-heading") return { ...base, fontSizePt: 13.5, fontWeight: 400, lineHeight: 1.05, color: "#666B68" };
   if (node.component?.role === "card-body") return { ...base, fontSizePt: 15, fontWeight: 400, lineHeight: 1.13, color: palette.darkMatter };
-  if (node.component?.role === "objective-body") return { ...base, fontSizePt: 18, fontWeight: 400, lineHeight: 1.16, color: palette.darkMatter };
+  if (node.component?.role === "objective-body") return { ...base, fontSizePt: 18, fontWeight: 400, lineHeight: 1.16, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "step-heading") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen };
   if (node.component?.role === "step-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.14, color: palette.darkMatter };
   if (node.component?.role === "figure-label") return { ...base, fontSizePt: 14, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen, verticalAlign: "middle" };
@@ -617,6 +639,11 @@ export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutReci
   const bodyCharacters = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).reduce((sum, node) => sum + (node.text?.length ?? 0), 0);
   const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
   const labelCount = nodes.filter((node) => node.kind === "text" && node.role === "label" && !footerNode(node)).length;
+  const structuredParagraphs = nodes
+    .filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node))
+    .flatMap((node) => node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? []);
+  const structuredSectionCount = structuredParagraphs.filter((paragraph) => !paragraph.bullet && paragraph.level === 0).length;
+  if (!nodes.some(meaningfulImage) && structuredParagraphs.length >= 4 && structuredParagraphs.length <= 10 && structuredSectionCount >= 2 && structuredSectionCount <= 4 && structuredParagraphs.some((paragraph) => paragraph.level > 0)) return "ornl-title-card-grid";
   if (bodyCount >= 3 && bodyCount <= 6 && labelCount >= bodyCount) return "ornl-title-card-grid";
   const images = nodes.filter(meaningfulImage).length;
   const explanatoryLabels = nodes.filter((node) => node.kind === "text" && ["label", "caption"].includes(node.role) && !footerNode(node)).length;
@@ -680,7 +707,10 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
   if (slide.recipe === "ornl-title-objective-columns") {
     const groups = slide.nodes.filter((node) => node.component?.role === "objective-body");
     groups.forEach((node, ordinal) => {
-      components.push({ id: `${node.component!.groupId}-accent`, kind: "rect", frame: { x: node.frame.x, y: node.frame.y - points(9), width: node.frame.width, height: points(3), rotation: 0 }, fillColor: [palette.ornlGreen, palette.aqua, palette.forge, palette.infinity][ordinal] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
+      const padding = points(12);
+      const surface = { x: node.frame.x - padding, y: node.frame.y - padding, width: node.frame.width + padding * 2, height: node.frame.height + padding * 2, rotation: 0 };
+      components.push({ id: `${node.component!.groupId}-surface`, kind: "rect", frame: surface, fillColor: "#F2F5F3", lineWidthPt: 0, behindContent: true });
+      components.push({ id: `${node.component!.groupId}-accent`, kind: "rect", frame: { ...surface, height: points(3) }, fillColor: [palette.ornlGreen, palette.aqua, palette.forge, palette.infinity][ordinal] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
     });
     return components;
   }
@@ -736,8 +766,9 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
   const groups = [...new Set(slide.nodes.filter((node) => node.component?.role === "card-body").map((node) => node.component!.groupId))];
   const accents = [palette.ornlGreen, palette.aqua, palette.infinity, palette.forge, palette.plasma, palette.pulsar];
   groups.forEach((groupId, ordinal) => {
-    const card = cardFrame(ordinal, groups.length);
-    components.push({ id: `${groupId}-surface`, kind: "rect", frame: card, fillColor: palette.polar, lineColor: palette.graphite, lineWidthPt: .75, behindContent: true });
+    const groupNodes = slide.nodes.filter((node) => node.component?.groupId === groupId);
+    const card = groupNodes.find((node) => node.component?.frame)?.component?.frame ?? cardFrame(ordinal, groups.length);
+    components.push({ id: `${groupId}-surface`, kind: "rect", frame: card, fillColor: "#F2F5F3", lineWidthPt: 0, behindContent: true });
     components.push({ id: `${groupId}-accent`, kind: "rect", frame: { ...card, height: points(2) }, fillColor: accents[ordinal] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
   });
   components.push({ id: `studio-footer-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, 6.92, 12.39, .012), fillColor: palette.graphite, lineWidthPt: 0, behindContent: true });
@@ -948,18 +979,59 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       });
     } else {
       const left = content.filter((node) => node.id !== visual?.id);
-      for (const [id, value] of stack(left, frame(.47, contentTop, 5.78, contentHeight), 18)) placements.set(id, value);
-      if (visual) placements.set(visual.id, contained(visual, frame(6.63, contentTop, 6.23, contentHeight - (captions.length ? .40 : 0))));
-      for (const [id, value] of stack(captions, frame(6.63, contentBottom - .34, 6.23, .34), 4)) placements.set(id, value);
+      const wideEvidence = visual?.kind === "image"
+        && visual.sourceFrame.width / Math.max(1, visual.sourceFrame.height) >= 1.30
+        && left.reduce((sum, node) => sum + (node.text?.length ?? 0), 0) <= 180;
+      if (wideEvidence && visual) {
+        const narrativeHeight = left.length ? .72 : 0;
+        for (const [id, value] of stack(left, frame(.47, contentTop, 12.39, narrativeHeight), 6)) placements.set(id, value);
+        const captionHeight = captions.length ? .40 : 0;
+        placements.set(visual.id, contained(visual, frame(.47, contentTop + narrativeHeight + (left.length ? .12 : 0), 12.39, contentHeight - narrativeHeight - captionHeight - (left.length ? .12 : 0) - (captions.length ? .10 : 0))));
+        for (const [id, value] of stack(captions, frame(.47, contentBottom - captionHeight, 12.39, captionHeight), 4)) placements.set(id, value);
+      } else {
+        for (const [id, value] of stack(left, frame(.47, contentTop, 5.78, contentHeight), 18)) placements.set(id, value);
+        if (visual) placements.set(visual.id, contained(visual, frame(6.63, contentTop, 6.23, contentHeight - (captions.length ? .40 : 0))));
+        for (const [id, value] of stack(captions, frame(6.63, contentBottom - .34, 6.23, .34), 4)) placements.set(id, value);
+      }
     }
   } else if (recipe === "ornl-title-figure-grid") {
     const visuals = content.filter(meaningfulImage);
     const narrative = [...content.filter((node) => node.kind !== "image"), ...captions];
-    if (visuals.length === 2 && narrative.length) {
-      const narrativeHeight = Math.min(2.25, narrativeHeightInches(narrative, 12.39, 1.35, 2.25) + .30);
+    const fieldConnectors = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "connector" && !footerNode(node));
+    const fieldShapes = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "shape" && /arrow/i.test(node.name) && !footerNode(node));
+    const annotations = captions.filter(shortFigureAnnotation);
+    if (visuals.length >= 2 && fieldConnectors.length >= 1) {
+      const figureNodes = [...visuals, ...fieldConnectors, ...fieldShapes, ...annotations];
+      const figureIds = new Set(figureNodes.map((node) => node.id));
+      const prose = narrative.filter((node) => !figureIds.has(node.id));
+      // Native PowerPoint can wrap dense instructional copy one line taller than
+      // the browser estimate. Reserve enough vertical room for that final line
+      // while keeping the relationship-bearing figure field intact above it.
+      const proseHeight = prose.length ? narrativeHeightInches(prose, 12.39, .72, 2.05) : 0;
+      const target = frame(.47, contentTop, 12.39, Math.max(1.35, contentHeight - proseHeight - (prose.length ? .14 : 0)));
+      for (const [id, value] of scaleSourceGroup(figureNodes, target)) placements.set(id, value);
+      if (prose.length) for (const [id, value] of stack(prose, frame(.47, contentBottom - proseHeight, 12.39, proseHeight), 6)) placements.set(id, value);
+      generatedFigureTreatments.push({
+        id: `studio-auto-figure-field-${slideNumber}`,
+        nodeIds: figureNodes.map((node) => node.id),
+        mode: "preserve-as-unit",
+        verificationStatus: "source-locked",
+        intentSummary: "Preserve the multi-image technical callout field as one relationship-bearing evidence unit.",
+        informationInventory: ["All source images", "All short figure annotations", "All source connectors and arrows between the images"],
+        invariants: ["Do not detach cross-image arrows or alter source labels, values, sequence, topology, or technical meaning."],
+        rationale: "This nominal figure-grid slide contains cross-image connector meaning, so Studio preserves and scales the complete native relationship field instead of exporting unbound lines or separating its evidence.",
+        groupFrame: target,
+        lockAspectRatio: true,
+        relationshipPolicy: "preserve-internal",
+      });
+    } else if (visuals.length === 2 && narrative.length) {
+      const narrativeHeight = narrative.length > 1 ? 2.32 : Math.min(2.25, narrativeHeightInches(narrative, 12.39, 1.35, 2.25) + .30);
       const visualBottom = contentBottom - narrativeHeight - .16;
       for (const [id, value] of grid(visuals, frame(.47, contentTop, 12.39, Math.max(1.0, visualBottom - contentTop)), 2, 18)) placements.set(id, value);
-      for (const [id, value] of stack(narrative, frame(.47, visualBottom + .16, 12.39, narrativeHeight), 7)) placements.set(id, value);
+      if (narrative.length === 2) {
+        placements.set(narrative[0].id, frame(.47, visualBottom + .16, 12.39, 1.08));
+        placements.set(narrative[1].id, frame(.47, visualBottom + 1.36, 12.39, .96));
+      } else for (const [id, value] of stack(narrative, frame(.47, visualBottom + .16, 12.39, narrativeHeight), 7)) placements.set(id, value);
     } else {
       for (const [id, value] of grid(visuals, frame(.47, contentTop, 12.39, Math.max(1, contentHeight - (narrative.length ? .84 : 0))), visuals.length <= 2 ? 2 : 3, 18)) placements.set(id, value);
       for (const [id, value] of stack(narrative, frame(.47, contentBottom - .68, 12.39, .68), 8)) placements.set(id, value);
@@ -970,7 +1042,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const gap = .24;
     const width = (12.39 - gap * (count - 1)) / count;
     objectives.forEach((node, ordinal) => {
-      placements.set(node.id, frame(.47 + ordinal * (width + gap), 1.52, width, 4.78));
+      placements.set(node.id, frame(.64 + ordinal * (width + gap), 1.69, width - .34, 4.44));
       components.set(node.id, { groupId: `studio-objective-${slideNumber}-${ordinal + 1}`, role: "objective-body", ordinal });
     });
     for (const [id, value] of stack(captions, frame(.47, 6.42, 12.39, .28), 4)) placements.set(id, value);
@@ -1132,12 +1204,12 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       generatedFigureTreatments.push({
         id: `studio-auto-figure-field-${slideNumber}`,
         nodeIds: diagramNodes.map((node) => node.id),
-        mode: "hybrid-rebuild",
-        verificationStatus: "verified",
+        mode: "preserve-as-unit",
+        verificationStatus: "source-locked",
         intentSummary: "Preserve the multi-image technical callout field as one relationship-bearing evidence unit.",
         informationInventory: ["All source images", "All short figure annotations", "All source connectors and arrows between the images"],
         invariants: ["Do not detach cross-image arrows or alter source labels, values, sequence, topology, or technical meaning."],
-        rationale: "The arrows and labels cross between multiple images, so Studio scales the extracted images and editable annotations as one verified relationship field instead of taking a rectangular crop that could capture unrelated copy.",
+        rationale: "The arrows and labels cross between multiple images, so Studio asks PowerPoint to render the isolated native evidence objects as one exact unit. A semantic redraw is allowed only after its labels, sequence, topology, and technical intent have been independently verified.",
         groupFrame: target,
         lockAspectRatio: true,
         relationshipPolicy: "preserve-internal",
@@ -1197,8 +1269,30 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   } else if (recipe === "ornl-title-card-grid") {
     const bodies = content.filter((node) => node.kind === "text" && node.role === "body").sort((left, right) => left.zIndex - right.zIndex);
     const groupNodeIds = new Set<string>();
+    const semanticSections: Array<{ heading: StudioWebNode; items: StudioWebNode[] }> = [];
+    for (const body of bodies.filter((node) => node.sourceBinding === "semantic-atom")) {
+      const paragraph = body.sourceParagraphs?.[0];
+      if (paragraph && !paragraph.bullet && paragraph.level === 0) semanticSections.push({ heading: body, items: [] });
+      else semanticSections.at(-1)?.items.push(body);
+    }
+    const useSemanticSections = semanticSections.length >= 2 && semanticSections.length <= 4 && semanticSections.every((section) => section.items.length > 0);
+    if (useSemanticSections) {
+      semanticSections.forEach((section, ordinal) => {
+        const groupId = `studio-card-${slideNumber}-${ordinal + 1}`;
+        const card = { ...cardFrame(ordinal, semanticSections.length), y: inches(1.46), height: inches(4.82) };
+        placements.set(section.heading.id, frame(emuInches(card.x) + .30, emuInches(card.y) + .28, emuInches(card.width) - .60, .48));
+        components.set(section.heading.id, { groupId, role: "card-kicker", ordinal, frame: card });
+        groupNodeIds.add(section.heading.id);
+        const itemRegionHeight = Math.min(emuInches(card.height) - 1.24, Math.max(.72, section.items.length * .78));
+        for (const [id, value] of stack(section.items, frame(emuInches(card.x) + .30, emuInches(card.y) + .98, emuInches(card.width) - .60, itemRegionHeight), 14)) placements.set(id, value);
+        section.items.forEach((item) => {
+          components.set(item.id, { groupId, role: "card-body", ordinal, frame: card });
+          groupNodeIds.add(item.id);
+        });
+      });
+    }
     let priorBodyZ = title?.zIndex ?? -Infinity;
-    bodies.forEach((body, ordinal) => {
+    if (!useSemanticSections) bodies.forEach((body, ordinal) => {
       const groupId = `studio-card-${slideNumber}-${ordinal + 1}`;
       const card = cardFrame(ordinal, bodies.length);
       const labels = captions.filter((node) => node.kind === "text" && node.zIndex > priorBodyZ && node.zIndex < body.zIndex).sort((left, right) => left.zIndex - right.zIndex);
@@ -1273,10 +1367,12 @@ export function updateStudioWebNodeFrame(scene: StudioWebScene, slideNumber: num
   const height = Math.max(inches(.1), Math.min(scene.slideSize.height, Math.round(nextFrame.height)));
   const bounded = { ...nextFrame, width, height, x: Math.max(0, Math.min(scene.slideSize.width - width, Math.round(nextFrame.x))), y: Math.max(0, Math.min(scene.slideSize.height - height, Math.round(nextFrame.y))), rotation: Math.max(-360, Math.min(360, nextFrame.rotation)) };
   const now = new Date().toISOString();
+  const movedNodes = slide.nodes.map((candidate) => candidate.id === nodeId ? { ...candidate, frame: bounded } : candidate);
+  const connectedNodes = movedNodes.map((candidate) => candidate.connector ? { ...candidate, frame: studioConnectorFrame(movedNodes, candidate.connector) } : candidate);
   return {
     ...scene,
     revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
-    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : { ...item, status: "designed", updatedAt: now, designRationale: "Human-adjusted on the shared Studio web canvas.", constraints: (item.constraints ?? []).filter((constraint) => !constraint.nodeIds.includes(nodeId)), nodes: item.nodes.map((candidate) => candidate.id === nodeId ? { ...candidate, frame: bounded } : candidate) }),
+    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : { ...item, status: "designed", updatedAt: now, designRationale: "Human-adjusted on the shared Studio web canvas.", constraints: (item.constraints ?? []).filter((constraint) => !constraint.nodeIds.includes(nodeId)), nodes: connectedNodes }),
   };
 }
 
@@ -1301,6 +1397,178 @@ export function updateStudioWebNodeStyle(scene: StudioWebScene, slideNumber: num
       updatedAt: now,
       designRationale: "Human- or AI-refined with the shared Studio web design controls.",
       nodes: item.nodes.map((candidate) => candidate.id === nodeId ? { ...candidate, style: { ...candidate.style, ...patch, fontFamily: "Aptos" } } : candidate),
+    }),
+  };
+}
+
+function normalizedTableWeights(values: number[] | undefined, count: number): number[] {
+  const safeCount = Math.max(1, count);
+  if (!values || values.length !== safeCount || values.some((value) => !Number.isFinite(value) || value <= 0)) return Array.from({ length: safeCount }, () => 1 / safeCount);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(total) || total <= 0) return Array.from({ length: safeCount }, () => 1 / safeCount);
+  return values.map((value) => value / total);
+}
+
+export function resolvedStudioTableDesign(node: StudioWebNode): StudioTableDesign {
+  if (node.kind !== "table" || !node.table) throw new Error("The requested Studio node is not an editable table.");
+  const design = node.table.design;
+  return {
+    headerRows: Math.max(0, Math.min(node.table.rows, Math.round(design?.headerRows ?? (node.table.rows > 0 ? 1 : 0)))),
+    columnWidths: normalizedTableWeights(design?.columnWidths, node.table.columns),
+    rowHeights: normalizedTableWeights(design?.rowHeights, node.table.rows),
+    borderMode: design?.borderMode ?? "subtle",
+    borderColor: /^#[0-9a-f]{6}$/i.test(design?.borderColor ?? "") ? design!.borderColor.toUpperCase() : "#DBDCDB",
+    borderWidthPt: Math.max(0, Math.min(6, design?.borderWidthPt ?? .75)),
+    defaultPaddingPt: design?.defaultPaddingPt ?? { top: 4, right: 7, bottom: 4, left: 7 },
+    cellStyles: (design?.cellStyles ?? []).filter((item) => node.table?.cells.some((cell) => cell.id === item.cellId)),
+  };
+}
+
+function validateTablePadding(value: StudioTableDesign["defaultPaddingPt"]): StudioTableDesign["defaultPaddingPt"] {
+  const next = { top: Number(value.top), right: Number(value.right), bottom: Number(value.bottom), left: Number(value.left) };
+  if (Object.values(next).some((item) => !Number.isFinite(item) || item < 0 || item > 36)) throw new Error("Studio table cell padding must be between 0 and 36 pt.");
+  return next;
+}
+
+function validateTableCellBorders(value: StudioTableCellDesign["borders"]): StudioTableCellDesign["borders"] {
+  if (!value) return undefined;
+  return Object.fromEntries(Object.entries(value).map(([edge, border]) => {
+    if (!border || !["none", "solid", "dash"].includes(border.type)) throw new Error(`Studio table ${edge} border must be none, solid, or dash.`);
+    if (!/^#[0-9a-f]{6}$/i.test(border.color)) throw new Error(`Studio table ${edge} border color must be a six-digit hex color.`);
+    if (!Number.isFinite(border.widthPt) || border.widthPt < 0 || border.widthPt > 6) throw new Error(`Studio table ${edge} border width must be between 0 and 6 pt.`);
+    return [edge, { ...border, color: border.color.toUpperCase(), widthPt: border.type === "none" ? 0 : border.widthPt }];
+  })) as StudioTableCellDesign["borders"];
+}
+
+function updateStudioTableNode(scene: StudioWebScene, slideNumber: number, nodeId: string, updater: (node: StudioWebNode, design: StudioTableDesign) => StudioTableDesign): StudioWebScene {
+  const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
+  const node = slide?.nodes.find((item) => item.id === nodeId);
+  if (!slide || !node?.table || node.kind !== "table") throw new Error("The requested Studio table is not present in the current slide revision.");
+  if (node.locked) throw new Error(`${node.name} is locked because its PowerPoint representation is not safely editable.`);
+  const design = updater(node, resolvedStudioTableDesign(node));
+  const now = new Date().toISOString();
+  return {
+    ...scene,
+    revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
+    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : {
+      ...item,
+      status: "designed",
+      updatedAt: now,
+      designRationale: "Human- or AI-refined with the source-bound Studio table component editor.",
+      nodes: item.nodes.map((candidate) => candidate.id === nodeId && candidate.table ? { ...candidate, table: { ...candidate.table, design } } : candidate),
+    }),
+  };
+}
+
+export function updateStudioTableDesign(scene: StudioWebScene, slideNumber: number, nodeId: string, patch: Partial<Pick<StudioTableDesign, "headerRows" | "columnWidths" | "rowHeights" | "borderMode" | "borderColor" | "borderWidthPt" | "defaultPaddingPt">>): StudioWebScene {
+  return updateStudioTableNode(scene, slideNumber, nodeId, (node, design) => {
+    if (patch.headerRows !== undefined && (!Number.isInteger(patch.headerRows) || patch.headerRows < 0 || patch.headerRows > (node.table?.rows ?? 0))) throw new Error("Studio table header rows must fit within the current table structure.");
+    if (patch.borderMode !== undefined && !["none", "subtle", "full"].includes(patch.borderMode)) throw new Error("Studio table borders must be none, subtle, or full.");
+    if (patch.borderColor !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.borderColor)) throw new Error("Studio table border color must be a six-digit hex color.");
+    if (patch.borderWidthPt !== undefined && (!Number.isFinite(patch.borderWidthPt) || patch.borderWidthPt < 0 || patch.borderWidthPt > 6)) throw new Error("Studio table border width must be between 0 and 6 pt.");
+    return {
+      ...design,
+      ...patch,
+      columnWidths: patch.columnWidths ? normalizedTableWeights(patch.columnWidths, node.table!.columns) : design.columnWidths,
+      rowHeights: patch.rowHeights ? normalizedTableWeights(patch.rowHeights, node.table!.rows) : design.rowHeights,
+      borderColor: patch.borderColor?.toUpperCase() ?? design.borderColor,
+      defaultPaddingPt: patch.defaultPaddingPt ? validateTablePadding(patch.defaultPaddingPt) : design.defaultPaddingPt,
+    };
+  });
+}
+
+function resizedTableWeights(current: number[], index: number, requestedEmu: number, totalEmu: number, minimumEmu: number): number[] {
+  if (!Number.isInteger(index) || index < 0 || index >= current.length) throw new Error("Choose an existing Studio table row or column.");
+  if (!Number.isFinite(requestedEmu) || requestedEmu < minimumEmu) throw new Error("The requested Studio table row or column is below its minimum usable size.");
+  const minRatio = Math.min(.2, minimumEmu / Math.max(totalEmu, 1));
+  const desired = Math.max(minRatio, Math.min(1 - minRatio * Math.max(0, current.length - 1), requestedEmu / Math.max(totalEmu, 1)));
+  const remainder = Math.max(0, 1 - desired);
+  const currentRemainder = Math.max(.000001, current.reduce((sum, value, candidate) => candidate === index ? sum : sum + value, 0));
+  return current.map((value, candidate) => candidate === index ? desired : value / currentRemainder * remainder);
+}
+
+export function resizeStudioTableColumn(scene: StudioWebScene, slideNumber: number, nodeId: string, column: number, widthEmu: number): StudioWebScene {
+  return updateStudioTableNode(scene, slideNumber, nodeId, (node, design) => ({ ...design, columnWidths: resizedTableWeights(design.columnWidths, column - 1, widthEmu, node.frame.width, inches(.35)) }));
+}
+
+export function resizeStudioTableRow(scene: StudioWebScene, slideNumber: number, nodeId: string, row: number, heightEmu: number): StudioWebScene {
+  return updateStudioTableNode(scene, slideNumber, nodeId, (node, design) => ({ ...design, rowHeights: resizedTableWeights(design.rowHeights, row - 1, heightEmu, node.frame.height, inches(.18)) }));
+}
+
+export function updateStudioTableCellDesign(scene: StudioWebScene, slideNumber: number, nodeId: string, cellId: string, patch: Omit<StudioTableCellDesign, "cellId">): StudioWebScene {
+  return updateStudioTableNode(scene, slideNumber, nodeId, (node, design) => {
+    const sourceCell = node.table?.cells.find((cell) => cell.id === cellId);
+    if (!sourceCell) throw new Error("The requested source-bound Studio table cell is unavailable.");
+    if (patch.fill !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.fill)) throw new Error("Studio table cell fill must be a six-digit hex color.");
+    if (patch.color !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.color)) throw new Error("Studio table cell text color must be a six-digit hex color.");
+    if (patch.fontSizePt !== undefined && (!Number.isFinite(patch.fontSizePt) || patch.fontSizePt < 10 || patch.fontSizePt > 40)) throw new Error("Studio table cell text size must be between 10 and 40 pt.");
+    if (patch.fontWeight !== undefined && ![400, 600, 700].includes(patch.fontWeight)) throw new Error("Studio table cell font weight must be 400, 600, or 700.");
+    if (patch.textAlign !== undefined && !["left", "center", "right"].includes(patch.textAlign)) throw new Error("Studio table cell alignment must be left, center, or right.");
+    if (patch.verticalAlign !== undefined && !["top", "middle", "bottom"].includes(patch.verticalAlign)) throw new Error("Studio table cell vertical alignment must be top, middle, or bottom.");
+    const sourceSemanticFill = /^#([0-9a-f]{6})$/i.exec(sourceCell.fill ?? "")?.[0]?.toUpperCase();
+    if (sourceCell.semanticColorRole && sourceSemanticFill && patch.fill !== undefined && patch.fill.toUpperCase() !== sourceSemanticFill) throw new Error(`Cell ${cellId} uses the source-significant ${sourceCell.semanticColorRole} color. Preserve that fill unless a human explicitly changes the source meaning.`);
+    const prior = design.cellStyles.find((item) => item.cellId === cellId);
+    const nextPatch = {
+      ...patch,
+      ...(patch.fill !== undefined ? { fill: patch.fill.toUpperCase() } : {}),
+      ...(patch.color !== undefined ? { color: patch.color.toUpperCase() } : {}),
+      ...(patch.paddingPt !== undefined ? { paddingPt: validateTablePadding(patch.paddingPt) } : {}),
+      ...(patch.borders !== undefined ? { borders: { ...prior?.borders, ...validateTableCellBorders(patch.borders) } } : {}),
+    };
+    const next = { ...prior, ...nextPatch, cellId };
+    return { ...design, cellStyles: [...design.cellStyles.filter((item) => item.cellId !== cellId), next] };
+  });
+}
+
+export function studioConnectorAttachmentPoint(node: StudioWebNode, side: StudioConnectorDesign["fromSide"]): { x: number; y: number } {
+  if (side === "top") return { x: node.frame.x + node.frame.width / 2, y: node.frame.y };
+  if (side === "right") return { x: node.frame.x + node.frame.width, y: node.frame.y + node.frame.height / 2 };
+  if (side === "bottom") return { x: node.frame.x + node.frame.width / 2, y: node.frame.y + node.frame.height };
+  if (side === "left") return { x: node.frame.x, y: node.frame.y + node.frame.height / 2 };
+  return { x: node.frame.x + node.frame.width / 2, y: node.frame.y + node.frame.height / 2 };
+}
+
+export function studioConnectorFrame(nodes: StudioWebNode[], design: StudioConnectorDesign): StudioWebFrame {
+  const from = nodes.find((node) => node.id === design.fromNodeId);
+  const to = nodes.find((node) => node.id === design.toNodeId);
+  if (!from || !to) throw new Error("A verified Studio connector has a stale endpoint binding.");
+  const start = studioConnectorAttachmentPoint(from, design.fromSide);
+  const end = studioConnectorAttachmentPoint(to, design.toSide);
+  return { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.max(points(.25), Math.abs(end.x - start.x)), height: Math.max(points(.25), Math.abs(end.y - start.y)), rotation: 0 };
+}
+
+export function updateStudioConnectorDesign(scene: StudioWebScene, slideNumber: number, connectorNodeId: string, design: StudioConnectorDesign): StudioWebScene {
+  const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
+  const connector = slide?.nodes.find((node) => node.id === connectorNodeId);
+  if (!slide || !connector || connector.kind !== "connector") throw new Error("Choose a connector node from the current Studio slide.");
+  if (connector.locked) throw new Error(`${connector.name} is locked because its PowerPoint representation is not safely editable.`);
+  const from = slide.nodes.find((node) => node.id === design.fromNodeId && node.visible);
+  const to = slide.nodes.find((node) => node.id === design.toNodeId && node.visible);
+  if (!from || !to || from.id === to.id || [from.id, to.id].includes(connector.id)) throw new Error("A verified connector must join two different visible non-connector Studio nodes.");
+  const treatment = slide.figureTreatments.find((item) => item.nodeIds.includes(connector.id) && item.nodeIds.includes(from.id) && item.nodeIds.includes(to.id));
+  if (!treatment || treatment.verificationStatus !== "verified" || treatment.relationshipPolicy !== "editable-diagram") throw new Error("Direct connector authoring requires one verified editable-diagram figure treatment containing the connector and both endpoint nodes.");
+  if (!/^#[0-9a-f]{6}$/i.test(design.stroke)) throw new Error("Studio connector color must be a six-digit hex color.");
+  if (!Number.isFinite(design.widthPt) || design.widthPt < .25 || design.widthPt > 8) throw new Error("Studio connector width must be between 0.25 and 8 pt.");
+  if (!["solid", "dash", "dashDot"].includes(design.dash)) throw new Error("Studio connector dash must be solid, dash, or dash-dot.");
+  if (!["top", "right", "bottom", "left", "center"].includes(design.fromSide) || !["top", "right", "bottom", "left", "center"].includes(design.toSide)) throw new Error("Studio connector endpoints must use a supported node attachment side.");
+  const normalized: StudioConnectorDesign = { ...design, stroke: design.stroke.toUpperCase(), verificationStatus: "verified" };
+  const connectorFrame = studioConnectorFrame(slide.nodes, normalized);
+  const relationships = [
+    ...(treatment.relationships ?? []).filter((item) => item.fromNodeId !== connector.id || !["connects-from", "connects-to"].includes(item.kind)),
+    { fromNodeId: connector.id, toNodeId: from.id, kind: "connects-from" as const },
+    { fromNodeId: connector.id, toNodeId: to.id, kind: "connects-to" as const },
+  ];
+  const now = new Date().toISOString();
+  return {
+    ...scene,
+    revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
+    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : {
+      ...item,
+      status: "designed",
+      updatedAt: now,
+      designRationale: "Human- or AI-authored verified connector relationships on the shared Studio canvas.",
+      nodes: item.nodes.map((node) => node.id === connector.id ? { ...node, connector: normalized, frame: connectorFrame, style: { ...node.style, borderColor: normalized.stroke, borderWidthPt: normalized.widthPt } } : node),
+      figureTreatments: item.figureTreatments.map((candidate) => candidate.id === treatment.id ? { ...candidate, relationships } : candidate),
     }),
   };
 }

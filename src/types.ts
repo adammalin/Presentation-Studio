@@ -53,6 +53,8 @@ export interface DesignThread {
   deckId: string;
   slideId: string;
   slideNumber: number;
+  /** Materialized PowerPoint output number when one source slide produces continuations. */
+  outputSlideNumber?: number;
   baseRevision: string;
   anchor: {
     kind: "region";
@@ -471,6 +473,113 @@ export type StudioVisualMotif = "pattern-free" | "modular-square-grid" | "direct
 export type StudioVisualAccent = "none" | "Energy" | "Mist" | "Biome" | "Aqua" | "Infinity" | "Hydro" | "Forge" | "Spark" | "Plasma" | "Pulsar";
 export type StudioConstraintKind = "align" | "distribute" | "snap-to-grid" | "fit-safe-region";
 export type StudioConstraintMode = "left" | "optical-left" | "center" | "right" | "top" | "optical-top" | "middle" | "bottom" | "horizontal-equal-gap" | "vertical-equal-gap" | "both";
+export type StudioTableBorderMode = "none" | "subtle" | "full";
+export type StudioTableBorderType = "none" | "solid" | "dash";
+export type StudioConnectorSide = "top" | "right" | "bottom" | "left" | "center";
+export type StudioConnectorArrow = "none" | "arrow" | "diamond" | "oval" | "stealth" | "triangle";
+export type StudioComponentSurface = "light" | "dark";
+
+export interface StudioTableCellBorder {
+  type: StudioTableBorderType;
+  color: string;
+  widthPt: number;
+}
+
+export interface StudioTableCellBorders {
+  top?: StudioTableCellBorder;
+  right?: StudioTableCellBorder;
+  bottom?: StudioTableCellBorder;
+  left?: StudioTableCellBorder;
+}
+
+export interface StudioTableCellDesign {
+  cellId: string;
+  fill?: string;
+  color?: string;
+  fontSizePt?: number;
+  fontWeight?: 400 | 600 | 700;
+  textAlign?: "left" | "center" | "right";
+  verticalAlign?: "top" | "middle" | "bottom";
+  paddingPt?: { top: number; right: number; bottom: number; left: number };
+  borders?: StudioTableCellBorders;
+}
+
+export interface StudioTableDesign {
+  headerRows: number;
+  columnWidths: number[];
+  rowHeights: number[];
+  borderMode: StudioTableBorderMode;
+  borderColor: string;
+  borderWidthPt: number;
+  defaultPaddingPt: { top: number; right: number; bottom: number; left: number };
+  cellStyles: StudioTableCellDesign[];
+}
+
+export interface StudioTableRoleStyle {
+  fill?: string;
+  color?: string;
+  fontSizePt?: number;
+  fontWeight?: 400 | 600 | 700;
+  textAlign?: "left" | "center" | "right";
+  verticalAlign?: "top" | "middle" | "bottom";
+  paddingPt?: { top: number; right: number; bottom: number; left: number };
+  borders?: StudioTableCellBorders;
+}
+
+export interface StudioTableExemplarDefinition {
+  id: string;
+  name: string;
+  sourceNodeId: string;
+  adoptedFromSlideNumber: number;
+  compatibility: {
+    columns: number;
+    headerRows: number;
+    headerStructure: string;
+    bodyStructure: string;
+  };
+  tableStyle: Pick<StudioTableDesign, "columnWidths" | "borderMode" | "borderColor" | "borderWidthPt" | "defaultPaddingPt">;
+  roleStyles: {
+    header: StudioTableRoleStyle;
+    bodyOdd: StudioTableRoleStyle;
+    bodyEven: StudioTableRoleStyle;
+  };
+  updatedAt: string;
+}
+
+export interface StudioTableContinuationSegment {
+  ordinal: number;
+  bodyRowStart: number;
+  bodyRowEnd: number;
+  repeatedHeaderRows: number;
+  sourceCellIds: string[];
+}
+
+export interface StudioTableContinuationPlan {
+  id: string;
+  sourceSlideNumber: number;
+  tableNodeId: string;
+  headerRows: number;
+  maximumBodyRowsPerSlide: number;
+  policy: "repeat-header-rows";
+  status: "ready" | "blocked";
+  segments: StudioTableContinuationSegment[];
+  blockers: string[];
+  rationale: string;
+  createdAt: string;
+}
+
+export interface StudioConnectorDesign {
+  fromNodeId: string;
+  toNodeId: string;
+  fromSide: StudioConnectorSide;
+  toSide: StudioConnectorSide;
+  stroke: string;
+  widthPt: number;
+  dash: "solid" | "dash" | "dashDot";
+  beginArrow: StudioConnectorArrow;
+  endArrow: StudioConnectorArrow;
+  verificationStatus: "verified";
+}
 
 export interface StudioWebFrame {
   x: number;
@@ -593,9 +702,11 @@ export interface StudioWebNode {
       fill?: string;
       semanticColorRole?: string;
     }>;
+    design?: StudioTableDesign;
   };
+  connector?: StudioConnectorDesign;
   mediaPart?: string;
-  component?: { groupId: string; role: StudioComponentRole; ordinal?: number; frame?: StudioWebFrame };
+  component?: { groupId: string; role: StudioComponentRole; ordinal?: number; frame?: StudioWebFrame; definitionId?: string };
   opticalInsets?: StudioOpticalInsets;
   style: {
     fontFamily: "Aptos";
@@ -611,6 +722,17 @@ export interface StudioWebNode {
     paddingPt: { top: number; right: number; bottom: number; left: number };
     objectFit?: "contain" | "cover";
   };
+}
+
+export interface StudioComponentDefinition {
+  id: string;
+  name: string;
+  role: StudioComponentRole;
+  surface: StudioComponentSurface;
+  sourceNodeId: string;
+  adoptedFromSlideNumber: number;
+  style: StudioWebNode["style"];
+  updatedAt: string;
 }
 
 export interface StudioFigureTreatment {
@@ -743,6 +865,9 @@ export interface StudioWebScene {
   sourceSlideSize: { width: number; height: number };
   rhythm?: StudioDeckRhythm;
   designMemory?: StudioDesignMemoryEntry[];
+  componentLibrary?: StudioComponentDefinition[];
+  tableLibrary?: StudioTableExemplarDefinition[];
+  tableContinuationPlans?: StudioTableContinuationPlan[];
   designSystem: {
     id: "ornl-presentation-web-v1";
     standardVersion: string;

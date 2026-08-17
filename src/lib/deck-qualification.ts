@@ -2,6 +2,8 @@ import type { NativeMeasurementResult } from "./desktop";
 import type { DesignMetricsReport } from "./design-metrics";
 import type { NativeMeasurementPacket } from "./native-measurement";
 import type { PptxAudit } from "../types";
+import type { StudioCompositionOutputSlide } from "./studio-composition-export";
+import type { StudioCompositionContentValidation } from "./studio-composition-validation";
 
 export const DECK_QUALIFICATION_SCHEMA = "presentation-studio/deck-qualification" as const;
 
@@ -148,11 +150,23 @@ export interface BuildDeckQualificationReportInput {
   candidateMeasurement: NativeMeasurementResult;
   candidateMeasurementPacket?: NativeMeasurementPacket;
   candidateMetrics: DesignMetricsReport;
+  outputSlides?: StudioCompositionOutputSlide[];
+  contentValidation?: StudioCompositionContentValidation;
   protectedSlideNumbers?: number[];
   designImpactBySlide?: Record<number, string>;
   visualNeedBySlide?: Record<number, { id: string; type: string; status: string }>;
   requireMaterialDesignImpact?: boolean;
   previousReport?: DeckQualificationReport;
+}
+
+export function qualificationEvidenceSlideNumber(
+  report: DeckQualificationReport,
+  outputSlideNumber: number,
+  representation: "source" | "candidate",
+) {
+  const slide = report.slides.find((item) => item.slideNumber === outputSlideNumber);
+  if (!slide) return undefined;
+  return representation === "source" ? slide.sourceImage.number : slide.candidateImage.number;
 }
 
 function tableSignature(audit: PptxAudit) {
@@ -227,6 +241,7 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
   const sourceMeasurementReady = input.sourceMeasurement.status === "ready" && input.sourceMeasurement.authority === "powerpoint-native";
   const candidateMeasurementReady = input.candidateMeasurement.status === "ready" && input.candidateMeasurement.authority === "powerpoint-native";
   const protectedSlides = new Set(input.protectedSlideNumbers ?? []);
+  const outputSlides: StudioCompositionOutputSlide[] = input.outputSlides ?? input.sourceAudit.slides.map((slide) => ({ outputSlideNumber: slide.number, sourceSlideNumber: slide.number }));
   const sourceRasters = new Map(input.sourceRender.slides.map((slide) => [slide.number, slide]));
   const candidateRasters = new Map(input.candidateRender.slides.map((slide) => [slide.number, slide]));
   const issues: DeckQualificationIssue[] = [];
@@ -235,9 +250,15 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
     if (!issues.some((candidate) => candidate.id === id)) issues.push({ id, ...issue });
   };
 
-  const exactSlideCount = input.sourceAudit.slideCount === input.candidateAudit.slideCount;
-  const exactVisibleText = exactSlideCount && textSignature(input.sourceAudit) === textSignature(input.candidateAudit);
-  const exactTableStructure = tableSignature(input.sourceAudit) === tableSignature(input.candidateAudit);
+  const exactSlideCount = input.candidateAudit.slideCount === outputSlides.length
+    && new Set(outputSlides.map((slide) => slide.outputSlideNumber)).size === outputSlides.length
+    && input.sourceAudit.slides.every((slide) => outputSlides.some((output) => output.sourceSlideNumber === slide.number));
+  const exactVisibleText = input.contentValidation
+    ? input.contentValidation.exactSourceContent && input.contentValidation.exactCandidateContent
+    : exactSlideCount && textSignature(input.sourceAudit) === textSignature(input.candidateAudit);
+  const exactTableStructure = input.contentValidation
+    ? input.contentValidation.exactNativeTableContentAndStructure
+    : tableSignature(input.sourceAudit) === tableSignature(input.candidateAudit);
   const allSlidesRendered = sourceRenderReady && candidateRenderReady
     && input.sourceRender.slides.length === input.sourceAudit.slideCount
     && input.candidateRender.slides.length === input.candidateAudit.slideCount
@@ -246,12 +267,13 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
   const candidateUsesApprovedFonts = input.candidateAudit.textBoxes.every((box) => box.fontFamilies.every(approvedPresentationFont))
     && input.candidateAudit.tables.every((table) => table.cellFonts.every(approvedPresentationFont));
   const protectedSlidesUnchanged = [...protectedSlides].every((slideNumber) => {
-    const source = sourceRasters.get(slideNumber);
+    const mapping = outputSlides.find((slide) => slide.outputSlideNumber === slideNumber);
+    const source = mapping ? sourceRasters.get(mapping.sourceSlideNumber) : undefined;
     const candidate = candidateRasters.get(slideNumber);
     return Boolean(source && candidate && source.sha256 === candidate.sha256);
   });
 
-  if (!exactSlideCount) addIssue({ severity: "blocker", category: "content", code: "slide-count", message: "The candidate slide count changed.", evidence: `Source has ${input.sourceAudit.slideCount} slides; candidate has ${input.candidateAudit.slideCount}.`, repairRoute: "engine-code" });
+  if (!exactSlideCount) addIssue({ severity: "blocker", category: "content", code: "slide-count", message: "The candidate does not match the materialized Studio slide plan.", evidence: `Studio planned ${outputSlides.length} output slides from ${input.sourceAudit.slideCount} source slides; candidate has ${input.candidateAudit.slideCount}.`, repairRoute: "engine-code" });
   if (!exactVisibleText) addIssue({ severity: "blocker", category: "content", code: "visible-text", message: "Exact visible source content changed in the candidate.", evidence: "The ordered per-slide visible-text hashes do not match.", repairRoute: "engine-code" });
   if (!exactTableStructure) addIssue({ severity: "blocker", category: "table", code: "table-structure", message: "Native table content or merged structure changed.", evidence: "The ordered table content/structure signatures do not match the source.", repairRoute: "engine-code" });
   if (!sourceRenderReady) addIssue({ severity: "blocker", category: "render", code: "source-render", message: "The source deck did not render authoritatively in Microsoft PowerPoint.", evidence: input.sourceRender.reason ?? (input.sourceRender.warnings.join(" ") || "PowerPoint-native source evidence is unavailable."), repairRoute: "engine-code" });
@@ -270,26 +292,28 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
   }
 
   for (const slideNumber of protectedSlides) {
-    const source = sourceRasters.get(slideNumber);
+    const mapping = outputSlides.find((slide) => slide.outputSlideNumber === slideNumber);
+    const source = mapping ? sourceRasters.get(mapping.sourceSlideNumber) : undefined;
     const candidate = candidateRasters.get(slideNumber);
     if (!source || !candidate || source.sha256 !== candidate.sha256) addIssue({ slideNumber, severity: "blocker", category: "template", code: "protected-slide-drift", message: "A protected template slide changed visually.", evidence: "The source and candidate PowerPoint-native raster hashes differ.", repairRoute: "engine-code", evidenceRegion: fullSlideRegion("Protected template composition") });
   }
 
-  const slides = input.sourceAudit.slides.map((slide) => {
-    const sourceImage = sourceRasters.get(slide.number);
-    const candidateImage = candidateRasters.get(slide.number);
+  const slides = outputSlides.map((mapping) => {
+    const sourceImage = sourceRasters.get(mapping.sourceSlideNumber);
+    const candidateImage = candidateRasters.get(mapping.outputSlideNumber);
     if (!sourceImage || !candidateImage) return undefined;
-    const protectedSlide = protectedSlides.has(slide.number);
-    const designImpact = input.designImpactBySlide?.[slide.number];
-    const visualNeed = input.visualNeedBySlide?.[slide.number];
+    const slideNumber = mapping.outputSlideNumber;
+    const protectedSlide = protectedSlides.has(slideNumber);
+    const designImpact = input.designImpactBySlide?.[slideNumber];
+    const visualNeed = input.visualNeedBySlide?.[slideNumber];
     const pixelsChanged = sourceImage.sha256 !== candidateImage.sha256;
     if (input.requireMaterialDesignImpact && !protectedSlide && (!pixelsChanged || !designImpact || ["unchanged", "typography-only", "cleanup"].includes(designImpact))) {
       const repairRoute: QualificationRepairRoute = visualNeed?.status === "brief-ready" ? "image-concept" : visualNeed?.status === "held" ? "human-review" : "mcp-design";
-      addIssue({ slideNumber: slide.number, severity: "major", category: "design-impact", code: "material-design-impact", message: "This redesign does not yet show a material whole-slide composition improvement.", evidence: `PowerPoint pixels changed: ${pixelsChanged ? "yes" : "no"}; recorded impact: ${designImpact ?? "unrecorded"}${visualNeed ? `; visual need: ${visualNeed.type} (${visualNeed.status})` : ""}.`, repairRoute, evidenceRegion: fullSlideRegion("Whole-slide design impact") });
+      addIssue({ slideNumber, severity: "major", category: "design-impact", code: "material-design-impact", message: "This redesign does not yet show a material whole-slide composition improvement.", evidence: `PowerPoint pixels changed: ${pixelsChanged ? "yes" : "no"}; recorded impact: ${designImpact ?? "unrecorded"}${visualNeed ? `; visual need: ${visualNeed.type} (${visualNeed.status})` : ""}.`, repairRoute, evidenceRegion: fullSlideRegion("Whole-slide design impact") });
     }
-    const slideIssueIds = issues.filter((issue) => issue.slideNumber === slide.number || issue.slideNumber === undefined && issue.severity !== "minor").map((issue) => issue.id);
+    const slideIssueIds = issues.filter((issue) => issue.slideNumber === slideNumber || issue.slideNumber === undefined && issue.severity !== "minor").map((issue) => issue.id);
     return {
-      slideNumber: slide.number,
+      slideNumber,
       sourceImage,
       candidateImage,
       pixelsChanged,
@@ -318,7 +342,7 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
   const requiredChecksPass = Object.values(checks).every(Boolean);
   const repairRouting = (["mcp-design", "engine-code", "image-concept", "human-review"] as QualificationRepairRoute[]).map((route) => ({ route, issueIds: issues.filter((issue) => issue.repairRoute === route).map((issue) => issue.id) })).filter((route) => route.issueIds.length);
   const totals = {
-    slides: input.sourceAudit.slideCount,
+    slides: input.candidateAudit.slideCount,
     changedSlides: slides.filter((slide) => slide.pixelsChanged).length,
     protectedSlides: protectedSlides.size,
     blockerIssues: issues.filter((issue) => issue.severity === "blocker").length,

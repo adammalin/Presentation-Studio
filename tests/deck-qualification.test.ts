@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import test from "node:test";
-import { buildDeckQualificationReport, recordDeckQualificationReviews, type BuildDeckQualificationReportInput, type QualificationRenderSummary } from "../src/lib/deck-qualification";
+import { buildDeckQualificationReport, qualificationEvidenceSlideNumber, recordDeckQualificationReviews, type BuildDeckQualificationReportInput, type QualificationRenderSummary } from "../src/lib/deck-qualification";
 import type { NativeMeasurementResult } from "../src/lib/desktop";
 import type { DesignMetricsReport } from "../src/lib/design-metrics";
 import type { PptxAudit } from "../src/types";
@@ -84,6 +84,32 @@ test("deck qualification passes objective gates but keeps visual acceptance expl
   assert.equal(report.visualAcceptance.status, "pending-human-or-authorized-ai-review");
   assert.equal(report.issues.length, 0);
   assert.equal(report.slides[0].protected, true);
+});
+
+test("deck qualification accepts an explicit one-to-many continuation map and pairs each output with its source slide", () => {
+  const input = reportInput();
+  input.outputSlides = [
+    { outputSlideNumber: 1, sourceSlideNumber: 1 },
+    { outputSlideNumber: 2, sourceSlideNumber: 2, continuation: { tableNodeId: "table-2", segmentOrdinal: 1, segmentCount: 2, bodyRowStart: 2, bodyRowEnd: 5, repeatedHeaderRows: 1 } },
+    { outputSlideNumber: 3, sourceSlideNumber: 2, continuation: { tableNodeId: "table-2", segmentOrdinal: 2, segmentCount: 2, bodyRowStart: 6, bodyRowEnd: 9, repeatedHeaderRows: 1 } },
+  ];
+  input.contentValidation = { valid: true, exactSourceContent: true, exactCandidateContent: true, exactNativeTableContentAndStructure: true, errors: [] };
+  input.candidateAudit = { ...audit(), slideCount: 3, slides: [1, 2, 3].map((number) => ({ number, textHash: `candidate-${number}` })), textBoxes: [1, 2, 3].map((slideNumber) => ({ slideNumber, fontFamilies: ["Aptos"] })) } as PptxAudit;
+  input.candidateRender = render("candidate", ["same-title", "candidate-continuation-1", "candidate-continuation-2"]);
+  input.candidateRender.slideCount = 3;
+  input.candidateMeasurement = { ...measurement(), slideCount: 3 };
+  input.candidateMetrics = { ...metrics(), slides: [1, 2, 3].map((slideNumber) => ({ slideNumber, authority: "powerpoint-native", safeRegionViolationCount: 0, offSlideObjectCount: 0, offSlideObjectIds: [], textOverflowCount: 0, textOverflowObjectIds: [], tableCellClearanceViolationCount: 0, tableCellFindings: [], warnings: [] })) };
+  input.designImpactBySlide = { 1: "unchanged", 2: "layout-redesign", 3: "layout-redesign" };
+  const report = buildDeckQualificationReport(input);
+  assert.equal(report.checks.exactSlideCount, true);
+  assert.equal(report.checks.exactVisibleText, true);
+  assert.equal(report.checks.exactNativeTableContentAndStructure, true);
+  assert.equal(report.slides.length, 3);
+  assert.equal(report.slides[2].sourceImage.number, 2);
+  assert.equal(report.slides[2].candidateImage.number, 3);
+  assert.equal(qualificationEvidenceSlideNumber(report, 3, "source"), 2);
+  assert.equal(qualificationEvidenceSlideNumber(report, 3, "candidate"), 3);
+  assert.equal(report.issues.some((issue) => issue.code === "slide-count" || issue.code === "visible-text" || issue.code === "table-structure"), false);
 });
 
 test("deck qualification routes integrity defects to code and visible fit defects to MCP design", () => {

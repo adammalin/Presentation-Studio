@@ -2,12 +2,13 @@
 
 Presentation Studio is a local-first Electron application for auditing, redesigning, cleaning, reviewing, and composing editable presentations. Resources are immutable inputs; one constrained semantic HTML/CSS Studio Web Scene is the current presentation shared by the human and AI. Converted ORNL Template Pack layouts and shared recipes are design vocabulary inside that scene. The exact scene revision compiles to editable PowerPoint, and Microsoft PowerPoint-native pixels and measurements remain final appearance authority.
 
-The application never overwrites an imported deck. It embeds source bytes in a self-contained project, stages bounded changes for review, validates that visible text and slide count remain unchanged, and exports a new PowerPoint copy.
+The application never overwrites an imported deck. It embeds source bytes in a self-contained project, stages bounded changes for review, validates exact visible content against an explicit source-to-output slide map, and exports a new PowerPoint copy. Slide count may increase only through a reviewable continuation plan that preserves source order and repeats required table headers.
 
 ## Current working slice
 
 - Existing populated ORNL title slides are sacred, source-preserved brand compositions. Studio and MCP cannot recompose, restyle, move, resize, add to, remove from, or replace them; full-deck builds transplant the exact native title-slide XML together with its approved layout, master, theme, and related media. New presentations instead use an approved ORNL title layout and edit only its intended placeholders.
 - A persisted `presentation-studio/web-scene` version-5 design model that normalizes imported content onto a canonical 13.333 × 7.5-inch React/HTML/CSS canvas while retaining source-coordinate bindings and explicit editable/catalog/semantic-atom provenance; shared ORNL title/content, two-column, repeated comparison-card, objective-column, steps/evidence, challenge/evidence, process-flow, labeled-figure-grid, table, figure-grid, footer, and converted-template recipes; drag, resize, numeric geometry, bounded Aptos type controls, and a read-only source reference. Slides, comments, per-slide builds, full-deck build, and export now resolve against this one scene revision. Converted Template Pack images/vectors/fills compile with native editable text, images, vectors, and tables; exact visible-copy, source-order, table-grid, merged-cell, semantic-color, and cell-break round trips are tested.
+- First-class editable table design memory. A reviewed treatment can be published as a structure-fingerprinted exemplar and applied only to compatible tables; semantic fills, exact copy, order, and merge topology remain protected. Merge-aware continuation plans repeat identified headers, split only at safe body-row boundaries, materialize as real editable PowerPoint slides during Build all, and carry explicit source/output mapping into Slides, comments, protected-title placement, and full-deck qualification.
 - A hash-pinned, ignored private-golden harness qualifies six representative EMT communication jobs against source and prior design references without committing customer content. Its objective gate writes a fresh editable PPTX, rerenders and remeasures it through Microsoft PowerPoint, and requires exact text/table structure, Aptos, zero true overflow, zero off-slide objects, native table-cell clearance, and material design impact before full-size visual review.
 - A complete private deck-qualification runner available as **Inspect all**, `npm run qualify:deck`, and MCP `run_deck_qualification`. It reopens the immutable source and exact central candidate in Microsoft PowerPoint, writes one 2,200-pixel PNG per slide for both, records native measurements and hashes, opens on a clean candidate overview, and provides exact full-slide comparison plus optional issue crops/diagnostic overlays. MCP can inspect paged contact sheets and record raster-bound `ready`, `revise`, or `hold` reviews. A changed build creates a new attempt with objective trend; unchanged bytes are not rerun and unresolved automatic attempt three is held. Objective passes mean ready for visual review, never better by definition.
 - A governed **Concept → Editable** path: a generated or human-supplied image remains an immutable `concept-only` Resource, receives separate bounded-preview permission, and records only the composition, hierarchy, negative-space, color, figure, image-treatment, or rhythm characteristics the user/agent may follow. Generated wording, logos, data, claims, and technical details remain untrusted; Studio reconstructs the approved direction as editable objects and validates it through PowerPoint.
@@ -50,11 +51,26 @@ The application never overwrites an imported deck. It embeds source bytes in a s
 
 The bounded layout path has completed a live end-to-end qualification on a 26-slide local deck: MCP inspection and staging, in-app Current/Proposal review, exact-content export validation, and full-deck Microsoft PowerPoint JPEG comparison. Only the intended slide render changed; all 25 unaffected renders were byte-identical. This is evidence for the current object-layout workflow, not a claim that autonomous deck-wide redesign or native render QA is complete.
 
-Specification 1.0 makes PowerPoint-native rendering and measurement, the complete ORNL Template Pack compiler, the hybrid editable-scene/preservation model, deterministic geometry solvers, and the AI visual-design loop the architectural foundation. The macOS bridge now supplies native object/text/table-cell measurements, image-bearing inspection packets, high-resolution crops, paged deck contact sheets, responsive semantic layout solvers, bounded visual critique, and independently rerendered export acceptance. The version-2 synthetic native canary remains the qualification gate; its complete 14-slide Current/Proposal/Export run passed on macOS PowerPoint 16.111.2 on 2026-08-13. Windows automation, continuation-slide orchestration, cloned-master artwork qualification, persistent native-render caching, and the broader Canva-style editor remain. The OOXML renderer remains an honest diagnostic/editor fallback and is never presented as PowerPoint-render fidelity. Cleaned output remains a review copy until the actual exported artifact passes native comparison. The product and technical direction is in [PRESENTATION-STUDIO-SPEC.md](PRESENTATION-STUDIO-SPEC.md), with the implementation order in [TODO.md](TODO.md).
+Specification 1.0 makes PowerPoint-native rendering and measurement, the complete ORNL Template Pack compiler, the hybrid editable-scene/preservation model, deterministic geometry solvers, and the AI visual-design loop the architectural foundation. The macOS bridge now supplies native object/text/table-cell measurements, image-bearing inspection packets, high-resolution crops, paged deck contact sheets, responsive semantic layout solvers, bounded visual critique, and independently rerendered export acceptance. The version-2 synthetic native canary remains the qualification gate; its complete 14-slide Current/Proposal/Export run passed on macOS PowerPoint 16.111.3 on 2026-08-17. Editable table continuation is implemented; Windows native automation, general non-table continuation composition, independent Template Pack artwork/content-recipe coupling, persistent native-render caching, and the broader Canva-style editor remain. The OOXML renderer remains an honest diagnostic/editor fallback and is never presented as PowerPoint-render fidelity. Cleaned output remains a review copy until the actual exported artifact passes native comparison. The product and technical direction is in [PRESENTATION-STUDIO-SPEC.md](PRESENTATION-STUDIO-SPEC.md), with the implementation order in [TODO.md](TODO.md).
 
 ## Source setup
 
 Requirements: Node.js 22.13 or newer, npm, and macOS or Windows.
+
+Version 0.2.0 is currently delivered from the isolated `codex/web-slide-design-engine` branch. A fresh Git checkout is:
+
+```sh
+git clone --branch codex/web-slide-design-engine --single-branch https://github.com/adammalin/Presentation-Studio.git
+cd Presentation-Studio
+```
+
+To update an existing checkout without merging into `main`:
+
+```sh
+git fetch origin codex/web-slide-design-engine
+git switch codex/web-slide-design-engine
+git pull --ff-only origin codex/web-slide-design-engine
+```
 
 ### macOS
 

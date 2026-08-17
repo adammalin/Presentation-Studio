@@ -33,5 +33,5 @@ test("fresh-composition QA ignores empty decoration frames and normal glyph over
 });
 
 test("fresh-composition QA reports material PowerPoint-native text overflow", () => {
-  assert.deepEqual(nativeTextOverflows(measurement([shape("body", 40, 103)])), [{ name: "body", edges: ["right"] }]);
+  assert.deepEqual(nativeTextOverflows(measurement([shape("body", 40, 103)])), [{ slideNumber: 1, name: "body", edges: ["right"] }]);
 });

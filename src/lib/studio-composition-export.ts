@@ -2,19 +2,34 @@ import PptxGenJS from "pptxgenjs";
 import type { SlideRenderCatalog, TemplateCatalog, TemplatePreviewElement } from "./template-catalog";
 import type { StudioWebNode, StudioWebScene } from "../types";
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
-import { studioGeneratedComponents } from "./studio-web-scene";
+import { resolvedStudioTableDesign, studioConnectorAttachmentPoint, studioGeneratedComponents } from "./studio-web-scene";
+import { materializeStudioTableContinuationSlides } from "./studio-table-workflow";
 
 const EMU_PER_INCH = 914_400;
 
 export interface StudioCompositionExportResult {
   bytes: Uint8Array;
   slideCount: number;
+  outputSlides: StudioCompositionOutputSlide[];
   textNodeCount: number;
   tableCount: number;
   imageCount: number;
   ignoredSourceFurnitureCount: number;
   generatedComponentCount: number;
   warnings: string[];
+}
+
+export interface StudioCompositionOutputSlide {
+  outputSlideNumber: number;
+  sourceSlideNumber: number;
+  continuation?: {
+    tableNodeId: string;
+    segmentOrdinal: number;
+    segmentCount: number;
+    bodyRowStart: number;
+    bodyRowEnd: number;
+    repeatedHeaderRows: number;
+  };
 }
 
 export interface StudioCompositionExportOptions {
@@ -33,8 +48,13 @@ function inches(value: number): number {
 }
 
 function hex(value: string | undefined, fallback: string): string {
-  const candidate = /^#[0-9a-f]{6}$/i.test(value ?? "") ? value! : fallback;
-  return candidate.slice(1).toUpperCase();
+  const normalized = (candidate: string | undefined): string | undefined => {
+    const direct = /^#([0-9a-f]{6})$/i.exec(candidate ?? "")?.[1];
+    if (direct) return direct.toUpperCase();
+    const tagged = /^RGB:([0-9a-f]{6})$/i.exec(candidate ?? "")?.[1];
+    return tagged?.toUpperCase();
+  };
+  return normalized(value) ?? normalized(fallback) ?? "000000";
 }
 
 function margins(node: StudioWebNode): [number, number, number, number] {
@@ -93,11 +113,22 @@ function editableTableText(cell: NonNullable<StudioWebNode["table"]>["cells"][nu
 
 function tableRows(node: StudioWebNode): PptxGenJS.TableRow[] {
   if (!node.table) return [];
+  const design = resolvedStudioTableDesign(node);
   const rows: PptxGenJS.TableRow[] = Array.from({ length: node.table.rows }, () => []);
   for (const cell of [...node.table.cells].sort((a, b) => a.row - b.row || a.column - b.column)) {
     const row = Math.max(0, cell.row - 1);
     if (!rows[row]) continue;
-    const header = cell.row === 1;
+    const header = cell.row <= design.headerRows;
+    const cellDesign = design.cellStyles.find((item) => item.cellId === cell.id);
+    const padding = cellDesign?.paddingPt ?? design.defaultPaddingPt;
+    const border = design.borderMode === "none"
+      ? { type: "none" as const, color: hex(design.borderColor, "DBDCDB"), pt: 0 }
+      : { type: "solid" as const, color: hex(design.borderColor, "DBDCDB"), pt: design.borderMode === "subtle" ? Math.min(.75, design.borderWidthPt) : design.borderWidthPt };
+    const cellBorder = (edge: "top" | "right" | "bottom" | "left"): PptxGenJS.BorderProps => {
+      const override = cellDesign?.borders?.[edge];
+      if (!override) return border;
+      return { type: override.type, color: hex(override.color, design.borderColor), pt: override.type === "none" ? 0 : override.widthPt };
+    };
     // PptxGenJS synthesizes hMerge/vMerge continuation cells for colspan/rowspan.
     // Supplying placeholder cells for those occupied grid positions creates an
     // extra physical column and silently shifts later content to the right.
@@ -106,15 +137,27 @@ function tableRows(node: StudioWebNode): PptxGenJS.TableRow[] {
       options: {
         rowspan: Math.max(1, cell.rowSpan),
         colspan: Math.max(1, cell.columnSpan),
-        bold: header,
-        color: header && !cell.semanticColorRole ? "FFFFFF" : hex(node.style.color, PRESENTATION_DESIGN_STANDARD.defaults.palette.darkMatter),
-        fill: { color: cell.semanticColorRole ? hex(cell.fill, "#FFFFFF") : header ? "00454D" : hex(cell.fill, cell.row % 2 === 0 ? "#F0F2F1" : "#FFFFFF") },
-        valign: "middle",
-        margin: [4, 7, 4, 7],
+        bold: (cellDesign?.fontWeight ?? (header ? 700 : 400)) >= 600,
+        fontSize: cellDesign?.fontSizePt ?? node.style.fontSizePt,
+        color: hex(cellDesign?.color, header && !cell.semanticColorRole ? "#FFFFFF" : node.style.color),
+        fill: { color: hex(cellDesign?.fill, cell.semanticColorRole ? cell.fill ?? "#FFFFFF" : header ? "#00454D" : cell.fill ?? (cell.row % 2 === 0 ? "#F0F2F1" : "#FFFFFF")) },
+        align: cellDesign?.textAlign ?? node.style.textAlign,
+        valign: cellDesign?.verticalAlign ?? node.style.verticalAlign,
+        margin: [padding.top, padding.right, padding.bottom, padding.left],
+        border: cellDesign?.borders ? [cellBorder("top"), cellBorder("right"), cellBorder("bottom"), cellBorder("left")] : border,
       },
     });
   }
   return rows;
+}
+
+function tableDimensions(node: StudioWebNode): Pick<PptxGenJS.TableProps, "colW" | "rowH"> {
+  if (!node.table) return {};
+  const design = resolvedStudioTableDesign(node);
+  return {
+    colW: design.columnWidths.map((weight) => inches(node.frame.width) * weight),
+    rowH: design.rowHeights.map((weight) => inches(node.frame.height) * weight),
+  };
 }
 
 function unsupportedContentNode(node: StudioWebNode): boolean {
@@ -331,8 +374,17 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
   let imageCount = 0;
   let ignoredSourceFurnitureCount = 0;
   let generatedComponentCount = 0;
+  const outputSlides: StudioCompositionOutputSlide[] = [];
 
-  for (const sourceSlide of [...scene.slides].sort((left, right) => left.slideNumber - right.slideNumber)) {
+  for (const sourceSceneSlide of [...scene.slides].sort((left, right) => left.slideNumber - right.slideNumber)) {
+    const materializedSlides = materializeStudioTableContinuationSlides(scene, sourceSceneSlide);
+    for (const materialized of materializedSlides) {
+      const sourceSlide = materialized.slide;
+      outputSlides.push({
+        outputSlideNumber: outputSlides.length + 1,
+        sourceSlideNumber: sourceSceneSlide.slideNumber,
+        continuation: materialized.continuation,
+      });
     if (!sourceSlide.contentCoverage.exactTextMapped) {
       const message = `Slide ${sourceSlide.slideNumber} maps ${sourceSlide.contentCoverage.mappedCharacterCount} of ${sourceSlide.contentCoverage.sourceCharacterCount} normalized source characters into editable Studio nodes. Grouped, inherited, or unsupported text must be atomized before fresh composition.`;
       if (strict) throw new Error(message);
@@ -367,7 +419,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
           slide.addText(editableText(node), { x, y, w, h, objectName: `Source inventory · ${node.name}`, fontFace: "Aptos", fontSize: 1, color: "FFFFFF", margin: 0, breakLine: false });
           textNodeCount += 1;
         } else if (node.kind === "table" && node.table) {
-          slide.addTable(tableRows(node), { x, y, w, h, objectName: `Source inventory · ${node.name}`, fontFace: "Aptos", fontSize: 1, color: "FFFFFF", border: { type: "solid", color: "FFFFFF", pt: .1 }, margin: 0, autoPage: false });
+          slide.addTable(tableRows(node), { x, y, w, h, ...tableDimensions(node), objectName: `Source inventory · ${node.name}`, fontFace: "Aptos", fontSize: 1, color: "FFFFFF", border: { type: "solid", color: "FFFFFF", pt: .1 }, margin: 0, autoPage: false });
           tableCount += 1;
         }
       }
@@ -416,9 +468,30 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
       const w = inches(node.frame.width);
       const h = inches(node.frame.height);
       if (node.kind === "connector") {
+        if (!node.connector) {
+          const message = `Slide ${sourceSlide.slideNumber}: ${node.name} is a relationship-bearing connector without verified Studio endpoint bindings. Preserve its complete figure as one source-locked unit or author it inside a verified editable-diagram treatment.`;
+          if (strict) throw new Error(message);
+          warnings.push(message);
+          continue;
+        }
+        const from = sourceSlide.nodes.find((candidate) => candidate.id === node.connector?.fromNodeId);
+        const to = sourceSlide.nodes.find((candidate) => candidate.id === node.connector?.toNodeId);
+        if (!from || !to) {
+          const message = `Slide ${sourceSlide.slideNumber}: verified connector ${node.id} has a stale endpoint binding.`;
+          if (strict) throw new Error(message);
+          warnings.push(message);
+          continue;
+        }
+        const start = studioConnectorAttachmentPoint(from, node.connector.fromSide);
+        const end = studioConnectorAttachmentPoint(to, node.connector.toSide);
         slide.addShape(pptx.ShapeType.line, {
-          x, y, w, h,
-          line: { color: hex(node.style.color === "#373A36" ? PRESENTATION_DESIGN_STANDARD.defaults.palette.ornlGreen : node.style.color, "007833"), width: 1.25, endArrowType: "triangle" },
+          x: inches(Math.min(start.x, end.x)),
+          y: inches(Math.min(start.y, end.y)),
+          w: Math.max(.001, inches(Math.abs(end.x - start.x))),
+          h: Math.max(.001, inches(Math.abs(end.y - start.y))),
+          flipH: end.x < start.x,
+          flipV: end.y < start.y,
+          line: { color: hex(node.connector.stroke, "007833"), width: node.connector.widthPt, dashType: node.connector.dash, beginArrowType: node.connector.beginArrow, endArrowType: node.connector.endArrow },
           objectName: `${node.name} · ${node.id}`.slice(0, 240),
         });
         generatedComponentCount += 1;
@@ -463,14 +536,12 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
         const sourceLockedInventory = sourceLockedNodeIds.has(node.id);
         slide.addTable(tableRows(node), {
           x, y, w, h,
+          ...tableDimensions(node),
           objectName: `${node.name} · ${node.id}`.slice(0, 240),
           fontFace: "Aptos",
           fontSize: sourceLockedInventory ? 1 : node.style.fontSizePt,
           color: hex(node.style.color, PRESENTATION_DESIGN_STANDARD.defaults.palette.darkMatter),
-          border: { type: "solid", color: "DBDCDB", pt: .75 },
-          margin: [4, 7, 4, 7],
           autoPage: false,
-          valign: "middle",
         });
         tableCount += 1;
         continue;
@@ -527,8 +598,9 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
       imageCount += 1;
       warnings.push(`Slide ${sourceSlide.slideNumber}: ${treatment.intentSummary} is preserved as one source-locked PowerPoint-rendered evidence unit${isolatedRaster ? " from an object-isolated native render" : ""}.`);
     }
+    }
   }
   const output = await pptx.write({ outputType: "uint8array", compression: true });
   const bytes = output instanceof Uint8Array ? output : new Uint8Array(output as ArrayBuffer);
-  return { bytes, slideCount: scene.slides.length, textNodeCount, tableCount, imageCount, ignoredSourceFurnitureCount, generatedComponentCount, warnings };
+  return { bytes, slideCount: outputSlides.length, outputSlides, textNodeCount, tableCount, imageCount, ignoredSourceFurnitureCount, generatedComponentCount, warnings };
 }
