@@ -5,7 +5,7 @@ import { PresentationAppClient, PresentationAppUnavailableError } from "./presen
 import { DESIGN_CONTRACT, designContractMessage } from "./design-contract.mjs";
 import { stripImagePayloads } from "./image-payload.mjs";
 
-const server = new McpServer({ name: "presentation-studio-local", version: "0.2.0" });
+const server = new McpServer({ name: "presentation-studio-local", version: "0.2.1" });
 const client = new PresentationAppClient();
 
 function success(result, message) {

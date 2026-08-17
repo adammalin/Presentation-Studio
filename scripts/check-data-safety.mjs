@@ -4,8 +4,34 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const candidates = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
-const history = execFileSync("git", ["rev-list", "--objects", "--all"], { cwd: root, encoding: "utf8" }).split(/\r?\n/).map((line) => line.slice(line.indexOf(" ") + 1)).filter(Boolean);
+const archiveIgnoredDirectories = new Set([".git", ".presentation-studio", "coverage", "dist", "node_modules", "tmp"]);
+const archiveIgnoredPaths = new Set(["fixtures/generated"]);
+
+function listArchiveFiles(directory, prefix = "") {
+  const files = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory() && archiveIgnoredDirectories.has(entry.name)) continue;
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory() && archiveIgnoredPaths.has(relative)) continue;
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...listArchiveFiles(absolute, relative));
+    else if (entry.isFile()) files.push(relative);
+  }
+  return files;
+}
+
+let candidates;
+let history;
+let scanMode;
+try {
+  candidates = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean);
+  history = execFileSync("git", ["rev-list", "--objects", "--all"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).map((line) => line.slice(line.indexOf(" ") + 1)).filter(Boolean);
+  scanMode = "Git checkout";
+} catch {
+  candidates = listArchiveFiles(root);
+  history = [];
+  scanMode = "source archive";
+}
 const forbiddenExtensions = /\.(?:pstudio|pstudio-secure|pptx|pptm|potx)$/i;
 const forbiddenNames = /(?:mcp-runtime|autosave|recovery|client[-_ ]deck|manuscript)/i;
 const exceptions = new Set([]);
@@ -28,4 +54,4 @@ if (violations.length) {
   for (const violation of [...new Set(violations)]) console.error(`- ${violation}`);
   process.exit(1);
 }
-console.log(`Repository data-safety scan passed for ${candidates.length} tracked or candidate files and ${history.length} historical paths.`);
+console.log(`Repository data-safety scan passed in ${scanMode} mode for ${candidates.length} tracked or candidate files and ${history.length} historical paths.`);

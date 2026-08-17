@@ -47,7 +47,7 @@ The application never overwrites an imported deck. It embeds source bytes in a s
 - One versioned machine-readable Presentation Design Standard shared by project defaults, the Rules UI, tests, and MCP: 16:9, Aptos, current authorized ORNL Template Pack, exact-content preservation, editable output, autonomous routine design choices, and deterministic native-table fallback tokens.
 - A model-independent MCP Designer Contract that requires deck-wide visual improvement, exact approved-content preservation, per-text-box fit/alignment review, compatible template-layout selection, restrained semantic visuals, and independent export-render QA; authorized clients can read exact design context, the resolved cleanup profile, Current or Proposal JPEG renders, submitted location-bound design threads, and can stage the full deck-wide designer proposal.
 - Visible local MCP progress that moves through **Found issues**, **Fixing**, and **Rechecking original intent**, then reports ready/attention without exposing raw prompts or presentation content. A claimed visual improvement is withheld when exact text, source visual identity, or meaning-bearing relationships remain unverified.
-- Source-based macOS and Windows setup/start scripts; no app installer.
+- One-line macOS and Windows source installers that download the release without Git, prepare a SHA-256-verified portable Node.js runtime when needed, verify the staged app, and create a reusable launcher; no unsigned packaged app installer.
 
 The bounded layout path has completed a live end-to-end qualification on a 26-slide local deck: MCP inspection and staging, in-app Current/Proposal review, exact-content export validation, and full-deck Microsoft PowerPoint JPEG comparison. Only the intended slide render changed; all 25 unaffected renders were byte-identical. This is evidence for the current object-layout workflow, not a claim that autonomous deck-wide redesign or native render QA is complete.
 
@@ -55,16 +55,39 @@ Specification 1.0 makes PowerPoint-native rendering and measurement, the complet
 
 ## Source setup
 
-Requirements: Node.js 22.13 or newer, npm, and macOS or Windows.
+Requirements: macOS or Windows, an internet connection during installation, and enough local disk space. The one-line installer checks Node.js and npm and installs a verified user-local runtime when either is missing or too old. It does not require Git or administrator access under normal user permissions.
 
-Version 0.2.0 is currently delivered from the isolated `codex/web-slide-design-engine` branch. A fresh Git checkout is:
+Version 0.2.1 is currently delivered from the isolated `codex/web-slide-design-engine` branch.
+
+### macOS - one line
 
 ```sh
-git clone --branch codex/web-slide-design-engine --single-branch https://github.com/adammalin/Presentation-Studio.git
-cd Presentation-Studio
+curl -fsSL https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-macos.sh | /bin/zsh
 ```
 
-To update an existing checkout without merging into `main`:
+This installs to `~/Applications/Presentation Studio`, verifies the staged application, creates `Launch Presentation Studio.command`, and starts the app. Run the same command again to update the managed installation.
+
+### Windows - one line
+
+Run in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-windows.ps1 | iex
+```
+
+This installs to `%LOCALAPPDATA%\Presentation Studio`, verifies the staged application, creates `Launch Presentation Studio.cmd`, and starts the app. Run the same command again to update the managed installation.
+
+The installers do not change Gatekeeper, PowerShell execution policy, SmartScreen, or other operating-system protections. Microsoft PowerPoint is optional for launching the app but is required for PowerPoint-native rendering and final native validation; licensed Microsoft software is not installed automatically.
+
+### Manual Git setup
+
+Developers who want a Git checkout can instead run this as one complete shell line:
+
+```sh
+git clone --branch codex/web-slide-design-engine --single-branch https://github.com/adammalin/Presentation-Studio.git && cd Presentation-Studio && ./scripts/setup-macos.command
+```
+
+To update an existing developer checkout without merging into `main`:
 
 ```sh
 git fetch origin codex/web-slide-design-engine
@@ -72,7 +95,7 @@ git switch codex/web-slide-design-engine
 git pull --ff-only origin codex/web-slide-design-engine
 ```
 
-### macOS
+#### macOS checkout
 
 Double-click `scripts/setup-macos.command`, or run:
 
@@ -82,7 +105,7 @@ Double-click `scripts/setup-macos.command`, or run:
 
 Then start with `scripts/start-macos.command`.
 
-### Windows
+#### Windows checkout
 
 In PowerShell from the repository:
 
@@ -91,7 +114,7 @@ In PowerShell from the repository:
 & .\scripts\start-windows.ps1
 ```
 
-The setup scripts install locked npm dependencies, run tests, build the renderer, run the repository data-safety scan, and print the MCP configuration snippet. They do not disable operating-system protections and do not create an installer.
+The checkout setup scripts install locked npm dependencies, run tests, build the renderer, run the repository data-safety scan, and print the MCP configuration snippet. They do not install Node.js; the one-line installers above provide that bootstrap layer.
 
 ## Development
 
