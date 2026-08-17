@@ -13,6 +13,8 @@ Run `npm run quality` locally. GitHub Actions runs the same checks with `npm run
 
 The lane works without Microsoft PowerPoint. Its report is written to ignored local storage at `tmp/quality-pipeline/latest.json` and explicitly records that no client content is included. It does not prove Office rendering, font metrics, editable-output geometry, visual hierarchy, template fidelity, or aesthetic improvement.
 
+The same hosted workflow also runs the published one-line Windows source installer on `windows-latest` with the runner's Node.js paths removed. That smoke test must download and checksum-verify the portable Node.js prerequisite, install the release archive without Git, pass the staged application checks, and create the managed-install marker and Windows launcher. It uses no presentation or client data.
+
 ## PowerPoint-native lane
 
 Run `npm run quality:native` only on an approved workstation with the required local Microsoft PowerPoint integration. It adds the Electron smoke test and the generated synthetic precision-layout canary. The canary covers native rendering and measurement, exact content/table preservation, optical geometry, clipping, safe regions, table clearances, proposal/export raster equivalence, and bounded repair behavior.

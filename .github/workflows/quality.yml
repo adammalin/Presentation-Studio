@@ -22,3 +22,25 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run quality -- --ci
+
+  windows-source-installer:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install from the published one-line bootstrap with portable Node.js
+        shell: powershell
+        env:
+          PRESENTATION_STUDIO_INSTALL_DIR: ${{ runner.temp }}\Presentation Studio
+          PRESENTATION_STUDIO_NO_LAUNCH: "1"
+        run: |
+          $env:PATH = (($env:PATH -split ";") | Where-Object { $_ -notmatch "node" }) -join ";"
+          irm https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-windows.ps1 | iex
+          $AppDir = Join-Path $env:PRESENTATION_STUDIO_INSTALL_DIR "app"
+          $RuntimeNode = Join-Path $env:PRESENTATION_STUDIO_INSTALL_DIR "runtime\node\node.exe"
+          $Launcher = Join-Path $env:PRESENTATION_STUDIO_INSTALL_DIR "Launch Presentation Studio.cmd"
+          if (-not (Test-Path (Join-Path $AppDir ".presentation-studio-managed-install"))) { throw "Managed-install marker is missing." }
+          if (-not (Test-Path $RuntimeNode)) { throw "Portable Node.js runtime was not installed." }
+          if (-not (Test-Path $Launcher)) { throw "Windows launcher was not created." }
+          $Package = Get-Content (Join-Path $AppDir "package.json") -Raw | ConvertFrom-Json
+          if ($Package.version -ne "0.2.1") { throw "Expected Presentation Studio 0.2.1 but installed $($Package.version)." }
+          if ((& $RuntimeNode --version) -ne "v22.13.0") { throw "Unexpected portable Node.js version." }
