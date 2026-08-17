@@ -15,7 +15,7 @@ import { rankLayoutCompatibility } from "../src/lib/layout-semantics";
 import { bindNativeMeasurement } from "../src/lib/native-measurement";
 import { calculateDesignMetrics } from "../src/lib/design-metrics";
 import { sha256 } from "../src/lib/hash";
-import { isolateNativePowerPointObjects } from "../src/lib/native-object-isolation";
+import { isolateNativePowerPointObjects, nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
 import type { NativeMeasurementResult, NativeRenderResult } from "../src/lib/desktop";
 import type { DeckJob, StudioWebScene } from "../src/types";
 
@@ -169,7 +169,7 @@ export async function qualifyStudioWebBenchmark(
   const sourceFigureRasters: Record<string, { data: string; width: number; height: number }> = {};
   for (const slide of scene.slides) {
     for (const treatment of slide.figureTreatments.filter((item) => ["source-locked", "verified"].includes(item.verificationStatus))) {
-      const shapeIds = treatment.nodeIds.map((id) => slide.nodes.find((node) => node.id === id)).filter((node) => node?.sourceBinding === "editable-object").map((node) => node!.sourceShapeId);
+      const shapeIds = nativeIsolationShapeIds(slide, treatment);
       if (!shapeIds.length) continue;
       const isolated = await isolateNativePowerPointObjects({ sourceBytes, slideNumber: slide.slideNumber, shapeIds });
       const rendered = await renderNative({ bytes: isolated.bytes, name: `source-slide-${slide.slideNumber}-${treatment.id}.pptx`, width: 2200, format: "png" });

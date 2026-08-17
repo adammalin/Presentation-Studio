@@ -1,7 +1,35 @@
 import JSZip from "jszip";
+import type { StudioFigureTreatment, StudioWebFrame, StudioWebSlide } from "../types";
 
 const SLIDE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
 const SHAPE_TAGS = new Set(["p:sp", "p:pic", "p:graphicFrame", "p:cxnSp", "p:grpSp"]);
+const EMU_PER_INCH = 914_400;
+
+function frameContains(container: StudioWebFrame, candidate: StudioWebFrame, padding = .12 * EMU_PER_INCH): boolean {
+  const centerX = candidate.x + candidate.width / 2;
+  const centerY = candidate.y + candidate.height / 2;
+  return centerX >= container.x - padding
+    && centerX <= container.x + container.width + padding
+    && centerY >= container.y - padding
+    && centerY <= container.y + container.height + padding;
+}
+
+/**
+ * Returns top-level source shape IDs only when every catalog-derived member of
+ * the requested evidence unit is contained by a selected native PowerPoint
+ * group. Otherwise the caller must crop the authoritative full-slide render;
+ * isolating only the known top-level shapes would silently drop part of a
+ * composite technical figure.
+ */
+export function nativeIsolationShapeIds(slide: StudioWebSlide, treatment: StudioFigureTreatment): string[] {
+  const nodes = treatment.nodeIds.map((id) => slide.nodes.find((node) => node.id === id)).filter((node): node is StudioWebSlide["nodes"][number] => Boolean(node?.visible));
+  const editableNodes = nodes.filter((node) => node.sourceBinding === "editable-object" && Boolean(node.sourceShapeId));
+  if (!editableNodes.length) return [];
+  const nativeContainers = editableNodes.filter((node) => node.kind === "native-object");
+  const unresolved = nodes.filter((node) => node.sourceBinding !== "editable-object");
+  if (unresolved.some((node) => !nativeContainers.some((container) => frameContains(container.sourceFrame, node.sourceFrame)))) return [];
+  return [...new Set(editableNodes.map((node) => node.sourceShapeId))];
+}
 
 function decodeXml(value: string): string {
   return value.replace(/&(amp|lt|gt|quot|apos);/g, (_entity, name: string) => name === "amp" ? "&" : name === "lt" ? "<" : name === "gt" ? ">" : name === "quot" ? '"' : "'");

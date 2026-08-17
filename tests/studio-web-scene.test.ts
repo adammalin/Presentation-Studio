@@ -13,6 +13,7 @@ import { atomizeStudioWebSlide, compileStudioWebScene, planStudioExportBuild, re
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
+import { nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
 import { sha256, sha256Text } from "../src/lib/hash";
 import type { DeckJob, StudioWebNode, StudioWebScene } from "../src/types";
 
@@ -115,7 +116,7 @@ test("two labeled figures reserve a real narrative region instead of squeezing e
   });
   const longNarrative = "Step 1: Use the first exact source view. Step 2: Compare the second exact source view. Once the project is loaded, retain every approved instruction and technical qualifier without rewriting or hiding it in a footer-sized frame.";
   const nodes = [
-    node("title-1", "text", "title", .34, .4, 12.57, .48, "Setup"),
+    node("title-1", "text", "title", .34, .4, 12.57, .48, "Inverter Basics Demo: PSCAD Model Inverter Control Implementation"),
     node("body-2", "text", "body", .34, 1.9, 12.57, 4.4, longNarrative),
     node("caption-3", "text", "caption", 2.2, 2.2, 2, .3, "First source view"),
     node("caption-4", "text", "caption", 8.4, 2.2, 2, .3, "Second source view"),
@@ -137,6 +138,18 @@ test("two labeled figures reserve a real narrative region instead of squeezing e
   assert.ok(Math.abs(images[0].frame.width / images[0].frame.height - images[0].sourceFrame.width / images[0].sourceFrame.height) < .001);
   assert.ok(Math.abs(images[1].frame.width / images[1].frame.height - images[1].sourceFrame.width / images[1].sourceFrame.height) < .001);
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.endsWith("-visual-field")).length, 2);
+  const designedTitle = slide.nodes.find((candidate) => candidate.id === "title-1")!;
+  const titleRule = studioGeneratedComponents(slide).find((component) => component.id.includes("title-rule"))!;
+  assert.ok(designedTitle.frame.height >= emu(1.13));
+  assert.ok(titleRule.frame.y >= designedTitle.frame.y + designedTitle.frame.height);
+  assert.ok(titleRule.frame.y + titleRule.frame.height <= Math.min(...images.map((image) => image.component!.frame!.y)));
+
+  const plain = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: nodes.filter((candidate) => candidate.role !== "caption") }] }, sourceSlide.slideNumber, "ornl-title-figure-grid").slides[0];
+  const plainBody = plain.nodes.find((candidate) => candidate.id === "body-2")!;
+  const plainImages = plain.nodes.filter((candidate) => candidate.kind === "image");
+  assert.ok(plainBody.frame.height >= emu(1.09));
+  assert.ok(plainImages.every((image) => image.frame.y + image.frame.height <= plainBody.frame.y));
+  assert.ok(plainBody.frame.y + plainBody.frame.height <= emu(6.65));
 });
 
 test("cross-image callouts remain one source-locked evidence field instead of becoming detached cards", async () => {
@@ -183,6 +196,31 @@ test("a grouped native diagram is automatically preserved while surrounding narr
   assert.ok(treatment?.nodeIds.includes(embedded.id));
   assert.ok(slide.nodes.find((candidate) => candidate.id === narrative.id)!.frame.height >= emu(.8));
   assert.ok(!treatment?.nodeIds.includes(narrative.id));
+});
+
+test("a mixed legacy control overview stays one complete source-locked region when object isolation would omit catalog members", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const title: StudioWebNode = { ...seed, id: "overview-title", sourceObjectId: "overview-title", sourceShapeId: "1", sourceBinding: "editable-object", name: "Overview title", kind: "text", role: "title", text: "Complete control overview", sourceFrame: { x: emu(.4), y: emu(.3), width: emu(12.5), height: emu(.7), rotation: 0 }, frame: { x: emu(.4), y: emu(.3), width: emu(12.5), height: emu(.7), rotation: 0 }, visible: true, locked: false };
+  const native: StudioWebNode = { ...seed, id: "overview-native", sourceObjectId: "overview-native", sourceShapeId: "9", sourceBinding: "editable-object", name: "Legacy controller group", kind: "native-object", role: "group", text: undefined, textHash: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(.5), y: emu(1.3), width: emu(5.7), height: emu(1.5), rotation: 0 }, frame: { x: emu(.5), y: emu(1.3), width: emu(5.7), height: emu(1.5), rotation: 0 }, visible: true, locked: false };
+  const image = (id: string, shapeId: string, x: number, y: number, width: number, height: number, binding: StudioWebNode["sourceBinding"] = "editable-object"): StudioWebNode => ({ ...seed, id, sourceObjectId: id, sourceShapeId: shapeId, sourceBinding: binding, name: id, kind: "image", role: "image", text: undefined, textHash: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, frame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, visible: true, locked: false });
+  const leftPanel = image("overview-left", "10", .5, 3.1, 5.8, 2.7);
+  const rightPanel = image("overview-right", "13", 6.5, 2.2, 6.2, 4.5);
+  const catalogPanel = image("overview-catalog-panel", "31", 2.6, 5.1, 1.2, .7, "catalog-derived");
+  const source = { ...scene, slides: [{ ...sourceSlide, nodes: [title, native, leftPanel, rightPanel, catalogPanel] }] };
+  assert.equal(recommendedStudioRecipe(source.slides[0]), "ornl-title-two-column");
+  const designed = recomposeStudioWebSlide(source, sourceSlide.slideNumber);
+  const slide = designed.slides[0];
+  const treatment = slide.figureTreatments.find((candidate) => candidate.id.startsWith("studio-auto-technical-overview"));
+  assert.ok(treatment);
+  assert.deepEqual(new Set(treatment.nodeIds), new Set([native.id, leftPanel.id, rightPanel.id, catalogPanel.id]));
+  assert.equal(treatment.mode, "preserve-as-unit");
+  assert.equal(treatment.verificationStatus, "source-locked");
+  assert.deepEqual(nativeIsolationShapeIds(slide, treatment), []);
+  assert.equal(studioGeneratedComponents(slide).some((component) => component.id.includes("technical-overview") && component.lineWidthPt > 0), false);
 });
 
 test("question-and-diagram recipe atomizes exact questions and preserves the complete native evidence unit", async () => {

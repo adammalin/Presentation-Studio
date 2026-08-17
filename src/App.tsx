@@ -81,7 +81,7 @@ import { buildSlideRenderCatalog, buildTemplateCatalog, type SlideRenderCatalog,
 import { rankLayoutCompatibility } from "./lib/layout-semantics";
 import { buildTemplatePreviewDeck } from "./lib/template-preview-deck";
 import { templateLayoutPartSha256 } from "./lib/native-layout-remap";
-import { isolateNativePowerPointObjects } from "./lib/native-object-isolation";
+import { isolateNativePowerPointObjects, nativeIsolationShapeIds } from "./lib/native-object-isolation";
 import { bindNativeMeasurement, compareNativeMeasurementPackets, type NativeMeasurementPacket } from "./lib/native-measurement";
 import { calculateDesignMetrics, metricsImproved } from "./lib/design-metrics";
 import { buildInspectionPacket, type InspectionCropRegion } from "./lib/inspection-packet";
@@ -3686,7 +3686,7 @@ export default function App() {
     for (const slide of studioScene.slides) {
       if (slideNumbers && !slideNumbers.has(slide.slideNumber)) continue;
       for (const treatment of slide.figureTreatments.filter((item) => ["preserve-as-unit", "preserve-and-frame"].includes(item.mode) && ["source-locked", "verified"].includes(item.verificationStatus))) {
-        const shapeIds = [...new Set(treatment.nodeIds.map((id) => slide.nodes.find((node) => node.id === id)).filter((node) => node?.sourceBinding === "editable-object").map((node) => node!.sourceShapeId))];
+        const shapeIds = nativeIsolationShapeIds(slide, treatment);
         if (!shapeIds.length) continue;
         const cacheKey = `${deck.sourceSha256}:${slide.slideNumber}:${[...shapeIds].sort().join(",")}`;
         let raster = sourceFigureRastersRef.current.get(cacheKey);

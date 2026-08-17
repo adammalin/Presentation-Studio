@@ -659,8 +659,9 @@ export interface StudioGeneratedComponent {
 export function studioGeneratedComponents(slide: StudioWebSlide): StudioGeneratedComponent[] {
   const palette = PRESENTATION_DESIGN_STANDARD.defaults.palette;
   const hasEyebrow = slide.nodes.some((node) => node.component?.role === "eyebrow");
-  const longTitle = (slide.nodes.find((node) => node.visible && node.role === "title")?.text?.length ?? 0) > 68;
-  const components: StudioGeneratedComponent[] = slide.recipe === "source" || slide.recipe === "template-layout" ? [] : [{ id: `studio-title-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, hasEyebrow ? 1.25 : longTitle ? 1.30 : 1.12, hasEyebrow ? .62 : .96, .035), fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }];
+  const title = slide.nodes.find((node) => node.visible && node.role === "title");
+  const titleBottom = title ? emuInches(title.frame.y + title.frame.height) : hasEyebrow ? 1.25 : 1.12;
+  const components: StudioGeneratedComponent[] = slide.recipe === "source" || slide.recipe === "template-layout" ? [] : [{ id: `studio-title-rule-${slide.slideNumber}`, kind: "rect", frame: frame(.47, titleBottom + .03, hasEyebrow ? .62 : .96, .035), fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true }];
   for (const treatment of (slide.figureTreatments ?? []).filter((item) => item.mode === "preserve-and-frame")) {
     const nodes = treatment.nodeIds.map((id) => slide.nodes.find((node) => node.id === id)).filter((node): node is StudioWebNode => Boolean(node?.visible));
     if (!nodes.length) continue;
@@ -783,7 +784,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   const placements = new Map<string, StudioWebFrame>();
   const components = new Map<string, StudioWebNode["component"]>();
   const generatedFigureTreatments: StudioFigureTreatment[] = [];
-  const titleFrame = frame(.47, eyebrow ? .58 : .26, 12.39, eyebrow ? .68 : (title?.text?.length ?? 0) > 68 ? 1.04 : .95);
+  const titleFrame = frame(.47, eyebrow ? .58 : .26, 12.39, eyebrow ? .68 : (title?.text?.length ?? 0) > 54 ? 1.14 : .95);
   const contentTop = emuInches(titleFrame.y + titleFrame.height) + .12;
   const contentBottom = 6.64;
   const contentHeight = Math.max(1, contentBottom - contentTop);
@@ -894,14 +895,34 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     if (leftovers.length) for (const [id, value] of stack(leftovers, frame(.58, 6.18, 3.18, .40), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-two-column") {
     const nativeObject = slide.nodes.find((node) => node.visible && node.kind === "native-object" && !footerNode(node));
-    const visual = content.find((node) => meaningfulImage(node) || node.kind === "table") ?? nativeObject;
+    const technicalVisuals = slide.nodes.filter((node) => node.visible && !footerNode(node) && (node.kind === "native-object" || meaningfulImage(node)));
+    const editableNarrative = [...content, ...captions].filter((node) => node.kind === "text" && node.role !== "title" && node.sourceBinding === "editable-object");
+    const compositeTechnicalOverview = Boolean(nativeObject && technicalVisuals.length >= 2 && editableNarrative.length === 0);
+    const visual = nativeObject ?? content.find((node) => meaningfulImage(node) || node.kind === "table");
     const connectors = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "connector" && !footerNode(node));
     const figureAnnotations = captions.filter(shortFigureAnnotation);
     const embeddedNativeText = nativeObject
       ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && node.kind === "text" && sourceFrameContains(nativeObject.sourceFrame, node.sourceFrame))
       : [];
     const relationshipBearingFigure = visual && (visual.kind === "native-object" || (visual.kind === "image" && connectors.length >= 1 && figureAnnotations.length >= 2));
-    if (visual && relationshipBearingFigure) {
+    if (compositeTechnicalOverview) {
+      const groupNodes = slide.nodes.filter((node) => node.visible && node.role !== "title" && !footerNode(node));
+      const target = frame(.47, contentTop + .06, 12.39, contentHeight - .12);
+      for (const [id, value] of scaleSourceGroup(groupNodes, target)) placements.set(id, value);
+      generatedFigureTreatments.push({
+        id: `studio-auto-technical-overview-${slideNumber}`,
+        nodeIds: groupNodes.map((node) => node.id),
+        mode: "preserve-as-unit",
+        verificationStatus: "source-locked",
+        intentSummary: "Preserve the complete multi-part native PowerPoint control overview as one relationship-bearing technical evidence field.",
+        informationInventory: ["Every source panel, embedded image, group, label, connector, value, color field, and spatial relationship"],
+        invariants: ["Do not separate source panels or alter labels, colors, topology, values, arrows, or technical relationships."],
+        rationale: "The slide is one dense technical system assembled from mixed PowerPoint groups and legacy media. Studio improves the title hierarchy and usable scale while keeping the entire technical field intact.",
+        groupFrame: target,
+        lockAspectRatio: true,
+        relationshipPolicy: "preserve-internal",
+      });
+    } else if (visual && relationshipBearingFigure) {
       const groupNodes = [...new Map([visual, ...connectors, ...figureAnnotations, ...embeddedNativeText].map((node) => [node.id, node])).values()];
       const groupIds = new Set(groupNodes.map((node) => node.id));
       const narrative = [...content, ...captions].filter((node) => !groupIds.has(node.id));
@@ -933,9 +954,16 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     }
   } else if (recipe === "ornl-title-figure-grid") {
     const visuals = content.filter(meaningfulImage);
-    const remaining = content.filter((node) => node.kind !== "image");
-    for (const [id, value] of grid(visuals, frame(.47, 1.15, 12.39, 4.70), visuals.length <= 2 ? 2 : 3, 18)) placements.set(id, value);
-    for (const [id, value] of stack([...remaining, ...captions], frame(.47, 5.98, 12.39, .64), 8)) placements.set(id, value);
+    const narrative = [...content.filter((node) => node.kind !== "image"), ...captions];
+    if (visuals.length === 2 && narrative.length) {
+      const narrativeHeight = Math.min(2.25, narrativeHeightInches(narrative, 12.39, 1.35, 2.25) + .30);
+      const visualBottom = contentBottom - narrativeHeight - .16;
+      for (const [id, value] of grid(visuals, frame(.47, contentTop, 12.39, Math.max(1.0, visualBottom - contentTop)), 2, 18)) placements.set(id, value);
+      for (const [id, value] of stack(narrative, frame(.47, visualBottom + .16, 12.39, narrativeHeight), 7)) placements.set(id, value);
+    } else {
+      for (const [id, value] of grid(visuals, frame(.47, contentTop, 12.39, Math.max(1, contentHeight - (narrative.length ? .84 : 0))), visuals.length <= 2 ? 2 : 3, 18)) placements.set(id, value);
+      for (const [id, value] of stack(narrative, frame(.47, contentBottom - .68, 12.39, .68), 8)) placements.set(id, value);
+    }
   } else if (recipe === "ornl-title-objective-columns") {
     const objectives = content.filter((node) => node.kind === "text").sort((left, right) => left.zIndex - right.zIndex);
     const count = Math.max(1, objectives.length);
