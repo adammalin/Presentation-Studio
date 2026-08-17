@@ -23,8 +23,14 @@ function Test-CompatibleNode {
   $Node = Get-Command node.exe -ErrorAction SilentlyContinue
   $Npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
   if (-not $Node -or -not $Npm) { return $false }
-  & $Node.Source -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1)' *> $null
-  return $LASTEXITCODE -eq 0
+  $VersionText = & $Node.Source --version
+  if ($LASTEXITCODE -ne 0 -or -not $VersionText) { return $false }
+  try {
+    $ParsedVersion = [Version]($VersionText.Trim().TrimStart("v"))
+    return $ParsedVersion -ge [Version]"22.13.0"
+  } catch {
+    return $false
+  }
 }
 
 function Invoke-Checked([string]$Executable, [string[]]$Arguments) {
