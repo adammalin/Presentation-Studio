@@ -22,7 +22,7 @@ if (smokeTest || capturePath) app.setPath("userData", path.join(app.getPath("tem
 const MCP_RUNTIME_FILE_NAME = "mcp-runtime.json";
 const APP_PREFERENCES_FILE_NAME = "preferences.json";
 const ACTIVE_TEMPLATE_FILE_NAME = "active-template.json";
-const ONBOARDING_TOUR_VERSION = "3";
+const ONBOARDING_TOUR_VERSION = "4";
 const MCP_MAX_BODY_BYTES = 5_000_000;
 const MAX_BINARY_BYTES = 1_250_000_000;
 const mcpToken = randomBytes(32).toString("hex");

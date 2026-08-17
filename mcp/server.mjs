@@ -5,7 +5,7 @@ import { PresentationAppClient, PresentationAppUnavailableError } from "./presen
 import { DESIGN_CONTRACT, designContractMessage } from "./design-contract.mjs";
 import { stripImagePayloads } from "./image-payload.mjs";
 
-const server = new McpServer({ name: "presentation-studio-local", version: "0.2.1" });
+const server = new McpServer({ name: "presentation-studio-local", version: "0.3.0" });
 const client = new PresentationAppClient();
 
 function success(result, message) {
@@ -51,7 +51,7 @@ async function callImages(operation, input, message) {
 
 server.registerTool("get_design_contract", {
   title: "Get the presentation designer contract",
-  description: "Read the mandatory web-first presentation design and QA instructions that govern any AI model using Presentation Studio. Call this before design work. The contract requires improving every slide by importing exact content into the shared Studio HTML/CSS scene, making a substantive whole-slide composition decision with shared ORNL components or an approved layout, preserving approved content exactly, minimizing routine approval questions, compiling to editable PowerPoint, and independently rendering the result for visual QA.",
+  description: "Read the mandatory web-first presentation design and QA instructions that govern any AI model using Presentation Studio. Call this before design work. The contract covers both improving every slide in an imported deck and creating a brand-new source-grounded deck directly from Resources in native Studio JSON. It requires a substantive whole-slide composition decision with shared ORNL components or an approved layout, preserved or source-grounded content, minimal routine approval questions, editable PowerPoint compilation, and independent visual QA.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => success(DESIGN_CONTRACT, designContractMessage()));
@@ -211,10 +211,17 @@ server.registerTool("record_deck_qualification_review", {
 
 server.registerTool("list_resources", {
   title: "List authorized project Resources",
-  description: "List metadata for project Resources that a person explicitly shared for the current app session. Requires AI session access. Never returns original file bytes or extracted document text.",
+  description: "List metadata and session permissions for project Resources that a person explicitly shared for the current app session. Requires AI session access. This inventory never returns original file bytes; use get_resource_text for a bounded Text-shared derivative or get_resource_preview for a bounded Preview-shared image.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => call("list_resources", {}, (result) => `Read metadata for ${result.resources.length} of ${result.totalResourceCount} project Resource${result.totalResourceCount === 1 ? "" : "s"} authorized for this session.`));
+
+server.registerTool("get_resource_text", {
+  title: "Read explicitly shared Resource text",
+  description: "Read one bounded page of locally extracted text from a document or data Resource only when the person explicitly changed that Resource's AI-session permission to Text. Returns the embedded derivative hash, offsets, and truncation state so a model can ground a new presentation without reading the external original. Use exact excerpts from this result when creating slides; never invent missing source content.",
+  inputSchema: { resourceId: z.string().min(1).max(180), offset: z.number().int().nonnegative().default(0), maximumCharacters: z.number().int().min(1_000).max(40_000).default(20_000) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_resource_text", input, (result) => `Read ${result.characterCount} of ${result.totalCharacterCount} extracted characters from ${result.resource.name}${result.nextOffset === undefined ? "" : `; continue at offset ${result.nextOffset}`}.`));
 
 server.registerTool("get_resource_preview", {
   title: "View an explicitly shared image Resource",
@@ -222,6 +229,29 @@ server.registerTool("get_resource_preview", {
   inputSchema: { resourceId: z.string().min(1).max(180) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => callImage("get_resource_preview", input, (result) => `Viewed the explicitly shared ${result.resource.roleLabel} image Resource ${result.resource.name}. Treat concept-only pixels as visual direction, never as authority for text, logos, data, claims, or technical relationships.`));
+
+server.registerTool("create_studio_presentation", {
+  title: "Create a source-grounded native Studio presentation",
+  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from explicitly Text-shared source excerpts and Preview-shared image Resources. The first slide must use an approved ORNL title layout; later slides use shared Studio recipes or named converted Template Pack layouts. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene and leaves it visible for review; it does not save a project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
+  inputSchema: {
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+    name: z.string().min(1).max(240),
+    communicationJob: z.string().min(1).max(1_000),
+    expression: z.enum(["restrained", "balanced", "expressive"]).default("balanced"),
+    slides: z.array(z.object({
+      title: z.string().min(1).max(300),
+      subtitle: z.string().min(1).max(600).optional(),
+      body: z.array(z.string().min(1).max(1_500)).max(12).default([]),
+      recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+      layoutId: z.string().min(1).max(180).optional(),
+      imageResourceIds: z.array(z.string().min(1).max(180)).max(4).default([]),
+      table: z.object({ headers: z.array(z.string().min(1).max(500)).min(1).max(12), rows: z.array(z.array(z.string().max(2_000)).min(1).max(12)).max(40) }).optional(),
+      sourceReferences: z.array(z.object({ resourceId: z.string().min(1).max(180), exactExcerpt: z.string().min(1).max(20_000) })).min(1).max(12),
+      rationale: z.string().min(1).max(1_000),
+    })).min(1).max(80),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("create_studio_presentation", input, (result) => `Created ${result.slideCount} source-grounded ORNL slides in the native Studio scene for ${result.deck.name}. The central design is open for review; nothing was saved or exported.`));
 
 server.registerTool("create_studio_visual_need", {
   title: "Create a governed visual-direction brief",

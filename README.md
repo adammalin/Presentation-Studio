@@ -22,6 +22,7 @@ The application never overwrites an imported deck. It embeds source bytes in a s
 - First-class figure controls add a group frame, normalized crop and focal point, aspect lock, and explicit caption/label/callout/connector relationships. Complete source-locked figures can move through layout constraints without unlocking or reconstructing their internal technical content.
 - Multi-file `.pptx` import with bounded OOXML preflight, unsafe-path checks, and expanded-size/compression-ratio limits.
 - App-wide drag-and-drop and Resources file-picker intake for presentations, documents, data, images, audio, video, and SVG assets.
+- Native greenfield composition from Resources: explicitly Text-shared TXT, Markdown, JSON, CSV/TSV, DOCX, and XLSX derivatives plus Preview-shared image Resources can be planned into assertion-evidence slides, instantiated from stable converted ORNL Template Pack layouts or shared Studio recipes, and persisted directly as the source-grounded `presentation-studio/web-scene` JSON without requiring a starter PowerPoint. Every slide retains immutable Resource, derivative, and exact-excerpt hashes; the first slide uses an approved ORNL title layout and becomes protected after initial compilation.
 - Versioned first-run onboarding walkthrough with keyboard navigation, deterministic spotlights, persisted completion, and an always-available Tour replay control.
 - Local, SHA-256-verified POTX/PPTX installation plus a Designs workspace that inventories every native master/layout, compiles duplicate-safe semantic slots/constraints, and shows PowerPoint-native layout pixels with app-only editable-region guides; production template bytes stay outside Git.
 - Atomic native-layout recomposition that reuses a byte-exact approved layout already present in an imported deck when possible, remaps compatible placeholders, places source-bound objects into approved semantic zones, and requires a PowerPoint-native Current/Proposal review before acceptance.
@@ -57,7 +58,7 @@ Specification 1.0 makes PowerPoint-native rendering and measurement, the complet
 
 Requirements: macOS or Windows, an internet connection during installation, and enough local disk space. The one-line installer checks Node.js and npm and installs a verified user-local runtime when either is missing or too old. It does not require Git or administrator access under normal user permissions.
 
-Version 0.2.1 is currently delivered from the isolated `codex/web-slide-design-engine` branch.
+Version 0.3.0 is currently delivered from the isolated `codex/web-slide-design-engine` branch.
 
 ### macOS - one line
 
@@ -164,7 +165,7 @@ Print a model-independent MCP client configuration:
 node scripts/configure-mcp.mjs
 ```
 
-The desktop app must be open for project-specific tools. `get_design_contract` is always available so any MCP-capable model can read the required behavior before working. Read operations beyond basic app status/design instructions and every proposal tool require the user to enable the visible AI session switch. Resource metadata also requires a per-Resource session choice. MCP can build a private local qualification evidence bundle, read contact sheets and exact slide images, request issue crops/overlays, and record raster-bound qualification reviews. Those review records modify only private evidence: MCP still cannot apply a proposal, save a project, export a deck to a user destination, or retrieve imported Resource bytes or extracted document text.
+The desktop app must be open for project-specific tools. `get_design_contract` is always available so any MCP-capable model can read the required behavior before working. Read operations beyond basic app status/design instructions and every proposal tool require the user to enable the visible AI session switch. Each Resource also requires a session permission: Metadata for inventory, Text for bounded local extracted-text pages, or Preview for a bounded image. MCP can create a source-grounded native Studio presentation from those authorized derivatives, build a private local qualification evidence bundle, read contact sheets and exact slide images, request issue crops/overlays, and record raster-bound qualification reviews. Those operations still cannot apply a legacy proposal, save a project, export a deck to a user destination, retrieve original Resource bytes, or distribute an output.
 
 ## Data boundary
 

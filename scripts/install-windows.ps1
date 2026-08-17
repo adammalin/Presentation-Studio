@@ -94,7 +94,7 @@ try {
   }
   $SourceArchivePath = Join-Path $TempDir "presentation-studio.zip"
   $SourceExtractRoot = Join-Path $TempDir "source"
-  Write-Host "Downloading the latest Presentation Studio 0.2.1 source..."
+  Write-Host "Downloading the latest Presentation Studio 0.3.0 source..."
   Invoke-WebRequest -UseBasicParsing -Uri $SourceArchiveUrl -OutFile $SourceArchivePath
   Expand-Archive -Path $SourceArchivePath -DestinationPath $SourceExtractRoot -Force
   $SourceDir = Get-ChildItem -LiteralPath $SourceExtractRoot -Directory | Select-Object -First 1
@@ -136,7 +136,7 @@ call npm start
   Set-Content -LiteralPath $Launcher -Value $LauncherContent -Encoding ASCII
 
   Write-Host ""
-  Write-Host "Presentation Studio 0.2.1 installed successfully."
+  Write-Host "Presentation Studio 0.3.0 installed successfully."
   Write-Host "Install location: $AppDir"
   Write-Host "Launcher: $Launcher"
   Write-Host "MCP configuration command: node `"$AppDir\scripts\configure-mcp.mjs`""

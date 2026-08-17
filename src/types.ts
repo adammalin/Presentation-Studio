@@ -658,6 +658,16 @@ export interface StudioDesignMemoryEntry {
   recordedAt: string;
 }
 
+export interface StudioResourceBinding {
+  resourceId: string;
+  resourceSha256: string;
+  derivativeSha256?: string;
+  kind: "text" | "image" | "table";
+  relationship: "grounds" | "supplies-media" | "supplies-data";
+  exactExcerpt?: string;
+  exactExcerptHash?: string;
+}
+
 export interface StudioWebNode {
   id: string;
   sourceObjectId: string;
@@ -685,6 +695,7 @@ export interface StudioWebNode {
     count: number;
     aggregateSourceTextHash?: string;
   };
+  resourceBindings?: StudioResourceBinding[];
   tableId?: string;
   table?: {
     rows: number;
@@ -846,6 +857,7 @@ export interface StudioWebSlide {
   background: string;
   status: "imported" | "designed";
   designRationale: string;
+  resourceBindings?: StudioResourceBinding[];
   figureTreatments: StudioFigureTreatment[];
   conceptReferences?: StudioConceptReference[];
   visualNeeds?: StudioVisualNeed[];

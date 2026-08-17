@@ -56,7 +56,7 @@ test("installation docs expose complete one-line commands before manual Git setu
   }
 });
 
-test("installation guide includes the ChatGPT Desktop starter prompt and current Resource boundary", async () => {
+test("installation guide includes the ChatGPT Desktop starter prompt and native Resource composition workflow", async () => {
   const guide = await text("docs/INSTALLATION.md");
   const pdfBuilder = await text("scripts/build-install-guide.py");
   for (const document of [guide, pdfBuilder]) {
@@ -64,8 +64,10 @@ test("installation guide includes the ChatGPT Desktop starter prompt and current
     assert.match(document, /read the Presentation Studio design contract/i);
     assert.match(document, /assertion-evidence slides/);
     assert.match(document, /Found issues -> Fixing -> Rechecking original intent/);
-    assert.match(document, /not extracted document text/);
-    assert.match(document, /add a starter PowerPoint/);
+    assert.match(document, /get_resource_text/);
+    assert.match(document, /create_studio_presentation/);
+    assert.match(document, /without a starter PowerPoint/i);
+    assert.match(document, /Text shared/);
   }
 });
 

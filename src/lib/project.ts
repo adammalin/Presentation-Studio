@@ -241,6 +241,15 @@ const presentationSceneSchema = z.object({
   }),
 });
 const studioFrameSchema = z.object({ x: z.number().int(), y: z.number().int(), width: z.number().int().positive(), height: z.number().int().positive(), rotation: z.number() });
+const studioResourceBindingSchema = z.object({
+  resourceId: z.string().min(1),
+  resourceSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  derivativeSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  kind: z.enum(["text", "image", "table"]),
+  relationship: z.enum(["grounds", "supplies-media", "supplies-data"]),
+  exactExcerpt: z.string().min(1).max(20_000).optional(),
+  exactExcerptHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
 const studioNodeSchema = z.object({
   id: z.string().min(1),
   sourceObjectId: z.string().min(1),
@@ -278,6 +287,7 @@ const studioNodeSchema = z.object({
     count: z.number().int().positive(),
     aggregateSourceTextHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   }).optional(),
+  resourceBindings: z.array(studioResourceBindingSchema).max(20).optional(),
   tableId: z.string().optional(),
   table: z.object({
     rows: z.number().int().nonnegative(),
@@ -405,7 +415,7 @@ const studioWebSceneSchema = z.object({
     id: z.string().min(1), slideNumber: z.number().int().positive(), sourceSlideId: z.string().min(1), sourceTextHash: z.string().regex(/^[0-9a-f]{64}$/), sourceRevision: z.string().min(1),
     contentCoverage: z.object({ exactTextMapped: z.boolean(), sourceCharacterCount: z.number().int().nonnegative(), mappedCharacterCount: z.number().int().nonnegative(), sourceTextBoxCount: z.number().int().nonnegative(), mappedTextNodeCount: z.number().int().nonnegative(), groupedOrUnsupportedTextPresent: z.boolean() }),
     recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
-    targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000),
+    targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000), resourceBindings: z.array(studioResourceBindingSchema).max(40).optional(),
     figureTreatments: z.array(z.object({
       id: z.string().min(1).max(180),
       nodeIds: z.array(z.string().min(1).max(180)).min(1).max(30),

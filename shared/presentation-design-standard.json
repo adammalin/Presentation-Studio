@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-17.29-native-table-continuation-build",
+  "version": "2026-08-17.30-resource-native-composition",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -8,6 +8,20 @@
     "name": "designer-cleanup",
     "behavior": "Treat Resources as immutable inputs and the persisted Studio Web Scene as the one current presentation. Inspect the PowerPoint-native source, import exact content, choose a shared ORNL recipe or ranked converted Template Pack layout, compose visibly, build the same scene into editable PowerPoint, and iterate without routine per-slide approvals.",
     "definitionOfDone": "Every slide has one current Studio revision, one matching PowerPoint-native result visible in Slides, and no known clipping, overflow, accidental overlap, off-slide content, unreadable text, unbalanced placement, missing media, or divergent alternate design."
+  },
+  "greenfieldPresentation": {
+    "purpose": "Create a new source-grounded ORNL presentation directly from approved project Resources without requiring a starter PowerPoint.",
+    "contentPolicy": "source-grounded-generative",
+    "workflow": [
+      "Call list_resources and read every required Text-shared document or data derivative with get_resource_text until nextOffset is absent.",
+      "Inspect the current converted ORNL Template Pack with get_template_layout_catalog and use its stable layout IDs rather than inventing template geometry.",
+      "Develop an assertion-evidence narrative. Every slide must cite at least one exact source excerpt, and every placed image must be an explicitly Preview-shared Resource.",
+      "Call create_studio_presentation once with the complete deck plan. Slide 1 must use template-layout with an approved title-category layout; later slides may use compatible template-layout designs or shared Studio recipes.",
+      "Treat the resulting presentation-studio/web-scene JSON as the single editable design authority. Continue revisions in that scene, then call build_studio_presentation and inspect its exact PowerPoint-native results.",
+      "Run the bounded Found issues, Fixing, Rechecking original intent loop and whole-deck qualification before calling the deck ready. Saving and external export remain separate human actions."
+    ],
+    "sourceBinding": "Every authored slide and node retains immutable Resource SHA-256 provenance, extracted-derivative SHA-256 where applicable, and exact normalized excerpt hashes. Unsupported or inaccessible source content must be held rather than invented.",
+    "titleSlide": "The first slide uses an approved ORNL title layout and edits only intended title/subtitle placeholders. After the initial editable PowerPoint is compiled, that title slide becomes protected source-preserved native content for all later builds."
   },
   "defaults": {
     "profileId": "ornl-presentation-default",

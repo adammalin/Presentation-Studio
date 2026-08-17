@@ -1,4 +1,4 @@
-export const ONBOARDING_TOUR_VERSION = "3";
+export const ONBOARDING_TOUR_VERSION = "4";
 export const ONBOARDING_TOUR_STORAGE_KEY = "presentation-studio:onboarding-tour";
 
 export interface OnboardingTourStep {
@@ -27,8 +27,8 @@ export const ONBOARDING_TOUR_STEPS: readonly OnboardingTourStep[] = Object.freez
     id: "resources",
     target: "nav-resources",
     eyebrow: "Portable sources",
-    title: "Keep project material in Resources",
-    body: "Drop documents, data, images, media, SVGs, and presentations anywhere in the app. Accepted files and local derivatives are saved with the project instead of linked to their original paths.",
+    title: "Create directly from project Resources",
+    body: "Drop documents, data, images, media, SVGs, and presentations anywhere in the app. Accepted files and local derivatives stay embedded by hash. Share document Text or image Preview for the current AI session, and an MCP model can build a new source-grounded native Studio presentation without a starter PowerPoint.",
   }),
   Object.freeze({
     id: "inspect",
@@ -42,7 +42,7 @@ export const ONBOARDING_TOUR_STEPS: readonly OnboardingTourStep[] = Object.freez
     target: "nav-designs",
     eyebrow: "Template library",
     title: "See the available slide designs",
-    body: "Designs reads the locally installed PowerPoint template and shows its real masters, layouts, media, and placeholder structure. Browsing a design never changes an imported slide.",
+    body: "Designs reads the locally installed PowerPoint template and shows its real masters, layouts, media, and placeholder structure. AI can instantiate these stable layout IDs in the central Studio JSON scene; browsing by itself never changes a slide.",
   }),
   Object.freeze({
     id: "review",
@@ -56,7 +56,7 @@ export const ONBOARDING_TOUR_STEPS: readonly OnboardingTourStep[] = Object.freez
     target: "ai-session",
     eyebrow: "Local AI control",
     title: "AI access is session-based",
-    body: "The local MCP bridge is ready while the app is open, but project access stays off until you enable AI session access. Resources also require their own sharing choice.",
+    body: "The local MCP bridge is ready while the app is open, but project access stays off until you enable AI session access. Each Resource separately cycles through Not shared, Metadata, and—when supported—Text or Preview sharing.",
   }),
   Object.freeze({
     id: "save",
