@@ -1,6 +1,7 @@
 import type { PptxAudit, StudioWebNode, StudioWebScene, StudioWebSlide, TableInventoryItem } from "../types";
 import type { StudioCompositionOutputSlide } from "./studio-composition-export";
 import { materializeStudioTableContinuationSlides } from "./studio-table-workflow";
+import { contentCharacterSignature } from "./content-integrity";
 
 export interface StudioCompositionContentValidation {
   valid: boolean;
@@ -84,9 +85,11 @@ export function validateStudioCompositionContent(input: {
 
   let exactSourceContent = true;
   for (const sourceSlide of input.scene.slides) {
-    const sourceTokens = tokens(valuesForAuditSlide(input.sourceAudit, sourceSlide.slideNumber));
-    const sceneTokens = tokens(valuesForSceneSlide(sourceSlide));
-    if (!equal(sourceTokens, sceneTokens)) {
+    const sourceSignature = sourceSlide.contentCoverage.sourceContentSignature;
+    const sourceMatches = sourceSignature
+      ? sourceSignature === contentCharacterSignature(valuesForSceneSlide(sourceSlide))
+      : equal(tokens(valuesForAuditSlide(input.sourceAudit, sourceSlide.slideNumber)), tokens(valuesForSceneSlide(sourceSlide)));
+    if (!sourceMatches) {
       exactSourceContent = false;
       errors.push(`Source slide ${sourceSlide.slideNumber}'s Studio scene no longer contains the exact source token inventory.`);
     }
@@ -102,9 +105,9 @@ export function validateStudioCompositionContent(input: {
       errors.push(`Output slide ${output.outputSlideNumber} has no materialized Studio source mapping.`);
       continue;
     }
-    const expectedTokens = tokens(valuesForSceneSlide(materialized));
-    const candidateTokens = tokens(valuesForAuditSlide(input.candidateAudit, output.outputSlideNumber));
-    if (!equal(expectedTokens, candidateTokens)) {
+    const expectedValues = valuesForSceneSlide(materialized);
+    const candidateValues = valuesForAuditSlide(input.candidateAudit, output.outputSlideNumber);
+    if (contentCharacterSignature(expectedValues) !== contentCharacterSignature(candidateValues)) {
       exactCandidateContent = false;
       errors.push(`Output slide ${output.outputSlideNumber} changed or omitted mapped Studio copy from source slide ${output.sourceSlideNumber}.`);
     }

@@ -5,12 +5,13 @@ import path from "node:path";
 import test from "node:test";
 import JSZip from "jszip";
 import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createTableStyleProposal } from "../src/lib/cleanup";
-import { PRESENTATION_DESIGN_STANDARD } from "../src/lib/design-standard";
+import { createOrnlDesignProfile, PRESENTATION_DESIGN_STANDARD } from "../src/lib/design-standard";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { buildAuditReport } from "../src/lib/report";
 import { createProject, projectSchema } from "../src/lib/project";
 import type { DeckJob } from "../src/types";
 import { createSyntheticLegacyDeck } from "../scripts/create-synthetic-fixture";
+import { deckTemplateWorkflow, deckWithAutomaticTemplateRouting } from "../src/lib/template-routing";
 
 async function fixtureBytes(): Promise<Uint8Array> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-pptx-"));
@@ -50,6 +51,27 @@ async function alternateContentFixtureBytes(): Promise<Uint8Array> {
   const fallback = shape.replace(/<a:t>([\s\S]*?)<\/a:t>/, "<a:t>FALLBACK ONLY</a:t>");
   const alternate = `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><mc:Choice Requires="a14">${shape}</mc:Choice><mc:Fallback>${fallback}</mc:Fallback></mc:AlternateContent>`;
   zip.file("ppt/slides/slide1.xml", xml.replace(shape, alternate));
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function fixtureWithOrnlSlideCopyAndSponsorTheme(): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await fixtureBytes());
+  const slide = zip.file("ppt/slides/slide1.xml");
+  const theme = zip.file("ppt/theme/theme1.xml");
+  assert.ok(slide && theme);
+  zip.file("ppt/slides/slide1.xml", (await slide.async("text")).replace("Legacy typography should be auditable", "ORNL legacy typography should be auditable"));
+  const themeXml = await theme.async("text");
+  zip.file("ppt/theme/theme1.xml", themeXml
+    .replace(/<a:clrScheme\b([^>]*)\bname=(?:"[^"]*"|'[^']*')/, '<a:clrScheme$1 name="EERE-DOE-2025"')
+    .replace(/<\/a:theme>/, '<thm15:themeFamily xmlns:thm15="http://schemas.microsoft.com/office/thememl/2012/main" name="EERE-Presentation-Toolkit.pptx"/></a:theme>'));
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function fixtureWithOrnlSlideCopyOnly(): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await fixtureBytes());
+  const slide = zip.file("ppt/slides/slide1.xml");
+  assert.ok(slide);
+  zip.file("ppt/slides/slide1.xml", (await slide.async("text")).replace("Legacy typography should be auditable", "ORNL legacy typography should be auditable"));
   return zip.generateAsync({ type: "uint8array" });
 }
 
@@ -104,6 +126,37 @@ test("OOXML audit inventories synthetic slides, fonts, and tables", async () => 
   assert.ok(audit.findings.some((finding) => finding.ruleId === "font.legacy.century-gothic"));
   assert.equal(audit.containsMacros, false);
   assert.equal(audit.containsOleObjects, false);
+});
+
+test("template classification gives sponsor theme identity precedence over ORNL names in slide copy", async () => {
+  const audit = await auditPptx(await fixtureWithOrnlSlideCopyAndSponsorTheme());
+  assert.equal(audit.classification, "sponsor");
+  assert.ok(audit.classificationEvidence.some((item) => /theme identity.*sponsor/i.test(item)));
+  const base: DeckJob = { id: "sponsor-routing", name: "sponsor.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "cleanup-only", templateClassification: "older-or-modified-ornl", targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", targetTemplateConfirmedAt: "2026-08-18T12:00:00.000Z", designProfile: createOrnlDesignProfile("automatic-default", "2026-08-18T12:00:00.000Z"), status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  const routed = deckWithAutomaticTemplateRouting({ deck: base, audit, adoptedAt: "2026-08-18T13:00:00.000Z" });
+  assert.equal(routed.targetTemplateId, "sponsor-source");
+  assert.equal(routed.targetTemplateDecisionSource, "automatic-source-preservation");
+  assert.equal(routed.designProfile, undefined);
+  assert.equal(deckTemplateWorkflow(routed), "source-template-cleanup");
+  const proposal = createDesignerCleanupProposal(routed, "2026-08-18T13:00:00.000Z");
+  assert.ok(proposal.changes.some((change) => change.kind === "alignment"));
+  assert.equal(proposal.changes.some((change) => ["font-family", "table-style", "text-style", "decoration", "layout-remap"].includes(change.kind)), false);
+  assert.throws(() => createFontCleanupProposal(routed, "2026-08-18T13:00:00.000Z"), /ORNL-specific typography/i);
+});
+
+test("ordinary ORNL slide copy alone does not silently select the ORNL template", async () => {
+  const audit = await auditPptx(await fixtureWithOrnlSlideCopyOnly());
+  assert.equal(audit.classification, "unknown");
+  assert.ok(audit.classificationEvidence.some((item) => /ordinary slide copy|package copy/i.test(item)));
+});
+
+test("an explicit user-selected ORNL conversion survives later sponsor detection", async () => {
+  const audit = await auditPptx(await fixtureWithOrnlSlideCopyAndSponsorTheme());
+  const deck: DeckJob = { id: "explicit-conversion", name: "sponsor.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: "sponsor", targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "user-selected", targetTemplateConfirmedAt: "2026-08-18T12:00:00.000Z", designProfile: createOrnlDesignProfile("user-selected", "2026-08-18T12:00:00.000Z"), status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  const routed = deckWithAutomaticTemplateRouting({ deck, audit, adoptedAt: "2026-08-18T13:00:00.000Z" });
+  assert.equal(routed.targetTemplateId, "ornl-16x9-v1");
+  assert.equal(routed.targetTemplateDecisionSource, "user-selected");
+  assert.equal(deckTemplateWorkflow(routed), "ornl-studio");
 });
 
 test("object geometry proposals move native objects while preserving exact slide and table content", async () => {

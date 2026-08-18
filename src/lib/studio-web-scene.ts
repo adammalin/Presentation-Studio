@@ -16,6 +16,7 @@ import { STUDIO_WEB_SCENE_SCHEMA, STUDIO_WEB_SCENE_VERSION } from "../types";
 import type { GeometryEditRequest, VisualDesignRequest } from "./cleanup";
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import type { TemplateLayoutPreview, SlideRenderCatalog, TemplatePreviewElement } from "./template-catalog";
+import { contentCharacterSignature } from "./content-integrity";
 
 const EMU_PER_INCH = 914_400;
 const EMU_PER_POINT = 12_700;
@@ -131,6 +132,7 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
   const table = object.tableId ? audit.tables.find((item) => item.id === object.tableId) : undefined;
   const previewKind = object.kind === "picture" ? "image" : textBox ? "text" : undefined;
   const preview = previewElementFor(catalog, object.slideNumber, object.shapeId, previewKind);
+  if (preview && inheritedPlaceholder(preview)) return undefined;
   const kind = nodeKind(object.kind, Boolean(textBox?.text));
   const tableCells = table?.cells?.filter((cell) => !cell.horizontalMergeContinuation && !cell.verticalMergeContinuation).map((cell) => ({
     id: cell.id,
@@ -212,7 +214,7 @@ function compileCatalogDerivedNodes(deck: DeckJob, slideNumber: number, studioSl
   if (!previewSlide || !catalog) return [];
   const mappedShapeIds = new Set(nodes.map((node) => node.sourceShapeId));
   return previewSlide.elements.flatMap((element, index): StudioWebNode[] => {
-    if (element.origin !== "slide" || !element.sourceShapeId || mappedShapeIds.has(element.sourceShapeId) || !["text", "image"].includes(element.kind)) return [];
+    if (element.origin !== "slide" || inheritedPlaceholder(element) || !element.sourceShapeId || mappedShapeIds.has(element.sourceShapeId) || !["text", "image"].includes(element.kind)) return [];
     if (element.kind === "text" && !element.text?.trim()) return [];
     if (element.kind === "image" && !element.mediaId) return [];
     const role = roleForCatalogElement(element, { width: catalog.slideWidth, height: catalog.slideHeight });
@@ -246,8 +248,15 @@ function normalizedVisibleText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function textTokenSignature(value: string): string {
-  return normalizedVisibleText(value).split(" ").filter(Boolean).sort((left, right) => left.localeCompare(right)).join("\n");
+function inheritedPlaceholder(element: TemplatePreviewElement): boolean {
+  return ["sldNum", "dt", "ftr", "hdr"].includes(element.placeholderType ?? "");
+}
+
+function catalogSlideContentValues(preview: SlideRenderCatalog["slides"][number] | undefined): string[] | undefined {
+  if (!preview) return undefined;
+  return preview.elements
+    .filter((element) => element.origin === "slide" && element.kind === "text" && !inheritedPlaceholder(element) && Boolean(element.text?.trim()))
+    .map((element) => element.text ?? "");
 }
 
 function assignSourceTextOrder(nodes: StudioWebNode[], sourceText: string): StudioWebNode[] {
@@ -274,6 +283,14 @@ function nodeVisibleText(node: StudioWebNode): string {
       .join(" ");
   }
   return "";
+}
+
+function nodeVisibleTextValues(node: StudioWebNode): string[] {
+  if (node.kind === "text") return node.text ? [node.text] : [];
+  if (node.kind === "table" && node.table) return [...node.table.cells]
+    .sort((left, right) => left.row - right.row || left.column - right.column)
+    .map((cell) => cell.text);
+  return [];
 }
 
 export function studioSlideContentSignature(slide: StudioWebSlide): string {
@@ -308,9 +325,17 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
       }
     }
     const mappedTextNodes = nodes.filter((node) => Boolean(nodeVisibleText(node)));
-    const sourceText = normalizedVisibleText(sourceSlide?.text ?? "");
-    const mappedText = normalizedVisibleText(mappedTextNodes.map(nodeVisibleText).join(" "));
-    const exactTextMapped = textTokenSignature(sourceText) === textTokenSignature(mappedText);
+    // The render catalog distinguishes authored slide content from inherited
+    // master/layout furniture such as automatic slide numbers. Raw slide XML
+    // does not, and its run boundaries can split a visible token (for example,
+    // `20` + `24`). Use the catalog inventory as the source-content authority
+    // whenever it is available, while retaining the audit text as a fallback.
+    const sourceTextValues = catalogSlideContentValues(preview) ?? [sourceSlide?.text ?? ""];
+    const mappedTextValues = mappedTextNodes.flatMap(nodeVisibleTextValues);
+    const sourceText = normalizedVisibleText(sourceTextValues.join(" "));
+    const mappedText = normalizedVisibleText(mappedTextValues.join(" "));
+    const sourceContentSignature = contentCharacterSignature(sourceTextValues);
+    const exactTextMapped = sourceContentSignature === contentCharacterSignature(mappedTextValues);
     const sourceObjects = deck.scene!.objects.filter((object) => object.slideNumber === slide.number);
     return {
       id: `studio-${slide.id}`,
@@ -319,6 +344,7 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
       sourceTextHash: slide.sourceTextHash,
       contentCoverage: {
         exactTextMapped,
+        sourceContentSignature,
         sourceCharacterCount: sourceText.length,
         mappedCharacterCount: mappedText.length,
         sourceTextBoxCount: deck.audit!.textBoxes.filter((item) => item.slideNumber === slide.number).length,
@@ -352,7 +378,7 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
     tableLibrary: [],
     tableContinuationPlans: [],
     designSystem: {
-      id: "ornl-presentation-web-v1",
+      id: deck.targetTemplateDecisionSource === "automatic-source-preservation" ? "source-template-preservation-web-v1" : "ornl-presentation-web-v1",
       standardVersion: PRESENTATION_DESIGN_STANDARD.version,
       unit: "emu",
       renderer: "html-css",

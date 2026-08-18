@@ -844,6 +844,7 @@ export interface StudioWebSlide {
   sourceTextHash: string;
   contentCoverage: {
     exactTextMapped: boolean;
+    sourceContentSignature?: string;
     sourceCharacterCount: number;
     mappedCharacterCount: number;
     sourceTextBoxCount: number;
@@ -881,7 +882,7 @@ export interface StudioWebScene {
   tableLibrary?: StudioTableExemplarDefinition[];
   tableContinuationPlans?: StudioTableContinuationPlan[];
   designSystem: {
-    id: "ornl-presentation-web-v1";
+    id: "ornl-presentation-web-v1" | "source-template-preservation-web-v1";
     standardVersion: string;
     unit: "emu";
     renderer: "html-css";

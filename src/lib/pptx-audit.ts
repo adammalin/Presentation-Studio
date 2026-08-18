@@ -16,7 +16,7 @@ import type {
 } from "../types";
 import { normalizeCellFillToken, semanticColorRoleForToken } from "./semantic-visuals";
 
-export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 4;
+export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 5;
 import { sha256Text } from "./hash";
 
 const MAX_PACKAGE_FILES = 25_000;
@@ -90,6 +90,17 @@ function extractTableCellRuns(xml: string): { textRuns: string[]; paragraphRunCo
     paragraphRunCounts.push(count);
   }
   return { textRuns, paragraphRunCounts, runBreaksBefore };
+}
+
+function visibleTextFromRuns(content: ReturnType<typeof extractTableCellRuns>): string {
+  let text = "";
+  for (let index = 0; index < content.textRuns.length; index += 1) {
+    const value = content.textRuns[index] ?? "";
+    const breakBefore = content.runBreaksBefore[index] ?? "none";
+    if (breakBefore !== "none" && text && value && !/\s$/.test(text) && !/^\s/.test(value)) text += " ";
+    text += value;
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function extractFonts(xml: string): string[] {
@@ -185,7 +196,7 @@ async function extractTableInventory(slideNumber: number, xml: string): Promise<
         };
         const spanAttribute = (name: string) => Math.max(1, Number(attributeValue(cellAttributes, name)) || 1);
         const { textRuns, paragraphRunCounts, runBreaksBefore } = extractTableCellRuns(cellXml);
-        const text = textRuns.join(" ").replace(/\s+/g, " ").trim();
+        const text = visibleTextFromRuns({ textRuns, paragraphRunCounts, runBreaksBefore });
         const fillToken = directCellFillToken(cellXml);
         const semanticColorRole = semanticColorRoleForToken(fillToken);
         const fontSizes = uniqueSorted([...cellXml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);
@@ -358,7 +369,7 @@ async function extractEditableObjects(slideNumber: number, xml: string): Promise
     if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
     const rotationUnits = Number(attributeValue(transform[1] ?? "", "rot"));
     const rotation = Number.isFinite(rotationUnits) ? rotationUnits / 60_000 : 0;
-    const visibleText = extractTextRuns(block).join(" ").replace(/\s+/g, " ").trim();
+    const visibleText = visibleTextFromRuns(extractTableCellRuns(block));
     let kind: SlideEditableObject["kind"];
     if (sourceElement === "p:pic") { kind = "picture"; pictureOrdinal += 1; }
     else if (sourceElement === "p:graphicFrame" && /<a:tbl\b/.test(block)) { kind = "table"; tableOrdinal += 1; }
@@ -488,7 +499,7 @@ async function extractTextParagraphs(block: string): Promise<TextParagraphInvent
   const paragraphs = [...block.matchAll(/<a:p\b[\s\S]*?<\/a:p>/g)].map((match) => match[0]);
   const inventory: TextParagraphInventoryItem[] = [];
   for (const paragraph of paragraphs) {
-    const text = extractTextRuns(paragraph).join(" ").replace(/\s+/g, " ").trim();
+    const text = visibleTextFromRuns(extractTableCellRuns(paragraph));
     if (!text) continue;
     const properties = paragraph.match(/<a:pPr\b([^>]*)/)?.[1] ?? "";
     const directBullet = /<a:(?:buChar|buAutoNum|buBlip)\b/i.test(paragraph);
@@ -518,7 +529,7 @@ async function extractTextBoxes(slideNumber: number, xml: string, slideWidth: nu
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index];
     if (!/<p:txBody\b/.test(block)) continue;
-    const text = extractTextRuns(block).join(" ").replace(/\s+/g, " ").trim();
+    const text = visibleTextFromRuns(extractTableCellRuns(block));
     const shapeId = block.match(/<p:cNvPr\b[^>]*\bid=(?:"([^"]+)"|'([^']+)')/)?.slice(1).find(Boolean);
     const transform = block.match(/<a:xfrm\b[^>]*>[\s\S]*?<a:off\b([^>]*)\/>[\s\S]*?<a:ext\b([^>]*)\/>[\s\S]*?<\/a:xfrm>/);
     if (!text || !shapeId || !transform) continue;
@@ -714,19 +725,37 @@ function xmlCount(xml: string, expression: RegExp): number {
   return [...xml.matchAll(expression)].length;
 }
 
-function classifyTemplate(allText: string, fonts: FontInventoryItem[]): { classification: TemplateClassification; evidence: string[] } {
-  const normalized = allText.toLowerCase();
+function classifyTemplate(input: { allText: string; structuralText: string; themeIdentity: string; fonts: FontInventoryItem[] }): { classification: TemplateClassification; evidence: string[] } {
+  const normalized = input.allText.toLowerCase();
+  const structural = input.structuralText.toLowerCase();
+  const themeIdentity = input.themeIdentity.toLowerCase();
+  const fonts = input.fonts;
   const fontNames = new Set(fonts.map((font) => font.normalizedFamily));
   const evidence: string[] = [];
   const hasOrnlLanguage = normalized.includes("oak ridge national laboratory") || /\bornl\b/.test(normalized);
+  const hasStructuralOrnlIdentity = structural.includes("oak ridge national laboratory") || /\bornl\b/.test(structural) || /\b(?:ornl|oak[\s_-]*ridge)\b/.test(themeIdentity);
+  const sponsorThemeMarkers = [
+    /\beere\b/,
+    /\bdoe(?:\b|[-_ ])/,
+    /department[\s_-]+of[\s_-]+energy/,
+    /building[\s_-]+technologies[\s_-]+office/,
+    /\bbto(?:\b|[-_ ])/,
+  ];
+  const sponsorThemeIdentity = sponsorThemeMarkers.some((marker) => marker.test(themeIdentity));
   const hasAptos = fontNames.has("aptos") || fontNames.has("aptos display");
   const hasLegacyOrnlFont = fontNames.has("century gothic");
 
-  if (hasOrnlLanguage) evidence.push("The package contains ORNL or Oak Ridge National Laboratory text.");
+  if (sponsorThemeIdentity) evidence.push("The PowerPoint theme identity contains a recognized sponsor marker; theme and master identity take precedence over organization names in ordinary slide copy.");
+  if (hasStructuralOrnlIdentity) evidence.push("ORNL identity was found in theme, master, or layout structure rather than only in ordinary slide copy.");
+  else if (hasOrnlLanguage) evidence.push("ORNL or Oak Ridge National Laboratory appears only in package copy and is not sufficient evidence of an ORNL template.");
   if (hasAptos) evidence.push("The package contains Aptos typography.");
   if (hasLegacyOrnlFont) evidence.push("The package contains Century Gothic legacy typography.");
 
-  if (hasOrnlLanguage) {
+  if (sponsorThemeIdentity) {
+    evidence.push("Preserve the detected sponsor source template unless a person explicitly chooses cross-template conversion.");
+    return { classification: "sponsor", evidence };
+  }
+  if (hasStructuralOrnlIdentity) {
     evidence.push("A template hash is not installed, so the current official revision cannot be proven automatically.");
     return { classification: "older-or-modified-ornl", evidence };
   }
@@ -792,10 +821,17 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     .sort((left, right) => (slideNumberForPart(left) ?? 0) - (slideNumberForPart(right) ?? 0));
   const fontMap = new Map<string, FontInventoryItem>();
   let searchableText = "";
+  let structuralText = "";
+  let themeIdentity = "";
 
   for (const [path, xml] of xmlByPath.entries()) {
     const activeXml = selectActiveMarkupCompatibilityContent(xml);
     searchableText += ` ${extractTextRuns(activeXml).join(" ")}`;
+    const kind = partKind(path);
+    if (["master", "layout", "theme"].includes(kind)) structuralText += ` ${extractTextRuns(activeXml).join(" ")}`;
+    if (kind === "theme") {
+      themeIdentity += ` ${[...activeXml.matchAll(/\b(?:name|id|vid)=(?:"([^"]*)"|'([^']*)')/gi)].map((match) => decodeXml(match[1] ?? match[2] ?? "")).join(" ")}`;
+    }
     for (const family of extractFonts(activeXml)) {
       const normalizedFamily = normalizeFont(family);
       const existing = fontMap.get(normalizedFamily) ?? {
@@ -809,7 +845,6 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
         isLikelySymbolFont: SYMBOL_FONT_RE.test(family),
       };
       existing.count += 1;
-      const kind = partKind(path);
       if (kind === "slide") existing.directSlideCount += 1;
       if (!existing.partKinds.includes(kind)) existing.partKinds.push(kind);
       if (kind === "theme") existing.isThemeFont = true;
@@ -820,7 +855,7 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   }
   const fonts = [...fontMap.values()].sort((left, right) => right.count - left.count || left.family.localeCompare(right.family));
   for (const font of fonts) font.slideNumbers.sort((left, right) => left - right);
-  const classified = classifyTemplate(searchableText, fonts);
+  const classified = classifyTemplate({ allText: searchableText, structuralText, themeIdentity, fonts });
   const presentationXml = xmlByPath.get("ppt/presentation.xml") ?? "";
   const slideSizeAttributes = presentationXml.match(/<p:sldSz\b([^>]*)/)?.[1] ?? "";
   const declaredSlideWidth = Number(attributeValue(slideSizeAttributes, "cx"));
@@ -842,7 +877,7 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     const relationshipPart = `ppt/slides/_rels/slide${number}.xml.rels`;
     const relationXml = xmlByPath.get(relationshipPart) ?? "";
     const runs = extractTextRuns(activeXml);
-    const text = runs.join(" ").replace(/\s+/g, " ").trim();
+    const text = visibleTextFromRuns(extractTableCellRuns(activeXml));
     const title = runs.find((run) => run.trim().length > 0)?.trim().slice(0, 160) || `Slide ${number}`;
     const slideFonts = [...new Set(extractFonts(activeXml))].sort();
     const fontSizes = uniqueSorted([...activeXml.matchAll(/<a:(?:rPr|defRPr|endParaRPr)\b[^>]*\bsz=(?:"(\d+)"|'(\d+)')/g)].map((match) => String(Number(match[1] ?? match[2]) / 100))).map(Number);

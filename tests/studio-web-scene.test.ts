@@ -48,6 +48,15 @@ test("Studio Web Scene separates exact PowerPoint content from redesignable web 
   assert.equal(scene.slides.some((slide) => slide.nodes.some((node) => node.kind === "table" && node.table?.cells.some((cell) => cell.text))), true);
 });
 
+test("Studio content coverage excludes inherited slide-number furniture", async () => {
+  const { deck, catalog } = await fixture();
+  const slide = catalog.slides[0];
+  slide.elements.push({ id: "synthetic-slide-number", kind: "text", name: "Slide Number Placeholder", x: 11_000_000, y: 6_200_000, width: 500_000, height: 200_000, rotation: 0, geometry: "rect", text: "1", placeholderType: "sldNum", sourcePart: slide.sourcePart, sourceShapeId: "999", origin: "slide" });
+  const scene = compileStudioWebScene(deck, catalog);
+  assert.equal(scene.slides[0].contentCoverage.exactTextMapped, true);
+  assert.equal(scene.slides[0].nodes.some((node) => node.sourceShapeId === "999"), false);
+});
+
 test("shared ORNL web recipes recompose complete slides and compile back to source-bound PowerPoint commands", async () => {
   const { deck, catalog } = await fixture();
   const source = compileStudioWebScene(deck, catalog);

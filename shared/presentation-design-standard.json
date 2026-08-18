@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-17.31-automatic-resource-access",
+  "version": "2026-08-18.32-template-routing-and-content-integrity",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -22,6 +22,12 @@
     ],
     "sourceBinding": "Every authored slide and node retains immutable Resource SHA-256 provenance, extracted-derivative SHA-256 where applicable, and exact normalized excerpt hashes. Unsupported or inaccessible source content must be held rather than invented.",
     "titleSlide": "The first slide uses an approved ORNL title layout and edits only intended title/subtitle placeholders. After the initial editable PowerPoint is compiled, that title slide becomes protected source-preserved native content for all later builds."
+  },
+  "importedTemplateRouting": {
+    "identityAuthority": "Classify an imported deck from theme, master, and layout identity before ordinary slide copy. Organization names in slide content do not prove template ownership.",
+    "sponsorAndCustomPolicy": "When a sponsor or custom source template is detected, preserve its master, layouts, artwork, and type system. Use brand-neutral source-bound alignment, distribution, safe-region, measured text-fit, geometry, and table-layout operations with PowerPoint-native Current/Proposal QA. Treat the source theme, native pixels, and approved exemplars as style evidence. Do not apply ORNL font cleanup, table styling, decoration, Template Pack layouts, recipes, or fresh ORNL composition unless the user explicitly selects cross-template conversion.",
+    "ornlPolicy": "Use the installed ORNL Template Pack and Studio composition system only for structurally identified ORNL decks, new ORNL decks, or explicit user-selected conversion.",
+    "contentIntegrity": "Compare authored slide content independently from inherited slide numbers, dates, headers, and footers. Ignore OOXML run-boundary whitespace while preserving the exact character inventory for wording, punctuation, names, numbers, units, and qualifications."
   },
   "defaults": {
     "profileId": "ornl-presentation-default",

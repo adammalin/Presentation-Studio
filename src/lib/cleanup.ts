@@ -87,6 +87,12 @@ function assertDeckReady(deck: DeckJob) {
   }
 }
 
+function assertOrnlDesignTarget(deck: DeckJob, operation: string) {
+  if (deck.targetTemplateId !== PRESENTATION_DESIGN_STANDARD.defaults.template.id) {
+    throw new Error(`${operation} uses ORNL-specific typography, color, table, decoration, or Template Pack rules. Preserve this sponsor/custom source template with brand-neutral geometry and fit operations, or explicitly choose ORNL cross-template conversion first.`);
+  }
+}
+
 function fontCleanupChanges(deck: DeckJob): CleanupChange[] {
   return (deck.audit?.fonts ?? [])
     .filter((font) => font.directSlideCount > 0 && ["century gothic", "arial"].includes(font.normalizedFamily) && !font.isLikelySymbolFont)
@@ -164,6 +170,7 @@ function slideDispositions(deck: DeckJob, changes: CleanupChange[], exceptions: 
 
 export function createFontCleanupProposal(deck: DeckJob, updatedAt: string): CleanupProposal {
   assertDeckReady(deck);
+  assertOrnlDesignTarget(deck, "Font cleanup");
   if (deck.operationScope !== "cleanup-only") throw new Error("Font cleanup requires cleanup-only operation scope.");
   const changes = fontCleanupChanges(deck);
   if (changes.length === 0) throw new Error("No supported legacy font mappings were found.");
@@ -185,7 +192,8 @@ export function createFontCleanupProposal(deck: DeckJob, updatedAt: string): Cle
 export function createDesignerCleanupProposal(deck: DeckJob, updatedAt: string): CleanupProposal {
   assertDeckReady(deck);
   if (!deck.audit) throw new Error("Audit the deck before staging cleanup.");
-  const changes = fontCleanupChanges(deck);
+  const ornlTarget = deck.targetTemplateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id;
+  const changes = ornlTarget ? fontCleanupChanges(deck) : [];
   if (deck.audit.alignmentRepairs.length > 0) changes.push({
     id: "alignment-dominant-left-edge",
     kind: "alignment",
@@ -199,7 +207,7 @@ export function createDesignerCleanupProposal(deck: DeckJob, updatedAt: string):
   });
   const tableExceptions = deck.audit.tables.map(tableException).filter((item): item is TableNormalizationException => Boolean(item));
   const compatibleTables = deck.audit.tables.filter((table) => !tableExceptions.some((exception) => exception.tableId === table.id));
-  if (compatibleTables.length > 0) changes.push({
+  if (ornlTarget && compatibleTables.length > 0) changes.push({
     id: `table-${TABLE_PROFILE.id}`,
     kind: "table-style",
     from: "mixed native table formatting",
@@ -233,6 +241,7 @@ export function createDesignerCleanupProposal(deck: DeckJob, updatedAt: string):
 
 export function createTableStyleProposal(deck: DeckJob, updatedAt: string, input: { tableIds: string[]; variant: TableStyleVariant; semanticColorPolicy: "preserve-source" }): CleanupProposal {
   assertDeckReady(deck);
+  assertOrnlDesignTarget(deck, "Native table styling");
   if (!deck.audit) throw new Error("Audit the deck before staging native table design.");
   if (deck.operationScope !== "reflow") throw new Error("Native table design requires Designer Cleanup reflow scope.");
   if (input.tableIds.length === 0 || input.tableIds.length > 40) throw new Error("Stage between 1 and 40 native tables in one design-system transaction.");
@@ -533,6 +542,7 @@ function nativeLayoutChange(command: NativeLayoutRemapCommand): CleanupChange {
 
 export function createNativeLayoutProposal(deck: DeckJob, updatedAt: string, command: NativeLayoutRemapCommand): CleanupProposal {
   assertDeckReady(deck);
+  assertOrnlDesignTarget(deck, "Template Pack layout remapping");
   if (!deck.audit?.slides.some((slide) => slide.number === command.slideNumber)) throw new Error(`Slide ${command.slideNumber} is not present in the audited source deck.`);
   if (deck.protectedSlideNumbers.includes(command.slideNumber)) throw new Error(`Slide ${command.slideNumber} is protected from native layout remapping.`);
   const change = nativeLayoutChange(command);
@@ -579,6 +589,7 @@ function cleanHexColor(value: string | undefined, field: string): string | undef
 
 export function createVisualDesignProposal(deck: DeckJob, updatedAt: string, input: VisualDesignRequest): CleanupProposal {
   assertDeckReady(deck);
+  assertOrnlDesignTarget(deck, "Visual brand styling");
   if (!deck.audit) throw new Error("Audit the deck before staging visual design.");
   if (deck.operationScope !== "reflow") throw new Error("Visual styling and brand geometry require Designer Cleanup reflow scope.");
   if (!Number.isInteger(input.slideNumber) || input.slideNumber < 1 || input.slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);

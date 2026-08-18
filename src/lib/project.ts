@@ -410,10 +410,10 @@ const studioWebSceneSchema = z.object({
     rationale: z.string().min(1).max(1_000),
     createdAt: isoTimestamp,
   })).max(100).default([]),
-  designSystem: z.object({ id: z.literal("ornl-presentation-web-v1"), standardVersion: z.string().min(1), unit: z.literal("emu"), renderer: z.literal("html-css"), exportTarget: z.literal("editable-powerpoint"), compilerModes: z.tuple([z.literal("source-bound-overlay"), z.literal("fresh-composition")]).default(["source-bound-overlay", "fresh-composition"]) }),
+  designSystem: z.object({ id: z.enum(["ornl-presentation-web-v1", "source-template-preservation-web-v1"]), standardVersion: z.string().min(1), unit: z.literal("emu"), renderer: z.literal("html-css"), exportTarget: z.literal("editable-powerpoint"), compilerModes: z.tuple([z.literal("source-bound-overlay"), z.literal("fresh-composition")]).default(["source-bound-overlay", "fresh-composition"]) }),
   slides: z.array(z.object({
     id: z.string().min(1), slideNumber: z.number().int().positive(), sourceSlideId: z.string().min(1), sourceTextHash: z.string().regex(/^[0-9a-f]{64}$/), sourceRevision: z.string().min(1),
-    contentCoverage: z.object({ exactTextMapped: z.boolean(), sourceCharacterCount: z.number().int().nonnegative(), mappedCharacterCount: z.number().int().nonnegative(), sourceTextBoxCount: z.number().int().nonnegative(), mappedTextNodeCount: z.number().int().nonnegative(), groupedOrUnsupportedTextPresent: z.boolean() }),
+    contentCoverage: z.object({ exactTextMapped: z.boolean(), sourceContentSignature: z.string().optional(), sourceCharacterCount: z.number().int().nonnegative(), mappedCharacterCount: z.number().int().nonnegative(), sourceTextBoxCount: z.number().int().nonnegative(), mappedTextNodeCount: z.number().int().nonnegative(), groupedOrUnsupportedTextPresent: z.boolean() }),
     recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
     targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000), resourceBindings: z.array(studioResourceBindingSchema).max(40).optional(),
     figureTreatments: z.array(z.object({

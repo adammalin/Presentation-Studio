@@ -117,6 +117,7 @@ import { attachStudioConceptReference, removeStudioConceptReference } from "./li
 import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
 import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
 import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
+import { deckTemplateWorkflow, deckWithAutomaticTemplateRouting } from "./lib/template-routing";
 import { preserveNativeSlide } from "./lib/native-slide-preservation";
 import { buildDeckQualificationReport, qualificationEvidenceSlideNumber, recordDeckQualificationReviews, type DeckQualificationReport } from "./lib/deck-qualification";
 import {
@@ -1471,7 +1472,7 @@ export default function App() {
       if (!source?.bytes) continue;
       void auditPptx(source.bytes).then((audit) => {
         if (canceled) return;
-        setProject((current) => ({ ...current, decks: current.decks.map((item) => item.id === deck.id ? withCompiledScene({ ...item, audit }) : item) }));
+        setProject((current) => ({ ...current, decks: current.decks.map((item) => item.id === deck.id ? withCompiledScene(deckWithAutomaticTemplateRouting({ deck: item, audit })) : item) }));
       }).catch(() => undefined);
     }
     return () => { canceled = true; };
@@ -1859,7 +1860,7 @@ export default function App() {
           instruction: "Review every page for cross-slide hierarchy, density, pacing, repeated-component consistency, and visual outliers. Open individual inspection packets for precise diagnosis; do not infer point geometry from this overview.",
         };
       }
-      if (request.operation === "list_decks") return { updatedAt: current.project.updatedAt, decks: current.decks.map((deck) => ({ id: deck.id, name: deck.name, status: deck.status, operationScope: deck.operationScope, templateClassification: deck.templateClassification, targetTemplateId: deck.targetTemplateId, slideCount: deck.audit?.slideCount ?? 0, findingCount: deck.audit?.findings.length ?? 0 })) };
+      if (request.operation === "list_decks") return { updatedAt: current.project.updatedAt, decks: current.decks.map((deck) => ({ id: deck.id, name: deck.name, status: deck.status, operationScope: deck.operationScope, templateClassification: deck.templateClassification, targetTemplateId: deck.targetTemplateId, targetTemplateDecisionSource: deck.targetTemplateDecisionSource, templateWorkflow: deckTemplateWorkflow(deck), slideCount: deck.audit?.slideCount ?? 0, findingCount: deck.audit?.findings.length ?? 0 })) };
       if (request.operation === "get_deck_scene_summary") {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current hybrid scene. Reopen or re-audit the source deck.");
@@ -1949,6 +1950,8 @@ export default function App() {
           },
           instruction: isProtectedOrnlTemplateSlide(deck, slideNumber)
             ? `HARD RULE: the approved ORNL template composition on slide ${slideNumber} is sacred. Keep recipe source and preserve its approved marks, artwork, photography, legal copy, geometry, master, and layout exactly. Do not send nodeFrames, nodeStyles, figure treatments, or another recipe for this slide.`
+            : deckTemplateWorkflow(deck) === "source-template-cleanup"
+            ? "This is a sponsor/custom source-template deck. The semantic scene is available for inspection, but do not replace it with ORNL recipes or fresh composition. Preserve the source master/layout and use brand-neutral alignment, distribution, safe-region, measured text-fit, geometry, and table-layout proposals. Treat the source theme, native pixels, and approved exemplars as style evidence. Do not apply ORNL font, table-style, decoration, or Template Pack layout operations unless the user explicitly selects cross-template conversion."
             : slide.contentCoverage.exactTextMapped
             ? `Design in this semantic HTML/CSS scene, not by preserving weak source coordinates. Reuse matching ready-rated deck designMemory patterns and the shared rhythm before inventing a one-off layout.${(slide.conceptReferences?.length ?? 0) > 0 ? " Read each attached concept-only reference and follow only its approved visual influences; generated text, logos, data, claims, and technical details remain untrusted." : ""} Source paragraphs are exposed as exact semantic atom candidates, but approved wording remains locked. Prefer the recommended recipe: objective columns for 2–4 parallel paragraphs; challenge + evidence for one assertion, three peer challenges, and dense source-locked evidence; process flow for four source inputs, ordered stages, one output, and exact supporting copy; steps + evidence for 2–5 instruction atoms beside one visual; labeled figures for multiple images with labels/captions; cards only for already-separated comparisons; and table for native tables. Pair process icons/labels by source relationship and z-order, not page position, and do not classify technical content as footer furniture solely because it is low on the slide. Use compilerMode fresh-composition whenever any visible node is catalog-derived or semantic-atom; source-bound-overlay cannot represent those nodes and will be rejected. Then call preview_studio_fresh_composition, run get_studio_slide_critique against the original, and complete the bounded visual loop before any save.`
             : "This slide's complete source text is returned, but not every character maps to an editable Studio node because grouped, inherited, or unsupported content still needs semantic atomization. Do not preview or save a fresh composition that would omit it. Preserve the native source slide or defer redesign until atomization support covers the missing content.",
@@ -1964,6 +1967,7 @@ export default function App() {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read get_studio_web_scene again before building a fresh composition.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.studioScene) throw new Error("Create and persist the Studio Web Scene before building a fresh composition.");
+        if (deckTemplateWorkflow(deck) !== "ornl-studio") throw new Error("Fresh Studio composition is available only for an ORNL target. Preserve this deck's detected source template with source-bound proposals, or explicitly choose ORNL cross-template conversion first.");
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
         const studioSlide = deck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
@@ -2158,6 +2162,7 @@ export default function App() {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio scenes again before building the presentation.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.studioScene) throw new Error("Create and design the Studio Web Scene before building the central presentation.");
+        if (deckTemplateWorkflow(deck) !== "ornl-studio") throw new Error("A fresh central Studio build requires an ORNL target. This deck is preserving a detected sponsor/custom source template, so build and review source-bound proposals instead unless the user explicitly chooses cross-template conversion.");
         assertSacredOrnlTitleSlideIntegrity(deck, deck.studioScene);
         const unconverted = unsupportedSourceSlideNumbers(deck, deck.studioScene);
         if (unconverted.length) throw new Error(`The central presentation cannot be built until every slide has a Studio or converted-template design. Still source-only: ${unconverted.join(", ")}.`);
@@ -2870,6 +2875,9 @@ export default function App() {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read get_studio_web_scene again before staging a Studio design.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current PowerPoint audit and preservation scene.");
+        const templateWorkflow = deckTemplateWorkflow(deck);
+        if (templateWorkflow === "source-template-cleanup") throw new Error("This deck uses a detected sponsor or custom source template. Preserve its master and layouts: use brand-neutral source-bound alignment, distribution, safe-region, measured text-fit, geometry, and table-layout proposals with PowerPoint-native Current/Proposal QA. ORNL font, table-style, decoration, Template Pack layout, and fresh-composition operations require explicit cross-template conversion.");
+        if (templateWorkflow === "template-decision-required") throw new Error("Choose or confirm the target template before staging Studio composition.");
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
         const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"];
@@ -3843,23 +3851,17 @@ export default function App() {
             try {
               const audit = await auditPptx(bytes);
               const adoptedAt = new Date().toISOString();
-              const isOrnl = audit.classification === "current-ornl" || audit.classification === "older-or-modified-ornl";
-              const sourceTemplateId = audit.classification === "sponsor" ? "sponsor-source" : audit.classification === "custom" ? "custom-source" : undefined;
-              const importedDeck: DeckJob = {
+              const importedDeck = deckWithAutomaticTemplateRouting({ deck: {
                 id: crypto.randomUUID(),
                 name: files[index].name,
                 sourceResourceId: resource.id,
                 sourceSha256: resource.sha256,
                 operationScope: "cleanup-only",
                 templateClassification: audit.classification,
-                targetTemplateId: isOrnl ? PRESENTATION_DESIGN_STANDARD.defaults.template.id : sourceTemplateId,
-                targetTemplateConfirmedAt: isOrnl || sourceTemplateId ? adoptedAt : undefined,
-                targetTemplateDecisionSource: isOrnl ? "automatic-default" : sourceTemplateId ? "automatic-source-preservation" : undefined,
-                designProfile: isOrnl ? createOrnlDesignProfile("automatic-default", adoptedAt) : undefined,
-                status: isOrnl ? "ready-for-cleanup" : sourceTemplateId ? "audited" : "needs-template-decision",
+                status: "audited",
                 audit,
                 protectedSlideNumbers: [],
-              };
+              }, audit, adoptedAt });
               importedDecks.push(withCompiledScene(importedDeck));
             } catch (auditError) {
               auditFailureCount += 1;
@@ -4116,14 +4118,29 @@ export default function App() {
       const current = projectRef.current;
       const deck = current.decks.find((item) => item.id === selectedDeck.id);
       if (!deck?.audit || !deck.scene) throw new Error("Audit the selected deck before creating its Studio Web Scene.");
+      const templateWorkflow = deckTemplateWorkflow(deck);
+      if (templateWorkflow === "template-decision-required") throw new Error("Choose or confirm the target template before creating a Studio scene.");
       const catalog = await getOrBuildSlideCatalog(deck, current);
       const studioScene = compileStudioWebScene(deck, catalog);
       const now = new Date().toISOString();
-      const adopted = { ...deck, operationScope: "reflow" as const, targetTemplateId: deck.targetTemplateId ?? PRESENTATION_DESIGN_STANDARD.defaults.template.id, targetTemplateConfirmedAt: deck.targetTemplateConfirmedAt ?? now, targetTemplateDecisionSource: deck.targetTemplateDecisionSource ?? "automatic-default" as const, designProfile: deck.designProfile ?? createOrnlDesignProfile("automatic-default", now), studioScene, proposal: undefined, status: "ready-for-cleanup" as const };
+      const sourceTemplateMode = templateWorkflow === "source-template-cleanup";
+      const adopted = {
+        ...deck,
+        operationScope: sourceTemplateMode ? "cleanup-only" as const : "reflow" as const,
+        targetTemplateId: sourceTemplateMode ? deck.targetTemplateId : deck.targetTemplateId ?? PRESENTATION_DESIGN_STANDARD.defaults.template.id,
+        targetTemplateConfirmedAt: deck.targetTemplateConfirmedAt ?? now,
+        targetTemplateDecisionSource: sourceTemplateMode ? "automatic-source-preservation" as const : deck.targetTemplateDecisionSource ?? "automatic-default" as const,
+        designProfile: sourceTemplateMode ? undefined : deck.designProfile ?? createOrnlDesignProfile("automatic-default", now),
+        studioScene,
+        proposal: undefined,
+        status: sourceTemplateMode ? "audited" as const : "ready-for-cleanup" as const,
+      };
       const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? adopted : item) }, "studio-web-scene-created", `Extracted ${studioScene.slides.length} slides into the constrained HTML/CSS Studio design system; source PowerPoint bytes remain unchanged.`);
       projectRef.current = next;
       setProject(next);
-      setNotice(`Studio Web Scene created for ${studioScene.slides.length} slides. Choose a shared ORNL recipe or installed template layout, then design on the canvas.`);
+      setNotice(sourceTemplateMode
+        ? `Semantic scene created for ${studioScene.slides.length} slides. The detected source template remains authoritative; make design improvements through source-bound proposals and native Current/Proposal review.`
+        : `Studio Web Scene created for ${studioScene.slides.length} slides. Choose a shared ORNL recipe or installed template layout, then design on the canvas.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The Studio Web Scene could not be created.");
     } finally {
@@ -4135,6 +4152,7 @@ export default function App() {
     if (!selectedDeck?.studioScene) return;
     clearMessages();
     try {
+      if (deckTemplateWorkflow(selectedDeck) === "source-template-cleanup" && recipe !== "source") throw new Error("This sponsor/custom deck is preserving its source template. Use source-bound design proposals, or explicitly choose ORNL cross-template conversion before applying ORNL Studio recipes.");
       const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
       if (isProtectedOrnlTemplateSlide(selectedDeck, slideNumber) && recipe !== "source") throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and remains source-preserved. Choose another slide to redesign.`);
       const studioScene = recomposeStudioWebSlide(selectedDeck.studioScene, slideNumber, recipe, layout, recipe === "source" && isProtectedOrnlTemplateSlide(selectedDeck, slideNumber)
