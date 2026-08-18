@@ -5,6 +5,8 @@ import { sha256 } from "./hash";
 const SLIDE_LAYOUT_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 const SLIDE_MASTER_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
 const NOTES_SLIDE_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const NOTES_MASTER_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
+const SLIDE_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
 
 function decodeXml(value: string): string {
   return value.replace(/&(amp|lt|gt|quot|apos);/g, (_entity, name: string) => name === "amp" ? "&" : name === "lt" ? "<" : name === "gt" ? ">" : name === "quot" ? '"' : "'");
@@ -63,6 +65,17 @@ function layoutTarget(slidePart: string, relationships: string): string {
   throw new Error("The source slide does not have one native layout relationship.");
 }
 
+function relationshipOfType(sourcePart: string, relationships: string, expectedType: string): { attributes: string; targetPart: string } | undefined {
+  for (const match of relationships.matchAll(/<Relationship\b([^>]*?)\/>/g)) {
+    const attributes = match[1] ?? "";
+    if (decodeXml(attributeValue(attributes, "Type") ?? "") !== expectedType) continue;
+    const target = attributeValue(attributes, "Target");
+    if (!target || /^external$/i.test(attributeValue(attributes, "TargetMode") ?? "")) continue;
+    return { attributes, targetPart: resolveTarget(sourcePart, target) };
+  }
+  return undefined;
+}
+
 async function masterTarget(zip: JSZip, layoutPart: string): Promise<string | undefined> {
   const relationshipsEntry = zip.file(relationshipPart(layoutPart));
   if (!relationshipsEntry) return undefined;
@@ -99,6 +112,7 @@ export interface NativeSlidePreservationReceipt {
   clonedLayoutPart: string;
   clonedMasterPart?: string;
   copiedMediaCount: number;
+  preservedNotes: boolean;
 }
 
 /** Transplants one protected source slide and its native layout dependency graph. */
@@ -142,7 +156,57 @@ export async function preserveNativeSlide(input: { destinationBytes: Uint8Array;
   const sourceContentTypes = await text(source, "[Content_Types].xml");
   let destinationContentTypes = await text(destination, "[Content_Types].xml");
   let copiedMediaCount = 0;
-  const rewrittenRelationships = await Promise.all([...sourceRelationships.matchAll(/<Relationship\b([^>]*?)\/>/g)].map(async (match) => {
+  let preservedNotes = false;
+  const sourceNotesRelationship = relationshipOfType(sourceSlidePart, sourceRelationships, NOTES_SLIDE_TYPE);
+  const destinationNotesRelationship = relationshipOfType(destinationSlidePart, destinationRelationships, NOTES_SLIDE_TYPE);
+  if (sourceNotesRelationship) {
+    if (!destinationNotesRelationship) throw new Error(`Protected slide ${sourceSlideNumber} has speaker notes, but the editable destination has no notes container. Export is held rather than dropping notes.`);
+    const sourceNotesXml = await text(source, sourceNotesRelationship.targetPart);
+    destination.file(destinationNotesRelationship.targetPart, sourceNotesXml.replace(/(<a:fld\b[^>]*\btype=(?:"slidenum"|'slidenum')[^>]*>[\s\S]*?<a:t>)[^<]*(<\/a:t>)/gi, `$1${destinationSlideNumber}$2`));
+    const sourceNotesRelationshipsPart = relationshipPart(sourceNotesRelationship.targetPart);
+    const destinationNotesRelationshipsPart = relationshipPart(destinationNotesRelationship.targetPart);
+    const sourceNotesRelationshipsEntry = source.file(sourceNotesRelationshipsPart);
+    const destinationNotesRelationshipsEntry = destination.file(destinationNotesRelationshipsPart);
+    if (sourceNotesRelationshipsEntry) {
+      if (!destinationNotesRelationshipsEntry) throw new Error(`Protected slide ${sourceSlideNumber}'s speaker-note relationships cannot be represented in the editable destination.`);
+      const sourceNotesRelationships = await sourceNotesRelationshipsEntry.async("text");
+      const destinationNotesRelationships = await destinationNotesRelationshipsEntry.async("text");
+      const destinationNotesMaster = relationshipOfType(destinationNotesRelationship.targetPart, destinationNotesRelationships, NOTES_MASTER_TYPE);
+      const destinationSlideBacklink = relationshipOfType(destinationNotesRelationship.targetPart, destinationNotesRelationships, SLIDE_TYPE);
+      const rewrittenNotesRelationships = await Promise.all([...sourceNotesRelationships.matchAll(/<Relationship\b([^>]*?)\/>/g)].map(async (match) => {
+        let attributes = match[1] ?? "";
+        const type = decodeXml(attributeValue(attributes, "Type") ?? "");
+        const target = attributeValue(attributes, "Target");
+        const external = /^external$/i.test(attributeValue(attributes, "TargetMode") ?? "");
+        if (!target || external) return `<Relationship${attributes}/>`;
+        if (type === NOTES_MASTER_TYPE) {
+          if (!destinationNotesMaster) throw new Error(`Protected slide ${sourceSlideNumber}'s speaker notes have no destination notes master.`);
+          attributes = setAttribute(attributes, "Target", relativeTarget(destinationNotesRelationship.targetPart, destinationNotesMaster.targetPart));
+          return `<Relationship${attributes}/>`;
+        }
+        if (type === SLIDE_TYPE) {
+          if (!destinationSlideBacklink) throw new Error(`Protected slide ${sourceSlideNumber}'s speaker notes have no destination slide backlink.`);
+          attributes = setAttribute(attributes, "Target", relativeTarget(destinationNotesRelationship.targetPart, destinationSlidePart));
+          return `<Relationship${attributes}/>`;
+        }
+        const sourceTargetPart = resolveTarget(sourceNotesRelationship.targetPart, target);
+        if (!/^ppt\/media\//i.test(sourceTargetPart)) throw new Error(`Protected slide ${sourceSlideNumber}'s speaker notes contain unsupported relationship ${sourceTargetPart}; export is held rather than dropping it.`);
+        const media = await source.file(sourceTargetPart)?.async("uint8array");
+        if (!media) throw new Error(`Protected slide ${sourceSlideNumber}'s speaker notes are missing related media ${sourceTargetPart}.`);
+        const extension = basename(sourceTargetPart).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? "bin";
+        const destinationPart = `ppt/media/source-notes-slide-${sourceSlideNumber}-${(await sha256(media)).slice(0, 12)}-${copiedMediaCount + 1}.${extension}`;
+        destination.file(destinationPart, media);
+        destinationContentTypes = addMediaContentType(destinationContentTypes, sourceContentTypes, sourceTargetPart);
+        copiedMediaCount += 1;
+        attributes = setAttribute(attributes, "Target", relativeTarget(destinationNotesRelationship.targetPart, destinationPart));
+        return `<Relationship${attributes}/>`;
+      }));
+      const notesRelationshipRoot = sourceNotesRelationships.match(/^\s*<\?xml[^>]*\?>\s*<Relationships\b([^>]*)>/i)?.[1] ?? ' xmlns="http://schemas.openxmlformats.org/package/2006/relationships"';
+      destination.file(destinationNotesRelationshipsPart, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships${notesRelationshipRoot}>${rewrittenNotesRelationships.join("")}</Relationships>`);
+    }
+    preservedNotes = true;
+  }
+  const rewrittenRelationships = (await Promise.all([...sourceRelationships.matchAll(/<Relationship\b([^>]*?)\/>/g)].map(async (match) => {
     let attributes = match[1] ?? "";
     const type = decodeXml(attributeValue(attributes, "Type") ?? "");
     const target = attributeValue(attributes, "Target");
@@ -152,6 +216,7 @@ export async function preserveNativeSlide(input: { destinationBytes: Uint8Array;
       attributes = setAttribute(attributes, "Target", relativeTarget(destinationSlidePart, cloned.receipt.clonedLayoutPart));
       return `<Relationship${attributes}/>`;
     }
+    if (type === NOTES_SLIDE_TYPE) return undefined;
     const sourceTargetPart = resolveTarget(sourceSlidePart, target);
     if (!/^ppt\/media\//i.test(sourceTargetPart)) throw new Error(`Protected slide ${sourceSlideNumber} preservation does not yet support relationship ${sourceTargetPart}; export is held rather than flattening it.`);
     const media = await source.file(sourceTargetPart)?.async("uint8array");
@@ -163,7 +228,7 @@ export async function preserveNativeSlide(input: { destinationBytes: Uint8Array;
     copiedMediaCount += 1;
     attributes = setAttribute(attributes, "Target", relativeTarget(destinationSlidePart, destinationPart));
     return `<Relationship${attributes}/>`;
-  }));
+  }))).filter((relationship): relationship is string => Boolean(relationship));
   const usedRelationshipIds = new Set(rewrittenRelationships.map((relationship) => attributeValue(relationship, "Id") ?? "").filter(Boolean));
   for (const match of destinationRelationships.matchAll(/<Relationship\b([^>]*?)\/>/g)) {
     let attributes = match[1] ?? "";
@@ -175,5 +240,5 @@ export async function preserveNativeSlide(input: { destinationBytes: Uint8Array;
   destination.file(destinationRelationshipsPart, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships${relationshipRoot}>${rewrittenRelationships.join("")}</Relationships>`);
   destination.file("[Content_Types].xml", destinationContentTypes);
   const bytes = await destination.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
-  return { bytes, receipt: { slideNumber: destinationSlideNumber, sourceSlideNumber, destinationSlideNumber, sourceSlideSha256: await sha256(await sourceSlide.async("uint8array")), clonedLayoutPart: cloned.receipt.clonedLayoutPart, clonedMasterPart: preservedMasterPart, copiedMediaCount } };
+  return { bytes, receipt: { slideNumber: destinationSlideNumber, sourceSlideNumber, destinationSlideNumber, sourceSlideSha256: await sha256(await sourceSlide.async("uint8array")), clonedLayoutPart: cloned.receipt.clonedLayoutPart, clonedMasterPart: preservedMasterPart, copiedMediaCount, preservedNotes } };
 }

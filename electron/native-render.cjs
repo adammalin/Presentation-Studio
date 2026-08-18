@@ -2,7 +2,7 @@ const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const { execFile, spawnSync } = require("node:child_process");
+const { execFile, spawn, spawnSync } = require("node:child_process");
 const { createHash, randomUUID } = require("node:crypto");
 const { promisify } = require("node:util");
 const {
@@ -18,6 +18,7 @@ const POWERPOINT_MAC_PATH = "/Applications/Microsoft PowerPoint.app";
 const MAX_NATIVE_SOURCE_BYTES = 1_250_000_000;
 const MAX_NATIVE_RENDER_BYTES = 300_000_000;
 const MAX_NATIVE_SLIDES = 1_000;
+const PDF_RASTER_WORKER_PATH = path.join(__dirname, "pdf-raster-worker.cjs");
 
 async function openPresentationCount() {
   const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", 'tell application "Microsoft PowerPoint" to return count of presentations'], { timeout: 10_000, maxBuffer: 64 * 1024 });
@@ -134,46 +135,52 @@ function bundledPdfRasterizerAvailable() {
   try {
     require.resolve("pdfjs-dist/legacy/build/pdf.mjs");
     require.resolve("@napi-rs/canvas");
-    return true;
+    return fsSync.statSync(PDF_RASTER_WORKER_PATH).isFile();
   } catch {
     return false;
   }
 }
 
-async function rasterizePdfWithPdfJs({ pdfPath, outputDirectory, width, format }) {
-  const canvasApi = require("@napi-rs/canvas");
-  for (const globalName of ["DOMMatrix", "ImageData", "Path2D"]) {
-    if (!globalThis[globalName] && canvasApi[globalName]) globalThis[globalName] = canvasApi[globalName];
-  }
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(await fs.readFile(pdfPath)),
-    disableWorker: true,
-    isEvalSupported: false,
-    useSystemFonts: true,
+async function runIsolatedPdfRasterizer({ pdfPath, outputDirectory, width, format }, options = {}) {
+  const executable = options.executable || process.execPath;
+  const workerPath = options.workerPath || PDF_RASTER_WORKER_PATH;
+  const timeout = options.timeout || 180_000;
+  const request = JSON.stringify({ pdfPath, outputDirectory, width, format });
+  const environment = { ...process.env, ...options.environment };
+  if (process.versions.electron) environment.ELECTRON_RUN_AS_NODE = "1";
+  await new Promise((resolve, reject) => {
+    const child = spawn(executable, [workerPath, request], {
+      cwd: __dirname,
+      env: environment,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(new Error("The isolated PDF preview worker timed out."));
+    }, timeout);
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 16_384) stderr += String(chunk).slice(0, 16_384 - stderr.length);
+    });
+    child.once("error", (error) => finish(new Error(`The isolated PDF preview worker could not start: ${error.message}`)));
+    child.once("exit", (code, signal) => {
+      if (signal) return finish(new Error(`The isolated PDF preview worker stopped unexpectedly (${signal}). Presentation Studio and the open project remain safe.`));
+      if (code !== 0) return finish(new Error(`The isolated PDF preview worker failed${stderr.trim() ? `: ${stderr.trim()}` : ` with exit code ${code}`}.`));
+      finish();
+    });
   });
-  const document = await loadingTask.promise;
-  try {
-    if (document.numPages < 1) throw new Error("The PowerPoint PDF render does not contain any pages.");
-    if (document.numPages > MAX_NATIVE_SLIDES) throw new Error("The presentation exceeds the 1,000-slide native render limit.");
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      try {
-        const baseViewport = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: width / baseViewport.width });
-        const canvas = canvasApi.createCanvas(Math.round(viewport.width), Math.round(viewport.height));
-        const context = canvas.getContext("2d");
-        await page.render({ canvas, canvasContext: context, viewport, intent: "print", background: "rgb(255,255,255)" }).promise;
-        const extension = format === "png" ? "png" : "jpg";
-        const encoded = format === "png" ? await canvas.encode("png") : await canvas.encode("jpeg", 90);
-        await fs.writeFile(path.join(outputDirectory, `slide-${pageNumber}.${extension}`), encoded, { mode: 0o600 });
-      } finally {
-        page.cleanup();
-      }
-    }
-  } finally {
-    await document.destroy();
-  }
+}
+
+async function rasterizePdfWithPdfJs(input) {
+  await runIsolatedPdfRasterizer(input);
 }
 
 function nativeRenderCapabilities(platform = process.platform) {
@@ -237,7 +244,7 @@ function slideNumberFromFile(fileName) {
   return match ? Number(match[1]) : Number.NaN;
 }
 
-async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.pptx", homePath = os.homedir(), width = 1400, format = "jpeg" }) {
+async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.pptx", homePath = os.homedir(), width = 1400, format = "jpeg", rasterizePdf }) {
   const capabilities = nativeRenderCapabilities();
   if (capabilities.sessionLocked) return { status: "failed", renderer: "powerpoint-native", authoritative: false, reason: "mac-session-locked", slides: [], warnings: ["Unlock the Mac, leave Microsoft PowerPoint available, and retry native rendering."] };
   if (!capabilities.available) {
@@ -282,13 +289,27 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
     }
     const pdfStat = await fs.stat(pdfPath).catch(() => null);
     if (!pdfStat?.isFile() || pdfStat.size === 0) throw new Error("Microsoft PowerPoint did not create the expected native PDF render.");
-    if (capabilities.rasterizerPath) {
-      const rasterArguments = format === "png"
-        ? ["-png", "-scale-to-x", String(width), "-scale-to-y", "-1", pdfPath, imagePrefix]
-        : ["-jpeg", "-scale-to-x", String(width), "-scale-to-y", "-1", "-jpegopt", "quality=90,progressive=y,optimize=y", pdfPath, imagePrefix];
-      await execFileAsync(capabilities.rasterizerPath, rasterArguments, { timeout: 180_000, maxBuffer: 1024 * 1024 });
-    } else {
-      await rasterizePdfWithPdfJs({ pdfPath, outputDirectory: jobRoot, width, format });
+    try {
+      if (capabilities.rasterizerPath) {
+        const rasterArguments = format === "png"
+          ? ["-png", "-scale-to-x", String(width), "-scale-to-y", "-1", pdfPath, imagePrefix]
+          : ["-jpeg", "-scale-to-x", String(width), "-scale-to-y", "-1", "-jpegopt", "quality=90,progressive=y,optimize=y", pdfPath, imagePrefix];
+        await execFileAsync(capabilities.rasterizerPath, rasterArguments, { timeout: 180_000, maxBuffer: 1024 * 1024 });
+      } else if (rasterizePdf) {
+        await rasterizePdf({ pdfPath, outputDirectory: jobRoot, width, format });
+      } else {
+        await rasterizePdfWithPdfJs({ pdfPath, outputDirectory: jobRoot, width, format });
+      }
+    } catch (error) {
+      return {
+        status: "failed",
+        renderer: "powerpoint-native",
+        authoritative: false,
+        sourceSha256: digest,
+        slides: [],
+        reason: "pdf-rasterizer-failed",
+        warnings: [error instanceof Error ? error.message : "The isolated PDF preview worker failed. Presentation Studio and the open project remain safe."],
+      };
     }
     const fileNames = (await fs.readdir(jobRoot)).filter((fileName) => format === "png" ? /^slide-\d+\.png$/i.test(fileName) : /^slide-\d+\.jpe?g$/i.test(fileName)).sort((left, right) => slideNumberFromFile(left) - slideNumberFromFile(right));
     if (fileNames.length === 0) throw new Error("The local rasterizer did not create any slide images.");
@@ -305,7 +326,7 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
     return {
       status: "ready",
       renderer: "powerpoint-native",
-      pipeline: `powerpoint-save-as-pdf+${capabilities.rasterizer === "pdftoppm" ? "pdftoppm" : "bundled-pdfjs"}:${format}:${width}px`,
+      pipeline: `powerpoint-save-as-pdf+${capabilities.rasterizer === "pdftoppm" ? "pdftoppm" : rasterizePdf ? "chromium-pdfjs" : "bundled-pdfjs-worker"}:${format}:${width}px`,
       powerPointVersion: automation?.stdout?.trim().split("|")[1] || undefined,
       authoritative: true,
       sourceSha256: digest,
@@ -330,6 +351,7 @@ module.exports = {
   renderPowerPointNative,
   rasterizePdfWithPdfJs,
   resolvePdfRasterizer,
+  runIsolatedPdfRasterizer,
   slideNumberFromFile,
   validatePdfRasterizer,
 };

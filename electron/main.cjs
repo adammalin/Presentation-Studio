@@ -5,6 +5,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { createHash, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 const { nativeRenderCapabilities, renderPowerPointNative } = require("./native-render.cjs");
+const { createChromiumPdfRasterizer } = require("./chromium-pdf-raster.cjs");
 const { measurePowerPointNative, nativeMeasurementCapabilities } = require("./native-measurement.cjs");
 const { installEditorContextMenu } = require("./editor-context-menu.cjs");
 const { captureDeckQualification, finalizeDeckQualification, readQualificationEvidence, safeSegment } = require("./deck-qualification.cjs");
@@ -14,6 +15,7 @@ const projectRoot = path.resolve(__dirname, "..");
 const smokeTest = process.env.PRESENTATION_STUDIO_SMOKE_TEST === "1";
 const capturePath = process.env.PRESENTATION_STUDIO_CAPTURE_PATH || "";
 const captureView = process.env.PRESENTATION_STUDIO_CAPTURE_VIEW || "";
+const captureWaitForNative = process.env.PRESENTATION_STUDIO_CAPTURE_WAIT_FOR_NATIVE === "1";
 const captureResourceFixture = process.env.PRESENTATION_STUDIO_CAPTURE_RESOURCE_FIXTURE === "1";
 const skipFirstRunTour = process.env.PRESENTATION_STUDIO_SKIP_FIRST_RUN_TOUR === "1";
 const launchProjectPath = String(process.env.PRESENTATION_STUDIO_OPEN_PROJECT || "").trim();
@@ -33,6 +35,7 @@ const pendingMcpCommands = new Map();
 let autosaveQueue = Promise.resolve();
 let preferencesQueue = Promise.resolve();
 let nativeRenderQueue = Promise.resolve();
+const rasterizePdfWithChromium = createChromiumPdfRasterizer(BrowserWindow);
 
 function runtimePath() {
   return path.join(app.getPath("userData"), MCP_RUNTIME_FILE_NAME);
@@ -304,7 +307,7 @@ function registerIpc() {
     const bytes = validateBinary(payload?.bytes);
     const width = payload?.width === undefined ? 1400 : Number(payload.width);
     const format = payload?.format === "png" ? "png" : "jpeg";
-    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => renderPowerPointNative({ bytes, name, homePath: app.getPath("home"), width, format }));
+    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => renderPowerPointNative({ bytes, name, homePath: app.getPath("home"), width, format, rasterizePdf: rasterizePdfWithChromium }));
     return nativeRenderQueue;
   });
 
@@ -330,6 +333,7 @@ function registerIpc() {
       candidate: { name: candidateName, bytes: candidateBytes },
       outputRoot,
       width,
+      render: (input) => renderPowerPointNative({ ...input, homePath: app.getPath("home"), rasterizePdf: rasterizePdfWithChromium }),
     }));
     return nativeRenderQueue;
   });
@@ -604,6 +608,15 @@ async function createWindow() {
       await new Promise((resolve) => setTimeout(resolve, 150));
       const viewReady = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.app-shell') && document.body.innerText.trim().length > 100)").catch(() => false);
       if (!viewReady) throw new Error(`The capture view ${captureView} caused the renderer shell to disappear or become blank.`);
+    }
+    if (captureWaitForNative) {
+      let nativeReady = false;
+      for (let attempt = 0; attempt < 1_800; attempt += 1) {
+        nativeReady = await mainWindow.webContents.executeJavaScript("(() => { const body = document.body.innerText; const central = body.match(/(\\d+)\\/(\\d+) exact PowerPoint results ready/); return (body.includes('PowerPoint-native previews') || Boolean(central && central[1] === central[2])) && !body.includes('Rendering in PowerPoint…') && !body.includes('Compiling saved Studio design…'); })()").catch(() => false);
+        if (nativeReady) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!nativeReady) throw new Error("The launch-project smoke check did not finish its PowerPoint-native preview render.");
     }
     if (captureResourceFixture) {
       const added = await mainWindow.webContents.executeJavaScript(`(() => { const input = document.querySelector('#web-resource-picker'); if (!input) return false; const transfer = new DataTransfer(); transfer.items.add(new File(['Synthetic assertion\\n\\nSynthetic evidence for local UI qualification.'], 'synthetic-source.md', { type: 'text/markdown' })); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);

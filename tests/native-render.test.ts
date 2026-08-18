@@ -13,6 +13,7 @@ const {
   jpegDimensions,
   pngDimensions,
   rasterizePdfWithPdfJs,
+  runIsolatedPdfRasterizer,
   slideNumberFromFile,
   validatePdfRasterizer,
 } = require("../electron/native-render.cjs") as {
@@ -22,6 +23,7 @@ const {
   jpegDimensions(bytes: Uint8Array): { width: number; height: number };
   pngDimensions(bytes: Uint8Array): { width: number; height: number };
   rasterizePdfWithPdfJs(input: { pdfPath: string; outputDirectory: string; width: number; format: "jpeg" | "png" }): Promise<void>;
+  runIsolatedPdfRasterizer(input: { pdfPath: string; outputDirectory: string; width: number; format: "jpeg" | "png" }, options?: { workerPath?: string; timeout?: number }): Promise<void>;
   slideNumberFromFile(fileName: string): number;
   validatePdfRasterizer(candidate?: string): string | null;
 };
@@ -84,6 +86,23 @@ test("bundled PDF.js rasterizer produces slide images without a system pdftoppm"
     await rasterizePdfWithPdfJs({ pdfPath, outputDirectory: root, width: 800, format: "png" });
     const data = readFileSync(path.join(root, "slide-1.png"));
     assert.deepEqual(pngDimensions(data), { width: 800, height: 400 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bundled PDF raster failures stay isolated from the app process", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "presentation studio isolated rasterizer "));
+  try {
+    const pdfPath = path.join(root, "synthetic.pdf");
+    const workerPath = path.join(root, "failing-worker.cjs");
+    writeFileSync(pdfPath, minimalPdf());
+    writeFileSync(workerPath, "process.stderr.write('synthetic native failure\\n'); process.exit(17);\n");
+    await assert.rejects(
+      () => runIsolatedPdfRasterizer({ pdfPath, outputDirectory: root, width: 800, format: "png" }, { workerPath, timeout: 5_000 }),
+      /isolated PDF preview worker failed: synthetic native failure/i,
+    );
+    assert.equal(readFileSync(pdfPath).subarray(0, 4).toString(), "%PDF");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

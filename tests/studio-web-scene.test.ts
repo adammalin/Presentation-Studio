@@ -570,35 +570,39 @@ test("source-preserved title composition remains visually locked while exact tex
     sourceSlideText: { [sourceSlide.slideNumber]: deck.audit!.slides[0].text },
     sourceSlideRasters: { [sourceSlide.slideNumber]: { data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=", width: 1, height: 1 } },
   });
-  await assert.rejects(() => preserveNativeSlide({ destinationBytes: rasterRebuilt.bytes, sourceBytes: bytes, slideNumber: 1 }), /notesSlide1\.xml.*held rather than flattening/i);
-  const minimalSource = await JSZip.loadAsync(bytes);
-  const slideRelationshipsPart = "ppt/slides/_rels/slide1.xml.rels";
-  const relationships = await minimalSource.file(slideRelationshipsPart)!.async("text");
-  minimalSource.file(slideRelationshipsPart, relationships.replace(/<Relationship\b[^>]*Type="[^"]*\/notesSlide"[^>]*\/>/g, ""));
-  const minimalSourceBytes = await minimalSource.generateAsync({ type: "uint8array" });
-  const minimalAudit = await auditPptx(minimalSourceBytes);
-  const rebuilt = await preserveNativeSlide({ destinationBytes: rasterRebuilt.bytes, sourceBytes: minimalSourceBytes, slideNumber: 1 });
+  const sourceWithNotes = await JSZip.loadAsync(bytes);
+  const notesPart = "ppt/notesSlides/notesSlide1.xml";
+  const notesXml = await sourceWithNotes.file(notesPart)!.async("text");
+  sourceWithNotes.file(notesPart, notesXml.replace("<a:t></a:t>", "<a:t>Protected speaker note</a:t>"));
+  const sourceWithNotesBytes = await sourceWithNotes.generateAsync({ type: "uint8array" });
+  const sourceAudit = await auditPptx(sourceWithNotesBytes);
+  const rebuilt = await preserveNativeSlide({ destinationBytes: rasterRebuilt.bytes, sourceBytes: sourceWithNotesBytes, slideNumber: 1 });
   const after = await auditPptx(rebuilt.bytes);
-  assert.equal(after.slides[0].textHash, minimalAudit.slides[0].textHash);
+  assert.equal(after.slides[0].textHash, sourceAudit.slides[0].textHash);
   assert.equal(rebuilt.receipt.slideNumber, 1);
   assert.match(rebuilt.receipt.clonedLayoutPart, /^ppt\/slideLayouts\/slideLayout\d+\.xml$/);
   assert.match(rebuilt.receipt.clonedMasterPart ?? "", /^ppt\/slideMasters\/slideMaster\d+\.xml$/);
-  assert.equal(rebuilt.receipt.sourceSlideSha256, minimalAudit.slides[0].sourcePartSha256);
+  assert.equal(rebuilt.receipt.sourceSlideSha256, sourceAudit.slides[0].sourcePartSha256);
+  assert.equal(rebuilt.receipt.preservedNotes, true);
   const rebuiltZip = await JSZip.loadAsync(rebuilt.bytes);
   const preservedRelationships = await rebuiltZip.file("ppt/slides/_rels/slide1.xml.rels")!.async("text");
   assert.match(preservedRelationships, /relationships\/notesSlide/);
+  const preservedNotes = await rebuiltZip.file("ppt/notesSlides/notesSlide1.xml")!.async("text");
+  assert.match(preservedNotes, /Protected speaker note/);
   const relationshipIds = [...preservedRelationships.matchAll(/\bId="([^"]+)"/g)].map((match) => match[1]);
   assert.equal(new Set(relationshipIds).size, relationshipIds.length);
   const twoSlideDestination = await buildStudioCompositionPptx({
     ...source,
     slides: source.slides.slice(0, 2).map((slide) => ({ ...slide, status: "designed" as const, recipe: "ornl-title-content" as const })),
   }, { catalog, strict: false });
-  const shifted = await preserveNativeSlide({ destinationBytes: twoSlideDestination.bytes, sourceBytes: minimalSourceBytes, sourceSlideNumber: 1, destinationSlideNumber: 2 });
+  const shifted = await preserveNativeSlide({ destinationBytes: twoSlideDestination.bytes, sourceBytes: sourceWithNotesBytes, sourceSlideNumber: 1, destinationSlideNumber: 2 });
   const shiftedAudit = await auditPptx(shifted.bytes);
   assert.equal(shiftedAudit.slideCount, 2);
-  assert.equal(shiftedAudit.slides[1].textHash, minimalAudit.slides[0].textHash);
+  assert.equal(shiftedAudit.slides[1].textHash, sourceAudit.slides[0].textHash);
   assert.equal(shifted.receipt.sourceSlideNumber, 1);
   assert.equal(shifted.receipt.destinationSlideNumber, 2);
+  const shiftedZip = await JSZip.loadAsync(shifted.bytes);
+  assert.match(await shiftedZip.file("ppt/notesSlides/notesSlide2.xml")!.async("text"), /Protected speaker note/);
 });
 
 test("fresh table composition preserves an explicit visible cell break in the editable PowerPoint grid", async () => {
