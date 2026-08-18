@@ -573,7 +573,7 @@ async function createWindow() {
         await wait(50);
       }
       for (let attempt = 0; attempt < 120; attempt += 1) {
-        if (document.body.innerText.includes('1 decks · preserve-exact')) return true;
+        if (document.body.innerText.includes('all embedded resource hashes passed validation.')) return true;
         await wait(100);
       }
       return false;
@@ -581,7 +581,7 @@ async function createWindow() {
     if (!opened) throw new Error("The launch project did not finish opening in Presentation Studio.");
     if (process.env.PRESENTATION_STUDIO_ENABLE_AI_SESSION === "1") {
       await mainWindow.webContents.executeJavaScript(`(() => {
-        const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('AI session'));
+        const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('AI access'));
         if (button?.textContent?.includes('Access off')) button.click();
         return Boolean(button);
       })()`);
