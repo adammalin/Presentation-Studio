@@ -182,7 +182,7 @@ export function buildSlideDesignWorkOrder(input: {
     closedContentInventory: {
       onlyAllowedVisibleText: slide.text,
       lockedTextHash: slide.textHash,
-      allowedVisuals: "Existing source visuals plus locally authorized Resources explicitly shared for this session. No invented technical content or pseudo-official marks.",
+      allowedVisuals: "Existing source visuals plus embedded Resources automatically shared by the active AI session. No invented technical content or pseudo-official marks.",
       mustPreserve: ["exact visible wording", "technical meaning", "native tables/charts/equations", "source media identity", "notes/comments/relationships", "slide count and order"],
       forbidden: ["rewriting", "omitting approved content", "silent type shrink", "flattening supported objects", "fabricated icons/images/data/claims", "browser-only effects without PowerPoint representation"],
     },

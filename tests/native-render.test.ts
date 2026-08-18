@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -8,17 +8,45 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const {
   POWERPOINT_RENDER_SCRIPT,
+  bundledPdfRasterizerAvailable,
   classifyPowerPointAutomationError,
   jpegDimensions,
+  pngDimensions,
+  rasterizePdfWithPdfJs,
   slideNumberFromFile,
   validatePdfRasterizer,
 } = require("../electron/native-render.cjs") as {
   POWERPOINT_RENDER_SCRIPT: string;
+  bundledPdfRasterizerAvailable(): boolean;
   classifyPowerPointAutomationError(error: unknown): string;
   jpegDimensions(bytes: Uint8Array): { width: number; height: number };
+  pngDimensions(bytes: Uint8Array): { width: number; height: number };
+  rasterizePdfWithPdfJs(input: { pdfPath: string; outputDirectory: string; width: number; format: "jpeg" | "png" }): Promise<void>;
   slideNumberFromFile(fileName: string): number;
   validatePdfRasterizer(candidate?: string): string | null;
 };
+
+function minimalPdf(): Buffer {
+  const content = "BT /F1 18 Tf 20 50 Td (Presentation Studio) Tj ET\n";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+  ];
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(source));
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(source);
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  source += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(source);
+}
 
 test("native rasterizer readiness resolves symlinks and proves the executable can start", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "presentation studio rasterizer "));
@@ -42,6 +70,20 @@ test("native rasterizer readiness resolves symlinks and proves the executable ca
     writeFileSync(broken, process.platform === "win32" ? "not an executable" : "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
     chmodSync(broken, 0o755);
     assert.equal(validatePdfRasterizer(broken), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bundled PDF.js rasterizer produces slide images without a system pdftoppm", async () => {
+  assert.equal(bundledPdfRasterizerAvailable(), true);
+  const root = mkdtempSync(path.join(os.tmpdir(), "presentation studio bundled rasterizer "));
+  try {
+    const pdfPath = path.join(root, "synthetic.pdf");
+    writeFileSync(pdfPath, minimalPdf());
+    await rasterizePdfWithPdfJs({ pdfPath, outputDirectory: root, width: 800, format: "png" });
+    const data = readFileSync(path.join(root, "slide-1.png"));
+    assert.deepEqual(pngDimensions(data), { width: 800, height: 400 });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

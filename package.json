@@ -1,7 +1,7 @@
 {
   "name": "presentation-studio",
   "productName": "Presentation Studio",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Local-first semantic presentation design and PowerPoint-native qualification studio",
   "main": "electron/main.cjs",
@@ -30,9 +30,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@napi-rs/canvas": "0.1.80",
     "@phosphor-icons/react": "^2.1.10",
     "fast-xml-parser": "^5.5.6",
     "jszip": "^3.10.1",
+    "pdfjs-dist": "5.4.624",
     "pptxgenjs": "4.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",

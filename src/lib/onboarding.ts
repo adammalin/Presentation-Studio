@@ -28,7 +28,7 @@ export const ONBOARDING_TOUR_STEPS: readonly OnboardingTourStep[] = Object.freez
     target: "nav-resources",
     eyebrow: "Portable sources",
     title: "Create directly from project Resources",
-    body: "Drop documents, data, images, media, SVGs, and presentations anywhere in the app. Accepted files and local derivatives stay embedded by hash. Share document Text or image Preview for the current AI session, and an MCP model can build a new source-grounded native Studio presentation without a starter PowerPoint.",
+    body: "Drop documents, data, images, media, SVGs, and presentations anywhere in the app. Accepted files and local derivatives stay embedded by hash. Turn on AI access once and Studio automatically shares every compatible source so an MCP model can build a new source-grounded native presentation without a starter PowerPoint.",
   }),
   Object.freeze({
     id: "inspect",
@@ -55,8 +55,8 @@ export const ONBOARDING_TOUR_STEPS: readonly OnboardingTourStep[] = Object.freez
     id: "ai-session",
     target: "ai-session",
     eyebrow: "Local AI control",
-    title: "AI access is session-based",
-    body: "The local MCP bridge is ready while the app is open, but project access stays off until you enable AI session access. Each Resource separately cycles through Not shared, Metadata, and—when supported—Text or Preview sharing.",
+    title: "One switch shares the project",
+    body: "The local MCP bridge is ready while the app is open, but project access stays off until you turn on AI access. That single switch automatically shares extracted document/data text, bounded image previews, and metadata for every other embedded Resource. Turn it off to remove all access at once.",
   }),
   Object.freeze({
     id: "save",

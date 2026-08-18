@@ -74,6 +74,7 @@ import { compareNativeSlideRenders, type PixelComparisonMetrics } from "./lib/re
 import { buildProjectPackage, openProjectPackage } from "./lib/project-package";
 import { projectPackageFromDrop } from "./lib/project-drop";
 import { removeResourceFromProject, resourceRemovalImpact } from "./lib/resource-removal";
+import { resourceWithAiSessionAccess, resourcesWithAiSessionAccess } from "./lib/resource-ai-access";
 import {
   isPowerPointResource,
   MAX_PROJECT_RESOURCE_BYTES,
@@ -492,7 +493,7 @@ function SlidesView({ deck, catalog, nativeRender, outputSlides, loading, revisi
     <span className="slides-empty-icon"><Slideshow size={34} weight="light" /></span>
     <p className="eyebrow">Slides workspace</p>
     <h1>No presentation has been created yet</h1>
-    <p>{resourceCount > 0 ? `This project contains ${resourceCount} Resource${resourceCount === 1 ? "" : "s"}. Share extracted text or image previews for this AI session, then ask the Presentation Studio MCP to create a source-grounded native presentation—or add a PowerPoint to redesign it.` : "Add source materials or a PowerPoint. Presentation Studio can create a new native JSON presentation from shared Resources or redesign an imported deck in the same central scene."}</p>
+    <p>{resourceCount > 0 ? `This project contains ${resourceCount} Resource${resourceCount === 1 ? "" : "s"}. Turn on AI access once and Studio automatically shares every compatible source, then ask the Presentation Studio MCP to create a source-grounded native presentation—or add a PowerPoint to redesign it.` : "Add source materials or a PowerPoint. Presentation Studio can create a new native JSON presentation from shared Resources or redesign an imported deck in the same central scene."}</p>
     <div><button className="button primary" type="button" onClick={onAddDeck}><PresentationChart size={17} />Add a PowerPoint</button>{resourceCount > 0 && <button className="button secondary" type="button" onClick={onOpenResources}><Archive size={17} />Review Resources</button>}</div>
     <small>New presentations use the installed ORNL Template Pack, Aptos, Resource-hash provenance, editable Studio objects, and PowerPoint-native QA.</small>
   </section>;
@@ -934,7 +935,7 @@ function StudioVisualNeedsPanel({ slide, conceptResources, onCreate, onHold, onA
         <div className="studio-visual-need-title"><strong>{need.type.replaceAll("-", " ")}</strong><span>{need.status.replaceAll("-", " ")}</span></div>
         <p>{need.communicationJob}</p>
         <small>{need.expression} · {need.brandExpression.motif.replaceAll("-", " ")} · {need.brandExpression.accent} · {need.disclosurePolicy.replaceAll("-", " ")} · {need.targetSlot.role.replaceAll("-", " ")}</small>
-        {linkedReference ? <><div className="studio-visual-need-concept">{linkedSource ? <img src={linkedSource} alt="Attached concept-only visual direction" /> : <span><Images size={18} />Preview permission required</span>}<small>{linkedReference.blueprint.summary}</small></div><div className="studio-visual-need-actions"><span><Images size={14} />Concept attached · {linkedReference.blueprint.zones.length} zone{linkedReference.blueprint.zones.length === 1 ? "" : "s"}</span><button className="button secondary small" disabled={!linkedReference.blueprint.zones.length || need.status !== "concept-attached"} title={linkedReference.blueprint.zones.length ? "Rebuild approved visual zones with exact editable source content." : "The AI must describe normalized semantic zones before reconstruction."} onClick={() => onReconstruct(slide.slideNumber, linkedReference.id)}><MagicWand size={13} />Reconstruct editable</button><button className="button ghost small" onClick={() => onDetach(slide.slideNumber, linkedReference.id)}><X size={13} />Detach</button></div></> : need.status === "brief-ready" ? <div className="studio-visual-need-actions attach"><select value={selectedResourceId} disabled={!conceptResources.length} onChange={(event) => setSelectedResources((current) => ({ ...current, [need.id]: event.currentTarget.value }))}><option value="">{conceptResources.length ? "Choose concept image" : "Enable Preview on an image Resource"}</option>{conceptResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}</select><button className="button secondary small" disabled={!selectedResourceId} onClick={() => onAttach(slide.slideNumber, need.id, selectedResourceId)}>Attach</button></div> : undefined}
+        {linkedReference ? <><div className="studio-visual-need-concept">{linkedSource ? <img src={linkedSource} alt="Attached concept-only visual direction" /> : <span><Images size={18} />Turn on AI access for preview</span>}<small>{linkedReference.blueprint.summary}</small></div><div className="studio-visual-need-actions"><span><Images size={14} />Concept attached · {linkedReference.blueprint.zones.length} zone{linkedReference.blueprint.zones.length === 1 ? "" : "s"}</span><button className="button secondary small" disabled={!linkedReference.blueprint.zones.length || need.status !== "concept-attached"} title={linkedReference.blueprint.zones.length ? "Rebuild approved visual zones with exact editable source content." : "The AI must describe normalized semantic zones before reconstruction."} onClick={() => onReconstruct(slide.slideNumber, linkedReference.id)}><MagicWand size={13} />Reconstruct editable</button><button className="button ghost small" onClick={() => onDetach(slide.slideNumber, linkedReference.id)}><X size={13} />Detach</button></div></> : need.status === "brief-ready" ? <div className="studio-visual-need-actions attach"><select value={selectedResourceId} disabled={!conceptResources.length} onChange={(event) => setSelectedResources((current) => ({ ...current, [need.id]: event.currentTarget.value }))}><option value="">{conceptResources.length ? "Choose concept image" : "Turn on AI access to share images"}</option>{conceptResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}</select><button className="button secondary small" disabled={!selectedResourceId} onClick={() => onAttach(slide.slideNumber, need.id, selectedResourceId)}>Attach</button></div> : undefined}
         {!['held', 'resolved'].includes(need.status) && <button className="studio-visual-need-hold" onClick={() => onHold(slide.slideNumber, need.id)}>Hold this brief</button>}
       </article>;
     })}
@@ -1274,7 +1275,7 @@ function ReviewView({ deck, projectUpdatedAt, currentCatalog, proposalCatalog, c
     <section className="panel review-completion"><div className="lock-copy"><LockKey size={20} /><span><strong>Exact-content guard</strong><small>Approving applies the selected design plan to the project only. Export remains a separate new-copy action.</small></span></div><div className="review-actions">{proposal.status === "pending" ? <><button className="button ghost" onClick={onReject}><X size={17} />Reject proposal</button><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "edit")}><Crosshair size={17} />Edit this slide</button><button className="button primary" disabled={!canApprovePlan} title={unresolvedRequestCount ? "Resolve requested changes before approving the plan." : undefined} onClick={() => onApply(selectedNumber)}><CheckCircle size={18} />Approve all &amp; continue</button></> : proposal.status === "applied" ? <><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "comment")}><ChatCircleDots size={17} />Comment for AI</button><button className="button secondary" onClick={() => onOpenSlide(selectedNumber, "edit")}><Crosshair size={17} />Continue editing</button><button className="button primary" onClick={onExport}><FileArrowDown size={17} />Export review copy</button></> : <span className="muted">Proposal rejected; the source is unchanged.</span>}</div></section></div>;
 }
 
-function ResourcesView({ project, onToggleMcp, onAdd, onRemove }: { project: PresentationStudioProject; onToggleMcp: (id: string) => void; onAdd: () => void; onRemove: (id: string) => void }) {
+function ResourcesView({ project, aiSessionEnabled, onAdd, onRemove }: { project: PresentationStudioProject; aiSessionEnabled: boolean; onAdd: () => void; onRemove: (id: string) => void }) {
   const packagedBytes = project.resources.reduce((sum, resource) => sum + resource.byteLength + (resource.derivatives?.reduce((derivativeSum, derivative) => derivativeSum + derivative.byteLength, 0) ?? 0), 0);
   const extractedCount = project.resources.filter((resource) => resource.derivatives?.some((derivative) => derivative.kind === "extracted-text")).length;
   const needsReviewCount = project.resources.filter((resource) => resource.processing?.status === "needs-review").length;
@@ -1297,24 +1298,23 @@ function ResourcesView({ project, onToggleMcp, onAdd, onRemove }: { project: Pre
       </div>
       <section className="panel">
         <div className="resource-list">
-          <div className="resource-row resource-head"><span>Resource</span><span>Role</span><span>Processing</span><span>Size</span><span>AI session</span><span>Project</span></div>
+          <div className="resource-row resource-head"><span>Resource</span><span>Role</span><span>Processing</span><span>Size</span><span>AI access</span><span>Project</span></div>
           {project.resources.length === 0 && <div className="resource-empty"><FileText size={25} /><span><strong>No project Resources yet</strong><small>Drop files into the app or choose files above. Nothing will remain linked to its original location.</small></span></div>}
           {project.resources.map((resource) => {
             const processingStatus = resource.processing?.status ?? "stored-only";
             const hasWarnings = Boolean(resource.processing?.warnings.length);
-            const textShareable = Boolean(resource.derivatives?.some((derivative) => derivative.kind === "extracted-text" && derivative.bytes?.byteLength));
             return <div className="resource-row" key={resource.id} title={resource.processing?.summary}>
               <span className="resource-name"><Archive size={20} /><span><strong>{resource.name}</strong><small>{resourceKindLabels[resource.kind ?? "other"]} · {resource.sha256.slice(0, 12)}… · embedded</small></span></span>
               <span className="resource-roles">{resource.roles.join(" · ")}</span>
               <span className={`processing-state ${processingStatus}`}>{hasWarnings && <Warning size={13} />}{processingStatus === "indexed" ? "Indexed" : processingStatus === "needs-review" ? "Needs review" : "Stored only"}</span>
               <span>{formatBytes(resource.byteLength)}</span>
-              <button className={`access-toggle ${resource.mcpAccess !== "none" ? "on" : ""}`} onClick={() => onToggleMcp(resource.id)} title={resource.kind === "image" ? "Cycle between not shared, metadata only, and a bounded image preview for this AI session." : textShareable ? "Cycle between not shared, metadata only, and extracted text for this AI session." : "Toggle metadata sharing for this AI session."}>{resource.mcpAccess === "none" ? "Not shared" : resource.mcpAccess === "preview" ? "Preview shared" : resource.mcpAccess === "text" ? "Text shared" : "Metadata only"}</button>
+              <span className={`access-toggle status ${resource.mcpAccess !== "none" ? "on" : ""}`} title={aiSessionEnabled ? "Automatically shared at the highest level Presentation Studio supports while AI access is on." : "Turn on AI access to share every compatible project Resource automatically."}>{resource.mcpAccess === "none" ? "Access off" : resource.mcpAccess === "preview" ? "Preview shared" : resource.mcpAccess === "text" ? "Text shared" : "Metadata shared"}</span>
               <button className="resource-remove" onClick={() => onRemove(resource.id)} title="Remove this embedded copy from the project; the original file is never deleted"><Trash size={13} />Remove</button>
             </div>;
           })}
         </div>
       </section>
-      <div className="inline-note wide"><ShieldCheck size={18} />Original bytes and extracted text remain local. Remove affects only the embedded project copy—not the source file. Metadata sharing requires a per-Resource choice. Images expose only a bounded preview after the separate Preview shared setting; original Resource bytes are never returned through MCP.</div>
+      <div className="inline-note wide"><ShieldCheck size={18} />Turn on AI access once to share every embedded Resource automatically: extracted document/data text, bounded image previews, and metadata for formats Studio cannot yet read. Turning access off removes all AI Resource access at once. Original files remain local and are never changed.</div>
     </div>
   );
 }
@@ -2337,7 +2337,7 @@ export default function App() {
       if (request.operation === "get_resource_preview") {
         const resource = current.resources.find((item) => item.id === request.input.resourceId);
         if (!resource) throw new Error("The requested Resource is not in this project.");
-        if (resource.mcpAccess !== "preview") throw new Error("The person has not granted Preview access to this Resource for the current AI session.");
+        if (resource.mcpAccess !== "preview") throw new Error("This image is not available. Turn on AI access and re-list the project Resources.");
         const preview = await boundedResourceImagePreview(resource);
         return {
           updatedAt: current.project.updatedAt,
@@ -2362,7 +2362,7 @@ export default function App() {
           for (const resourceId of slide.imageResourceIds ?? []) {
             const resource = current.resources.find((item) => item.id === resourceId);
             if (!resource || resource.kind !== "image") throw new Error(`Slide ${index + 1} references an unavailable image Resource.`);
-            if (resource.mcpAccess !== "preview") throw new Error(`${resource.name} must be explicitly shared with Preview access before an AI can place it.`);
+            if (resource.mcpAccess !== "preview") throw new Error(`${resource.name} is not available as an image preview. Turn on AI access and re-list the project Resources.`);
           }
           if (slide.table && slide.table.rows.some((row) => row.length !== slide.table!.headers.length)) throw new Error(`Slide ${index + 1} has a table row whose cell count does not match its ${slide.table.headers.length} headers.`);
         }
@@ -2389,7 +2389,7 @@ export default function App() {
           title: String(request.input.name ?? "Untitled presentation"),
         });
         const sourceName = `${cleanFileStem(String(request.input.name ?? "Untitled presentation"))}.pptx`;
-        const generatedResource = await processResourceInput({ name: sourceName, mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", bytes: initialComposition.bytes });
+        const generatedResource = resourceWithAiSessionAccess(await processResourceInput({ name: sourceName, mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", bytes: initialComposition.bytes }), true);
         const audit = await auditPptx(initialComposition.bytes);
         if (audit.slideCount !== slides.length) throw new Error(`The native Studio compiler created ${audit.slideCount} slides for a ${slides.length}-slide plan.`);
         const adoptedAt = new Date().toISOString();
@@ -2417,7 +2417,7 @@ export default function App() {
           settings: { ...current.settings, contentPolicy: "source-grounded-generative" as const, defaultOperationScope: "compose" as const },
           resources: [...current.resources, generatedResource],
           decks: [...current.decks, deck],
-        }, "studio-presentation-created", `Created ${slides.length} source-grounded ORNL slide${slides.length === 1 ? "" : "s"} in the native Studio scene from explicitly shared Resources; no project or presentation was saved outside the app.`);
+        }, "studio-presentation-created", `Created ${slides.length} source-grounded ORNL slide${slides.length === 1 ? "" : "s"} in the native Studio scene from Resources automatically shared by the active AI session; no project or presentation was saved outside the app.`);
         projectRef.current = next;
         setProject(next);
         setSelectedDeckId(deck.id);
@@ -2538,7 +2538,7 @@ export default function App() {
         if (isProtectedOrnlTemplateSlide(deck, slideNumber)) throw new Error("This approved ORNL template slide is sacred and cannot use an Image Gen or external concept reference.");
         const resource = current.resources.find((item) => item.id === request.input.resourceId);
         if (!resource) throw new Error("The requested concept image is not embedded in this project.");
-        if (resource.mcpAccess !== "preview") throw new Error("Grant Preview access to this image in Resources before an AI can attach it as a concept reference.");
+        if (resource.mcpAccess !== "preview") throw new Error("This image is not available as a preview. Turn on AI access and re-list the project Resources.");
         const catalog = await getOrBuildSlideCatalog(deck, current);
         const baseScene = deck.studioScene ?? compileStudioWebScene(deck, catalog);
         const rawBlueprint = request.input.blueprint && typeof request.input.blueprint === "object" ? request.input.blueprint as Record<string, unknown> : {};
@@ -2583,7 +2583,7 @@ export default function App() {
         if (reference.sourceTextHash !== slide.sourceTextHash) throw new Error("The concept reference is stale because the source content binding changed.");
         const resource = current.resources.find((item) => item.id === reference.resourceId && item.sha256 === reference.resourceSha256);
         if (!resource) throw new Error("The concept Resource is missing or no longer matches its recorded identity.");
-        if (resource.mcpAccess !== "preview") throw new Error("Preview access to this concept Resource is not enabled for the current AI session.");
+        if (resource.mcpAccess !== "preview") throw new Error("This concept image is not available. Turn on AI access and re-list the project Resources.");
         const preview = await boundedResourceImagePreview(resource);
         return { updatedAt: current.project.updatedAt, deck: { id: deck.id, name: deck.name }, slideNumber, sceneRevision: deck.studioScene.revision, reference, mimeType: preview.mimeType, data: bytesToBase64(preview.bytes), width: preview.width, height: preview.height, rasterSha256: preview.sha256 };
       }
@@ -3786,6 +3786,18 @@ export default function App() {
 
   function clearMessages() { setNotice(undefined); setError(undefined); }
 
+  function updateAiSessionAccess(enabled: boolean) {
+    const current = projectRef.current;
+    const resources = resourcesWithAiSessionAccess(current.resources, enabled);
+    const next = resources === current.resources ? current : { ...current, resources };
+    projectRef.current = next;
+    setProject(next);
+    setMcpEnabled(enabled);
+    setNotice(enabled
+      ? `AI access is on. ${resources.length} embedded Resource${resources.length === 1 ? " is" : "s are"} automatically shared at the highest supported level.`
+      : "AI access is off. No project Resources are shared with MCP models.");
+  }
+
   function invalidateStudioQualification(deckId: string) {
     const current = studioDeckQualificationsRef.current[deckId];
     if (current) studioDeckQualificationHistoryRef.current = { ...studioDeckQualificationHistoryRef.current, [deckId]: [...(studioDeckQualificationHistoryRef.current[deckId] ?? []), current].slice(-5) };
@@ -3813,7 +3825,7 @@ export default function App() {
           if (intent === "decks" && !isPowerPointResource(files[index].name)) throw new Error("Only .pptx files can enter the deck audit queue.");
           setBusy(`Processing ${index + 1} of ${files.length}: ${files[index].name}`);
           const bytes = bytesFrom(files[index].bytes);
-          const processed = await processResourceInput({ name: files[index].name, filePath: files[index].filePath, mediaType: files[index].mediaType, bytes });
+          const processed = resourceWithAiSessionAccess(await processResourceInput({ name: files[index].name, filePath: files[index].filePath, mediaType: files[index].mediaType, bytes }), mcpEnabled);
           const existing = knownResources.get(processed.sha256);
           const resource = existing ?? processed;
           if (existing) duplicateCount += 1;
@@ -3959,9 +3971,10 @@ export default function App() {
 
   function adoptOpenedProject(opened: PresentationStudioProject, password?: string) {
     resetProjectRenderState();
-    projectRef.current = opened;
-    setProject(opened);
-    setSelectedDeckId(opened.decks[0]?.id);
+    const accessible = { ...opened, resources: resourcesWithAiSessionAccess(opened.resources, mcpEnabled) };
+    projectRef.current = accessible;
+    setProject(accessible);
+    setSelectedDeckId(accessible.decks[0]?.id);
     setSecureAutosavePassword(password);
     setActiveView("batch");
     setNotice(`Opened ${opened.project.name}; all embedded resource hashes passed validation.`);
@@ -4399,7 +4412,7 @@ export default function App() {
       if (!need) throw new Error("The selected visual need is no longer available.");
       const resource = current.resources.find((item) => item.id === resourceId);
       if (!resource || resource.kind !== "image") throw new Error("Choose an embedded image Resource for this concept.");
-      if (resource.mcpAccess !== "preview") throw new Error("Enable Preview for this image in Resources before attaching it for AI art direction.");
+      if (resource.mcpAccess !== "preview") throw new Error("Turn on AI access before attaching an embedded image for art direction.");
       const scene = attachStudioConceptReference(deck.studioScene, slideNumber, resource, {
         visualNeedId,
         origin: "human-reference",
@@ -5027,17 +5040,8 @@ export default function App() {
     if (activeView === "designs") return <DesignsView catalog={templateCatalog} installedAt={templateInstalledAt} loading={templateLoading} nativeRender={templateNativeRender} nativeLoading={templateNativeLoading} onInstall={() => void installTemplate()} />;
     if (activeView === "rules") return <RulesView deck={selectedDeck} exemplarCount={project.styleExemplars.filter((item) => item.kind === "table").length} />;
     if (activeView === "review") return <ReviewView deck={selectedDeck} projectUpdatedAt={project.project.updatedAt} currentCatalog={selectedDeck ? slideCatalogs[selectedDeck.id] : undefined} proposalCatalog={selectedDeck ? proposalCatalogs[selectedDeck.id] : undefined} currentNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:current`] : undefined} proposalNativeRender={selectedDeck ? nativeRenderCatalogs[`${selectedDeck.id}:proposal`] : undefined} previewLoading={Boolean(selectedDeck && (proposalCatalogLoadingDeckId === selectedDeck.id || nativeRenderLoadingKey === `${selectedDeck.id}:proposal`))} threads={project.designThreads} onToggle={toggleChange} onReviewSlide={reviewSlide} onRequestChanges={requestSlideChanges} onDeleteThread={deleteDesignThread} onOpenSlide={openSlideWorkspace} onReject={rejectProposal} onApply={acceptProposal} onExport={() => void exportCleaned()} />;
-    return <ResourcesView project={project} onAdd={() => void addResources()} onRemove={removeResource} onToggleMcp={(id) => setProject((current) => touchProject({ ...current, resources: current.resources.map((resource) => {
-      if (resource.id !== id) return resource;
-      const textShareable = Boolean(resource.derivatives?.some((derivative) => derivative.kind === "extracted-text" && derivative.bytes?.byteLength));
-      const nextAccess = resource.kind === "image"
-        ? resource.mcpAccess === "none" ? "metadata" : resource.mcpAccess === "metadata" ? "preview" : "none"
-        : textShareable
-          ? resource.mcpAccess === "none" ? "metadata" : resource.mcpAccess === "metadata" ? "text" : "none"
-          : resource.mcpAccess === "none" ? "metadata" : "none";
-      return { ...resource, mcpAccess: nextAccess };
-    }) }, "resource-access-updated", "Updated this Resource's session-only AI permission."))} />;
-  }, [activeView, currentStudioDeckBuild, currentStudioQualification, latestStudioNativeRender, nativeRenderCatalogs, nativeRenderLoadingKey, project, proposalCatalogLoadingDeckId, proposalCatalogs, selectedDeck, slideCatalogLoadingDeckId, slideCatalogs, slideWorkspaceRequest, studioFreshPreviews, studioOpenSlideNumber, templateCatalog, templateInstalledAt, templateLoading, templateNativeLoading, templateNativeRender]);
+    return <ResourcesView project={project} aiSessionEnabled={mcpEnabled} onAdd={() => void addResources()} onRemove={removeResource} />;
+  }, [activeView, currentStudioDeckBuild, currentStudioQualification, latestStudioNativeRender, mcpEnabled, nativeRenderCatalogs, nativeRenderLoadingKey, project, proposalCatalogLoadingDeckId, proposalCatalogs, selectedDeck, slideCatalogLoadingDeckId, slideCatalogs, slideWorkspaceRequest, studioFreshPreviews, studioOpenSlideNumber, templateCatalog, templateInstalledAt, templateLoading, templateNativeLoading, templateNativeRender]);
   const mcpActivityMessage = mcpActivity ? mcpActivityCopy(mcpActivity) : undefined;
 
   return (
@@ -5055,7 +5059,7 @@ export default function App() {
       <nav className="rail" aria-label="Workspace">
         <div className="rail-items">{navItems.map((item) => { const NavIcon = item.icon; return <button key={item.id} data-tour={`nav-${item.id}`} className={activeView === item.id ? "active" : ""} onClick={() => setActiveView(item.id)}><NavIcon size={20} /><span>{item.label}</span>{item.id === "review" && project.decks.some((deck) => deck.proposal?.status === "pending") && <i />}</button>; })}</div>
         <div className="rail-bottom">
-          <button className={`ai-session ${mcpEnabled ? "enabled" : ""}`} data-tour="ai-session" onClick={() => setMcpEnabled((value) => !value)}><span className="ai-icon"><Sparkle size={18} /></span><span><strong>AI session</strong><small>{mcpEnabled ? "Audit metadata allowed" : "Access off"}</small></span><span className="toggle-knob" /></button>
+          <button className={`ai-session ${mcpEnabled ? "enabled" : ""}`} data-tour="ai-session" onClick={() => updateAiSessionAccess(!mcpEnabled)}><span className="ai-icon"><Sparkle size={18} /></span><span><strong>AI access</strong><small>{mcpEnabled ? `All ${project.resources.length} Resources shared` : "Access off"}</small></span><span className="toggle-knob" /></button>
           <div className="local-status"><span className={mcpStatus.available ? "online" : ""} /><span>{mcpStatus.available ? "Local MCP ready" : "Browser preview"}</span></div>
           {desktop && <div className="local-status native-qa" title={nativeReadiness.reason}><span className={nativeReadiness.ready ? "online" : nativeReadiness.sessionLocked ? "locked" : ""} /><span>{nativeReadiness.ready ? "PowerPoint QA ready" : nativeReadiness.sessionLocked ? "Unlock Mac for native QA" : "Native QA unavailable"}</span></div>}
         </div>

@@ -130,26 +130,78 @@ function resolvePdfRasterizer() {
   return null;
 }
 
+function bundledPdfRasterizerAvailable() {
+  try {
+    require.resolve("pdfjs-dist/legacy/build/pdf.mjs");
+    require.resolve("@napi-rs/canvas");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function rasterizePdfWithPdfJs({ pdfPath, outputDirectory, width, format }) {
+  const canvasApi = require("@napi-rs/canvas");
+  for (const globalName of ["DOMMatrix", "ImageData", "Path2D"]) {
+    if (!globalThis[globalName] && canvasApi[globalName]) globalThis[globalName] = canvasApi[globalName];
+  }
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(await fs.readFile(pdfPath)),
+    disableWorker: true,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  });
+  const document = await loadingTask.promise;
+  try {
+    if (document.numPages < 1) throw new Error("The PowerPoint PDF render does not contain any pages.");
+    if (document.numPages > MAX_NATIVE_SLIDES) throw new Error("The presentation exceeds the 1,000-slide native render limit.");
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      try {
+        const baseViewport = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: width / baseViewport.width });
+        const canvas = canvasApi.createCanvas(Math.round(viewport.width), Math.round(viewport.height));
+        const context = canvas.getContext("2d");
+        await page.render({ canvas, canvasContext: context, viewport, intent: "print", background: "rgb(255,255,255)" }).promise;
+        const extension = format === "png" ? "png" : "jpg";
+        const encoded = format === "png" ? await canvas.encode("png") : await canvas.encode("jpeg", 90);
+        await fs.writeFile(path.join(outputDirectory, `slide-${pageNumber}.${extension}`), encoded, { mode: 0o600 });
+      } finally {
+        page.cleanup();
+      }
+    }
+  } finally {
+    await document.destroy();
+  }
+}
+
 function nativeRenderCapabilities(platform = process.platform) {
   const rasterizerPath = resolvePdfRasterizer();
+  const bundledRasterizer = bundledPdfRasterizerAvailable();
+  const rasterizerAvailable = Boolean(rasterizerPath) || bundledRasterizer;
   if (platform !== "darwin") {
     return {
       available: false,
       renderer: "studio-approximate",
       reason: platform === "win32" ? "The Windows PowerPoint render bridge is not implemented yet." : "PowerPoint-native rendering currently requires macOS.",
       powerPointInstalled: false,
-      rasterizerAvailable: Boolean(rasterizerPath),
+      rasterizerAvailable,
+      rasterizer: rasterizerPath ? "pdftoppm" : bundledRasterizer ? "pdfjs" : undefined,
+      rasterizerPath,
       sessionLocked: false,
     };
   }
   const powerPointInstalled = fsSync.existsSync(POWERPOINT_MAC_PATH);
   const sessionLocked = powerPointInstalled && macSessionLocked();
   return {
-    available: powerPointInstalled && Boolean(rasterizerPath) && !sessionLocked,
-    renderer: powerPointInstalled && rasterizerPath ? "powerpoint-native" : "studio-approximate",
-    reason: !powerPointInstalled ? "Microsoft PowerPoint is not installed." : !rasterizerPath ? "The local PDF rasterizer is unavailable." : sessionLocked ? "Unlock the Mac to enable PowerPoint-native rendering." : undefined,
+    available: powerPointInstalled && rasterizerAvailable && !sessionLocked,
+    renderer: powerPointInstalled && rasterizerAvailable ? "powerpoint-native" : "studio-approximate",
+    reason: !powerPointInstalled ? "Microsoft PowerPoint is not installed." : !rasterizerAvailable ? "The bundled PDF renderer is unavailable." : sessionLocked ? "Unlock the Mac to enable PowerPoint-native rendering." : undefined,
     powerPointInstalled,
-    rasterizerAvailable: Boolean(rasterizerPath),
+    rasterizerAvailable,
+    rasterizer: rasterizerPath ? "pdftoppm" : bundledRasterizer ? "pdfjs" : undefined,
+    rasterizerPath,
     sessionLocked,
   };
 }
@@ -230,10 +282,14 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
     }
     const pdfStat = await fs.stat(pdfPath).catch(() => null);
     if (!pdfStat?.isFile() || pdfStat.size === 0) throw new Error("Microsoft PowerPoint did not create the expected native PDF render.");
-    const rasterArguments = format === "png"
-      ? ["-png", "-scale-to-x", String(width), "-scale-to-y", "-1", pdfPath, imagePrefix]
-      : ["-jpeg", "-scale-to-x", String(width), "-scale-to-y", "-1", "-jpegopt", "quality=90,progressive=y,optimize=y", pdfPath, imagePrefix];
-    await execFileAsync(capabilities.rasterizerPath || resolvePdfRasterizer(), rasterArguments, { timeout: 180_000, maxBuffer: 1024 * 1024 });
+    if (capabilities.rasterizerPath) {
+      const rasterArguments = format === "png"
+        ? ["-png", "-scale-to-x", String(width), "-scale-to-y", "-1", pdfPath, imagePrefix]
+        : ["-jpeg", "-scale-to-x", String(width), "-scale-to-y", "-1", "-jpegopt", "quality=90,progressive=y,optimize=y", pdfPath, imagePrefix];
+      await execFileAsync(capabilities.rasterizerPath, rasterArguments, { timeout: 180_000, maxBuffer: 1024 * 1024 });
+    } else {
+      await rasterizePdfWithPdfJs({ pdfPath, outputDirectory: jobRoot, width, format });
+    }
     const fileNames = (await fs.readdir(jobRoot)).filter((fileName) => format === "png" ? /^slide-\d+\.png$/i.test(fileName) : /^slide-\d+\.jpe?g$/i.test(fileName)).sort((left, right) => slideNumberFromFile(left) - slideNumberFromFile(right));
     if (fileNames.length === 0) throw new Error("The local rasterizer did not create any slide images.");
     if (fileNames.length > MAX_NATIVE_SLIDES) throw new Error("The presentation exceeds the 1,000-slide native render limit.");
@@ -249,7 +305,7 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
     return {
       status: "ready",
       renderer: "powerpoint-native",
-      pipeline: `powerpoint-save-as-pdf+local-pdf-raster:${format}:${width}px`,
+      pipeline: `powerpoint-save-as-pdf+${capabilities.rasterizer === "pdftoppm" ? "pdftoppm" : "bundled-pdfjs"}:${format}:${width}px`,
       powerPointVersion: automation?.stdout?.trim().split("|")[1] || undefined,
       authoritative: true,
       sourceSha256: digest,
@@ -266,11 +322,13 @@ async function renderPowerPointNative({ bytes: inputBytes, name = "presentation.
 
 module.exports = {
   POWERPOINT_RENDER_SCRIPT,
+  bundledPdfRasterizerAvailable,
   classifyPowerPointAutomationError,
   jpegDimensions,
   pngDimensions,
   nativeRenderCapabilities,
   renderPowerPointNative,
+  rasterizePdfWithPdfJs,
   resolvePdfRasterizer,
   slideNumberFromFile,
   validatePdfRasterizer,

@@ -142,7 +142,7 @@ cover_table.setStyle(TableStyle([
     ("BACKGROUND", (0, 1), (-1, 1), SOFT), ("BOX", (0, 0), (-1, -1), 0.8, GRAPHITE),
     ("INNERGRID", (0, 0), (-1, -1), 0.5, GRAPHITE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
 ]))
-story += [cover_table, Spacer(1, 0.32 * inch), callout("Important", "This release uses a one-line source installer, not an unsigned DMG, PKG, MSI, EXE, or app-store package. It installs prerequisites and verifies the app without disabling operating-system protections.", FORGE), Spacer(1, 1.15 * inch), p("Version 0.3.0 - August 2026", "small"), PageBreak()]
+story += [cover_table, Spacer(1, 0.32 * inch), callout("Important", "This release uses a one-line source installer, not an unsigned DMG, PKG, MSI, EXE, or app-store package. It installs prerequisites and verifies the app without disabling operating-system protections.", FORGE), Spacer(1, 1.15 * inch), p("Version 0.3.1 - August 2026", "small"), PageBreak()]
 
 story += [p("Before you begin", "h1"), p("Presentation Studio is designed for local presentation review and redesign. Imported PowerPoint files are copied into a self-contained project, audited without changing the originals, and exported only as new files through a human-controlled save or export action."), p("Requirements", "h2")]
 requirements = Table([
@@ -152,13 +152,14 @@ requirements = Table([
     [p("Network", "small"), p("Needed during installation; the running app blocks non-local network requests", "body")],
 ], colWidths=[1.38 * inch, 5.45 * inch])
 requirements.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, -1), SOFT), ("BOX", (0, 0), (-1, -1), 0.6, GRAPHITE), ("INNERGRID", (0, 0), (-1, -1), 0.4, GRAPHITE), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 9), ("RIGHTPADDING", (0, 0), (-1, -1), 9), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
-story += [requirements, p("Install Version 0.3.0 on macOS", "h2"), p("Paste this complete line into Terminal. It does not require Git."), p("curl -fsSL https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-macos.sh | /bin/zsh", "code_one_line"), p("Install Version 0.3.0 on Windows", "h2"), p("Paste this complete line into PowerShell. It does not change execution policy."), p("irm https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-windows.ps1 | iex", "code_one_line"), callout("Run again to update", "Close Presentation Studio, then run the same one-line command. The installer verifies a staged copy before replacing the current managed app and keeps one previous managed copy."), callout("Data boundary", "Do not place client decks, manuscripts, project packages, extracted text, previews, or exports in the installation source folder. Projects and exports remain outside the managed app source."), PageBreak()]
+story += [requirements, p("Install Version 0.3.1 on macOS", "h2"), p("Paste this complete line into Terminal. It does not require Git."), p("curl -fsSL https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-macos.sh | /bin/zsh", "code_one_line"), p("Install Version 0.3.1 on Windows", "h2"), p("Paste this complete line into PowerShell. It does not change execution policy."), p("irm https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-windows.ps1 | iex", "code_one_line"), callout("Run again to update", "Close Presentation Studio, then run the same one-line command. The installer verifies a staged copy before replacing the current managed app and keeps one previous managed copy."), callout("Data boundary", "Do not place client decks, manuscripts, project packages, extracted text, previews, or exports in the installation source folder. Projects and exports remain outside the managed app source."), PageBreak()]
 
 story += [p("What the installer does", "h1"), steps([
     "Checks the operating system, processor architecture, install location, Node.js, and npm.",
     "When needed, downloads the official portable Node.js 22.13 runtime and verifies it against the official SHA-256 manifest.",
-    "Downloads Presentation Studio 0.3.0 from the isolated release branch without requiring Git.",
+    "Downloads Presentation Studio 0.3.1 from the isolated release branch without requiring Git.",
     "Runs the locked dependency install, automated tests, repository data-safety scan, and production renderer build in a staging folder.",
+    "Registers the installed MCP server automatically when a local Codex configuration is detected; restart Codex afterward.",
     "Activates the verified app, creates a reusable launcher, and starts Presentation Studio.",
 ]), p("Managed locations", "h2")]
 managed_locations = Table([
@@ -166,13 +167,13 @@ managed_locations = Table([
     [p("Windows", "small"), p("%LOCALAPPDATA%\\Presentation Studio", "body"), p("Launch Presentation Studio.cmd", "small")],
 ], colWidths=[1.0 * inch, 3.05 * inch, 2.8 * inch])
 managed_locations.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, -1), SOFT), ("BOX", (0, 0), (-1, -1), 0.6, GRAPHITE), ("INNERGRID", (0, 0), (-1, -1), 0.4, GRAPHITE), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 9), ("RIGHTPADDING", (0, 0), (-1, -1), 9), ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
-story += [managed_locations, Spacer(1, 0.14 * inch), callout("Microsoft PowerPoint", "PowerPoint is optional for launching the app but required for PowerPoint-native rendering and final native validation. Licensed Microsoft software is not installed automatically.", FORGE), callout("System security", "The installers do not alter Gatekeeper, quarantine settings, PowerShell execution policy, SmartScreen, or other protections. Follow your organization's approved software process if execution is blocked."), p("Developer checkout", "h2"), p("Developers who need Git history can use the manual checkout procedure in README.md. The one-line installer is the default for ordinary users."), PageBreak()]
+story += [managed_locations, Spacer(1, 0.14 * inch), callout("Microsoft PowerPoint", "PowerPoint is optional for launching the app but required for PowerPoint-native rendering and final native validation. A local PDF.js rasterizer is included, so Poppler, pdftoppm, and Homebrew are not required. Licensed Microsoft software is not installed automatically.", FORGE), callout("System security", "The installers do not alter Gatekeeper, quarantine settings, PowerShell execution policy, SmartScreen, or other protections. Follow your organization's approved software process if execution is blocked."), p("Developer checkout", "h2"), p("Developers who need Git history can use the manual checkout procedure in README.md. The one-line installer is the default for ordinary users."), PageBreak()]
 
 story += [p("Connect an MCP client", "h1"), p("Presentation Studio exposes a standard STDIO MCP server. It can be used by any compatible AI client; the app does not contain a provider-specific model or API-key workflow."), steps([
     "Open Presentation Studio and keep the desktop app running.",
-    "Print the standard configuration snippet with the command below.",
-    "Add the <b>presentation-studio</b> entry to your MCP client's normal <b>mcpServers</b> configuration, then restart that client if required.",
-    "Turn on the visible <b>AI session</b> switch in Presentation Studio only when you want the current project and deck context available.",
+    "For Codex, the one-line installer registers the installed server automatically. Restart Codex after installing or updating.",
+    "For another MCP client, print the standard configuration snippet with the command below and add the <b>presentation-studio</b> entry to its normal <b>mcpServers</b> configuration.",
+    "Turn on the visible <b>AI access</b> switch in Presentation Studio when you want the current project, embedded Resources, and deck context available.",
 ]), p("node scripts/configure-mcp.mjs", "code"), p("To merge the entry into an explicitly selected JSON file:", "body"), p("node scripts/configure-mcp.mjs --write /absolute/path/to/mcp-config.json", "code"), p("MCP safety model", "h2")]
 mcp_table = Table([
     [p("Allowed", "table_header"), p("Human only", "table_header")],
@@ -185,7 +186,7 @@ session_prompt = """Connect to the Presentation Studio MCP and work in the curre
 
 First, read the Presentation Studio design contract, check the app status, inventory the authorized project Resources, and inspect the installed ORNL Template Pack. Confirm that you can read the source content - not merely filenames or metadata. If anything required is inaccessible, tell me exactly what must be shared or attached. Do not invent missing content.
 
-For a source-only project, read every required Text-shared Resource completely with get_resource_text, inspect stable layout IDs with get_template_layout_catalog, then call create_studio_presentation once with the complete source-grounded deck plan. Create it without a starter PowerPoint; do not invent one.
+For a source-only project, read every required compatible text Resource completely with get_resource_text, inspect stable layout IDs with get_template_layout_catalog, then call create_studio_presentation once with the complete source-grounded deck plan. Create it without a starter PowerPoint; do not invent one.
 
 Create a polished, editable, 16:9 ORNL presentation from the supplied source materials.
 
@@ -214,7 +215,7 @@ Workflow:
 
 Use your best design judgment and minimize routine questions. Leave the completed central design visible for my review. Do not save or export the final PowerPoint until I explicitly request it."""
 
-story += [p("Start a ChatGPT Desktop design session", "h1"), p("Use this after Presentation Studio is open, the MCP connection is enabled, and the approved project material is in place. Copy the complete prompt below into a fresh ChatGPT Desktop conversation."), p(session_prompt.replace("\n", "<br/>"), "prompt"), callout("Resource access", "Cycle supported document or data Resources to Text shared and image Resources to Preview shared for the current AI session. Presentation Studio 0.3.0 can create a new native Studio JSON deck from those authorized sources and the ORNL Template Pack without a starter PowerPoint. PDF, legacy DOC/XLS, and raw original-file retrieval remain unavailable; convert them to a supported format or provide another approved source rather than inventing content.", FORGE), PageBreak()]
+story += [p("Start a ChatGPT Desktop design session", "h1"), p("Use this after Presentation Studio is open, the MCP connection is enabled, and the approved project material is in place. Copy the complete prompt below into a fresh ChatGPT Desktop conversation."), p(session_prompt.replace("\n", "<br/>"), "prompt"), callout("Resource access", "Turn on the single AI access switch. Presentation Studio automatically shares bounded extracted text for compatible documents/data, bounded previews for images, and metadata for every other embedded Resource. Presentation Studio 0.3.1 can create a new native Studio JSON deck from those sources and the ORNL Template Pack without a starter PowerPoint. PDF, legacy DOC/XLS, and raw original-file retrieval remain unavailable; convert them to a supported format or provide another approved source rather than inventing content.", FORGE), PageBreak()]
 
 story += [p("Projects, encryption, and verification", "h1"), p("Project formats", "h2")]
 project_table = Table([

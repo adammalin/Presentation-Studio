@@ -13,7 +13,7 @@ export function extractedResourceText(resource: ProjectResource): { text: string
 }
 
 export function resourceTextPage(resource: ProjectResource, offset = 0, maximumCharacters = 20_000) {
-  if (resource.mcpAccess !== "text") throw new Error("The person has not granted Text access to this Resource for the current AI session.");
+  if (resource.mcpAccess !== "text") throw new Error("This Resource has no extracted text available to the active AI session. Turn on AI access and re-list Resources.");
   const extracted = extractedResourceText(resource);
   const safeOffset = Math.max(0, Math.min(Math.floor(offset), extracted.text.length));
   const size = Math.max(1_000, Math.min(MAX_RESOURCE_TEXT_PAGE_CHARACTERS, Math.floor(maximumCharacters)));
@@ -31,7 +31,7 @@ export function resourceTextPage(resource: ProjectResource, offset = 0, maximumC
 }
 
 export function assertExactResourceExcerpt(resource: ProjectResource, exactExcerpt: string): void {
-  if (resource.mcpAccess !== "text") throw new Error(`${resource.name} is not shared with Text access for this AI session.`);
+  if (resource.mcpAccess !== "text") throw new Error(`${resource.name} has no extracted text available to the active AI session. Turn on AI access and re-list Resources.`);
   const excerpt = normalized(exactExcerpt);
   if (!excerpt) throw new Error(`A non-empty exact source excerpt is required for ${resource.name}.`);
   const source = normalized(extractedResourceText(resource).text);

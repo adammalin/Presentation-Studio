@@ -23,6 +23,8 @@ test("macOS one-line installer is self-contained, verified, and policy-safe", as
   assert.match(installer, /npm test/);
   assert.match(installer, /npm run check:data-safety/);
   assert.match(installer, /npm run build/);
+  assert.match(installer, /configure-mcp\.mjs" --codex/);
+  assert.match(installer, /Restart Codex after installation/);
   assert.match(installer, /\.presentation-studio-managed-install/);
   assert.doesNotMatch(installer, /xattr\s+-d|spctl\s+--disable|csrutil\s+disable|sudo\s/);
 });
@@ -38,6 +40,8 @@ test("Windows one-line installer is self-contained, verified, and policy-safe", 
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("test"\)/);
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("run", "check:data-safety"\)/);
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("run", "build"\)/);
+  assert.match(installer, /configure-mcp\.mjs"\), "--codex"/);
+  assert.match(installer, /Restart Codex after installation/);
   assert.match(installer, /\.presentation-studio-managed-install/);
   assert.doesNotMatch(installer, /ExecutionPolicy\s+(Bypass|Unrestricted)|Set-ExecutionPolicy|DisableRealtimeMonitoring/);
 });
@@ -53,6 +57,8 @@ test("installation docs expose complete one-line commands before manual Git setu
     assert.ok(document.indexOf(macCommand) < document.indexOf("git clone"));
     assert.match(document, /(does not require Git|Git is not required)/i);
     assert.match(document, /PowerPoint.*required for PowerPoint-native rendering/is);
+    assert.match(document, /(PDF\.js|local PDF.*rasterizer)/i);
+    assert.match(document, /(?:Poppler|pdftoppm).*not required/i);
   }
 });
 
@@ -67,7 +73,7 @@ test("installation guide includes the ChatGPT Desktop starter prompt and native 
     assert.match(document, /get_resource_text/);
     assert.match(document, /create_studio_presentation/);
     assert.match(document, /without a starter PowerPoint/i);
-    assert.match(document, /Text shared/);
+    assert.match(document, /single (?:\*\*)?AI access(?:\*\*)? switch/i);
   }
 });
 

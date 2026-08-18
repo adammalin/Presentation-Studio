@@ -43,7 +43,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(JSON.stringify(contract.structuredContent), /create_studio_presentation/);
     assert.match(JSON.stringify(contract.structuredContent), /without requiring a starter PowerPoint/i);
     const resourceTextTool = result.tools.find((tool) => tool.name === "get_resource_text");
-    assert.match(resourceTextTool?.description ?? "", /explicitly changed.*Text/i);
+    assert.match(resourceTextTool?.description ?? "", /single AI access switch/i);
     assert.equal(resourceTextTool?.annotations?.readOnlyHint, true);
     const createPresentationTool = result.tools.find((tool) => tool.name === "create_studio_presentation");
     assert.match(createPresentationTool?.description ?? "", /native Studio JSON\/HTML\/CSS scene/i);
@@ -58,7 +58,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(reconstructConceptTool?.description ?? "", /rather than merely shrinking type/i);
     assert.equal(reconstructConceptTool?.annotations?.destructiveHint, false);
     const conceptPreviewTool = result.tools.find((tool) => tool.name === "get_resource_preview");
-    assert.match(conceptPreviewTool?.description ?? "", /explicitly changed.*Preview/i);
+    assert.match(conceptPreviewTool?.description ?? "", /single AI access switch/i);
     const visualNeedTool = result.tools.find((tool) => tool.name === "create_studio_visual_need");
     assert.match(visualNeedTool?.description ?? "", /default brief exposes abstract structure only/i);
     assert.match(visualNeedTool?.description ?? "", /does not call an image model/i);

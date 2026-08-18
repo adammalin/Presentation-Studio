@@ -2,7 +2,7 @@
 
 Presentation Studio is distributed through a one-line source installer during the initial release. There is no DMG, PKG, MSI, EXE, app-store package, or other unsigned packaged application installer.
 
-This guide installs Presentation Studio 0.3.0 from the isolated `codex/web-slide-design-engine` branch. It does not merge or change the repository's `main` branch.
+This guide installs Presentation Studio 0.3.1 from the isolated `codex/web-slide-design-engine` branch. It does not merge or change the repository's `main` branch.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ This guide installs Presentation Studio 0.3.0 from the isolated `codex/web-slide
 
 The installer checks Node.js and npm. If Node.js 22.13 or newer is not available, it downloads the official Node.js 22.13 portable runtime, verifies its SHA-256 checksum against the official manifest, and keeps it inside the Presentation Studio install folder. Git is not required.
 
-Microsoft PowerPoint is optional for launching Presentation Studio but required for PowerPoint-native rendering and final native validation. The installer cannot install or license Microsoft Office.
+Microsoft PowerPoint is optional for launching Presentation Studio but required for PowerPoint-native rendering and final native validation. The locked application dependencies include a local PDF.js rasterizer, so Poppler, `pdftoppm`, and Homebrew are not required. The installer cannot install or license Microsoft Office.
 
 ## macOS - one line
 
@@ -82,7 +82,7 @@ Run `node scripts/configure-mcp.mjs` to print the standard `mcpServers` entry. A
 node scripts/configure-mcp.mjs --write /absolute/path/to/mcp-config.json
 ```
 
-Presentation Studio must be open. The MCP server uses STDIO and connects to the active app through a per-session token on a loopback-only bridge. The in-app AI session switch is off by default. MCP can inspect, stage semantic design changes, build private local candidates, and record qualification evidence. It cannot overwrite an original, save a project, export to a user destination, or distribute an output.
+Presentation Studio must be open. The MCP server uses STDIO and connects to the active app through a per-session token on a loopback-only bridge. The one-line installer automatically registers the installed server when it detects Codex; restart Codex afterward so it reloads the server list. Other MCP clients can use the printed standard configuration entry. The in-app AI access switch is off by default. MCP can inspect, stage semantic design changes, build private local candidates, and record qualification evidence. It cannot overwrite an original, save a project, export to a user destination, or distribute an output.
 
 ## Start a ChatGPT Desktop design session
 
@@ -93,7 +93,7 @@ Connect to the Presentation Studio MCP and work in the currently open project.
 
 First, read the Presentation Studio design contract, check the app status, inventory the authorized project Resources, and inspect the installed ORNL Template Pack. Confirm that you can read the source content - not merely filenames or metadata. If anything required is inaccessible, tell me exactly what must be shared or attached. Do not invent missing content.
 
-For a source-only project, read every required Text-shared Resource completely with get_resource_text, inspect stable layout IDs with get_template_layout_catalog, then call create_studio_presentation once with the complete source-grounded deck plan. Create it without a starter PowerPoint; do not invent one.
+For a source-only project, read every required compatible text Resource completely with get_resource_text, inspect stable layout IDs with get_template_layout_catalog, then call create_studio_presentation once with the complete source-grounded deck plan. Create it without a starter PowerPoint; do not invent one.
 
 Create a polished, editable, 16:9 ORNL presentation from the supplied source materials.
 
@@ -123,7 +123,7 @@ Workflow:
 Use your best design judgment and minimize routine questions. Leave the completed central design visible for my review. Do not save or export the final PowerPoint until I explicitly request it.
 ```
 
-Resource access is explicit and session-only. In Resources, cycle a supported document or data file to **Text shared** so MCP can read its bounded local extracted-text derivative; cycle an image to **Preview shared** before it can be placed. Presentation Studio 0.3.0 can create a brand-new native Studio JSON deck directly from those authorized sources and the installed ORNL Template Pack. PDF text extraction, legacy DOC/XLS extraction, and raw original-file retrieval are not available; convert those sources to a supported format or provide another approved source rather than inventing content. Use only material approved for the selected AI environment.
+Resource access is automatic while the single **AI access** switch is on. That single switch shares every embedded Resource at the highest level Studio supports: bounded extracted text for compatible documents/data, bounded previews for images, and metadata for other formats. Turning it off removes all project Resource access at once. Presentation Studio 0.3.1 can create a brand-new native Studio JSON deck directly from those sources and the installed ORNL Template Pack. PDF text extraction, legacy DOC/XLS extraction, and raw original-file retrieval are not available; convert those sources to a supported format or provide another approved source rather than inventing content. Use only material approved for the selected AI environment.
 
 ## Project files and encryption
 

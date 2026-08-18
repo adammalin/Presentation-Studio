@@ -94,7 +94,7 @@ try {
   }
   $SourceArchivePath = Join-Path $TempDir "presentation-studio.zip"
   $SourceExtractRoot = Join-Path $TempDir "source"
-  Write-Host "Downloading the latest Presentation Studio 0.3.0 source..."
+  Write-Host "Downloading the latest Presentation Studio 0.3.1 source..."
   Invoke-WebRequest -UseBasicParsing -Uri $SourceArchiveUrl -OutFile $SourceArchivePath
   Expand-Archive -Path $SourceArchivePath -DestinationPath $SourceExtractRoot -Force
   $SourceDir = Get-ChildItem -LiteralPath $SourceExtractRoot -Directory | Select-Object -First 1
@@ -136,10 +136,17 @@ call npm start
   Set-Content -LiteralPath $Launcher -Value $LauncherContent -Encoding ASCII
 
   Write-Host ""
-  Write-Host "Presentation Studio 0.3.0 installed successfully."
+  Write-Host "Presentation Studio 0.3.1 installed successfully."
   Write-Host "Install location: $AppDir"
   Write-Host "Launcher: $Launcher"
   Write-Host "MCP configuration command: node `"$AppDir\scripts\configure-mcp.mjs`""
+
+  $CodexRoot = Join-Path $env:USERPROFILE ".codex"
+  if (Test-Path $CodexRoot) {
+    Write-Host "Configuring the installed Presentation Studio MCP server in Codex..."
+    Invoke-Checked (Get-Command node.exe -ErrorAction Stop).Source @((Join-Path $AppDir "scripts\configure-mcp.mjs"), "--codex", (Join-Path $CodexRoot "config.toml"))
+    Write-Host "Restart Codex after installation so it reloads the MCP server list."
+  }
 
   if ($env:PRESENTATION_STUDIO_NO_LAUNCH -ne "1") {
     Write-Host "Starting Presentation Studio..."

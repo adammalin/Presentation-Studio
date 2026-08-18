@@ -210,29 +210,29 @@ server.registerTool("record_deck_qualification_review", {
 }, (input) => call("record_deck_qualification_review", input, (result) => result.status === "review-complete" ? `Recorded exact-pixel visual review for all ${result.visualAcceptance.reviewedSlideCount} slides. The deck is ready for human draft review; this is not formal ORNL approval.` : `Recorded ${result.visualAcceptance.reviewedSlideCount} visual reviews; ${result.visualAcceptance.revisionSlideCount} need revision and ${result.visualAcceptance.heldSlideCount} are held.`));
 
 server.registerTool("list_resources", {
-  title: "List authorized project Resources",
-  description: "List metadata and session permissions for project Resources that a person explicitly shared for the current app session. Requires AI session access. This inventory never returns original file bytes; use get_resource_text for a bounded Text-shared derivative or get_resource_preview for a bounded Preview-shared image.",
+  title: "List automatically shared project Resources",
+  description: "List every embedded project Resource automatically shared when the person turns on the app's single AI access switch. Requires AI access. This inventory never returns original file bytes; compatible documents/data expose bounded extracted text, images expose a bounded preview, and unsupported formats expose metadata only.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, () => call("list_resources", {}, (result) => `Read metadata for ${result.resources.length} of ${result.totalResourceCount} project Resource${result.totalResourceCount === 1 ? "" : "s"} authorized for this session.`));
+}, () => call("list_resources", {}, (result) => `Read metadata for all ${result.resources.length} project Resource${result.totalResourceCount === 1 ? "" : "s"} automatically shared by the active AI session.`));
 
 server.registerTool("get_resource_text", {
-  title: "Read explicitly shared Resource text",
-  description: "Read one bounded page of locally extracted text from a document or data Resource only when the person explicitly changed that Resource's AI-session permission to Text. Returns the embedded derivative hash, offsets, and truncation state so a model can ground a new presentation without reading the external original. Use exact excerpts from this result when creating slides; never invent missing source content.",
+  title: "Read automatically shared Resource text",
+  description: "Read one bounded page of locally extracted text from a compatible document or data Resource automatically shared by the app's single AI access switch. Returns the embedded derivative hash, offsets, and truncation state so a model can ground a new presentation without reading the external original. Use exact excerpts from this result when creating slides; never invent missing source content.",
   inputSchema: { resourceId: z.string().min(1).max(180), offset: z.number().int().nonnegative().default(0), maximumCharacters: z.number().int().min(1_000).max(40_000).default(20_000) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_resource_text", input, (result) => `Read ${result.characterCount} of ${result.totalCharacterCount} extracted characters from ${result.resource.name}${result.nextOffset === undefined ? "" : `; continue at offset ${result.nextOffset}`}.`));
 
 server.registerTool("get_resource_preview", {
-  title: "View an explicitly shared image Resource",
-  description: "Return one bounded image preview only when the person explicitly changed that embedded Resource's AI-session permission to Preview. Use this for approved source imagery, visual references, or concept-only Image Gen drafts. The original file remains local and is never modified; metadata-only Resources do not expose pixels.",
+  title: "View an automatically shared image Resource",
+  description: "Return one bounded image preview for an embedded image Resource automatically shared by the app's single AI access switch. Use this for approved source imagery, visual references, or concept-only Image Gen drafts. The original file remains local and is never modified; metadata-only Resources do not expose pixels.",
   inputSchema: { resourceId: z.string().min(1).max(180) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, (input) => callImage("get_resource_preview", input, (result) => `Viewed the explicitly shared ${result.resource.roleLabel} image Resource ${result.resource.name}. Treat concept-only pixels as visual direction, never as authority for text, logos, data, claims, or technical relationships.`));
+}, (input) => callImage("get_resource_preview", input, (result) => `Viewed the automatically shared ${result.resource.roleLabel} image Resource ${result.resource.name}. Treat concept-only pixels as visual direction, never as authority for text, logos, data, claims, or technical relationships.`));
 
 server.registerTool("create_studio_presentation", {
   title: "Create a source-grounded native Studio presentation",
-  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from explicitly Text-shared source excerpts and Preview-shared image Resources. The first slide must use an approved ORNL title layout; later slides use shared Studio recipes or named converted Template Pack layouts. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene and leaves it visible for review; it does not save a project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
+  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from source excerpts and image Resources automatically shared by the app's single AI access switch. The first slide must use an approved ORNL title layout; later slides use shared Studio recipes or named converted Template Pack layouts. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene and leaves it visible for review; it does not save a project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
   inputSchema: {
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     name: z.string().min(1).max(240),
@@ -292,7 +292,7 @@ server.registerTool("hold_studio_visual_need", {
 
 server.registerTool("attach_studio_concept_reference", {
   title: "Attach a concept-only visual reference to a Studio slide",
-  description: "Attach an explicitly preview-shared image Resource as non-authoritative art direction for one non-protected Studio slide. Record only the approved characteristics to follow and a normalized composition blueprint. Generated text, logos, data, claims, and technical details are always untrusted; exact source content and approved assets remain authoritative. This changes design input only—it does not trace pixels, redesign, build, save, or export the slide.",
+  description: "Attach an embedded image Resource automatically preview-shared by the active AI access switch as non-authoritative art direction for one non-protected Studio slide. Record only the approved characteristics to follow and a normalized composition blueprint. Generated text, logos, data, claims, and technical details are always untrusted; exact source content and approved assets remain authoritative. This changes design input only—it does not trace pixels, redesign, build, save, or export the slide.",
   inputSchema: {
     deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), slideNumber: z.number().int().min(1), resourceId: z.string().min(1).max(180),
     origin: z.enum(["imagegen", "human-reference", "other"]),

@@ -45,9 +45,9 @@ function templateCatalog(): TemplateCatalog {
   return { id: "ornl-test", name: "Synthetic ORNL Template", sha256: "f".repeat(64), slideWidth: 12_192_000, slideHeight: 6_858_000, masterCount: 1, layouts: [title, content], media: {}, generatedAt: "2026-08-17T16:00:00.000Z" };
 }
 
-test("Resource text requires explicit session permission and remains bounded", async () => {
+test("Resource text requires the active global AI session and remains bounded", async () => {
   const resource = await processResourceInput({ name: "source.txt", bytes: new TextEncoder().encode("Alpha evidence with 42 units.\nBeta evidence preserves attribution.") });
-  assert.throws(() => resourceTextPage(resource), /Text access/);
+  assert.throws(() => resourceTextPage(resource), /no extracted text available/i);
   resource.mcpAccess = "text";
   const page = resourceTextPage(resource, 0, 1_000);
   assert.match(page.text, /42 units/);

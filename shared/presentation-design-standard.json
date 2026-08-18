@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-17.30-resource-native-composition",
+  "version": "2026-08-17.31-automatic-resource-access",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -13,9 +13,9 @@
     "purpose": "Create a new source-grounded ORNL presentation directly from approved project Resources without requiring a starter PowerPoint.",
     "contentPolicy": "source-grounded-generative",
     "workflow": [
-      "Call list_resources and read every required Text-shared document or data derivative with get_resource_text until nextOffset is absent.",
+      "After the person turns on the single AI access switch, call list_resources and read every required compatible document or data derivative with get_resource_text until nextOffset is absent.",
       "Inspect the current converted ORNL Template Pack with get_template_layout_catalog and use its stable layout IDs rather than inventing template geometry.",
-      "Develop an assertion-evidence narrative. Every slide must cite at least one exact source excerpt, and every placed image must be an explicitly Preview-shared Resource.",
+      "Develop an assertion-evidence narrative. Every slide must cite at least one exact source excerpt, and every placed image must be an embedded image Resource automatically shared by the active AI session.",
       "Call create_studio_presentation once with the complete deck plan. Slide 1 must use template-layout with an approved title-category layout; later slides may use compatible template-layout designs or shared Studio recipes.",
       "Treat the resulting presentation-studio/web-scene JSON as the single editable design authority. Continue revisions in that scene, then call build_studio_presentation and inspect its exact PowerPoint-native results.",
       "Run the bounded Found issues, Fixing, Rechecking original intent loop and whole-deck qualification before calling the deck ready. Saving and external export remain separate human actions."
@@ -167,7 +167,7 @@
       "brandExpressionPass": "Choose an affirmative restrained, balanced, or expressive recipe with a deliberate pattern or pattern-free motif, one purposeful secondary/accent role when useful, no generated typography, and a reason tied to the communication job. Rotate eligible motifs instead of repeating a generic green/navy panel treatment.",
       "executionContract": "Every concept prompt requests exactly one raster, sets ONLY ALLOWED TEXT to NONE and LOGO to OMIT, closes allowed visuals to abstract structure, reserves editable Aptos/source-content zones, and forbids generated words, data, claims, methods, fake UI, screenshots, notes, footers, CTAs, and official marks.",
       "providerBoundary": "The queue creates a model-independent prompt package only. It never calls an image provider, automatically attaches output, or grants source-content disclosure. Exact-content-approved requires a separately bounded approved summary.",
-      "reconstruction": "Import the result as an embedded image Resource with explicit Preview permission, attach it as concept-only direction, analyze it into normalized semantic zones, and call reconstruct_studio_concept to map those zones to exact editable source-bound content. A visual need cannot advance when design impact is unchanged, typography-only, or a small cleanup instead of its required material layout, image, figure, or verified-diagram reconstruction. Resolve only after PowerPoint-native review passes."
+      "reconstruction": "Import the result as an embedded image Resource; the active AI session automatically exposes its bounded preview. Attach it as concept-only direction, analyze it into normalized semantic zones, and call reconstruct_studio_concept to map those zones to exact editable source-bound content. A visual need cannot advance when design impact is unchanged, typography-only, or a small cleanup instead of its required material layout, image, figure, or verified-diagram reconstruction. Resolve only after PowerPoint-native review passes."
     },
     "requiredLoop": [
       "Inspect the PowerPoint-native Current render and exact source-bound content; report Found issues with evidence before changing the slide.",

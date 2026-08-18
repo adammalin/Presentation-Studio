@@ -90,7 +90,7 @@ fi
 node_is_compatible || fail "Node.js ${PRESENTATION_STUDIO_NODE_VERSION} or newer could not be prepared."
 
 SOURCE_ARCHIVE_URL="${PRESENTATION_STUDIO_SOURCE_ARCHIVE_URL:-https://github.com/${PRESENTATION_STUDIO_REPOSITORY}/archive/refs/heads/${PRESENTATION_STUDIO_BRANCH}.zip}"
-print "Downloading the latest Presentation Studio 0.3.0 source..."
+print "Downloading the latest Presentation Studio 0.3.1 source..."
 curl --fail --location --silent --show-error "${SOURCE_ARCHIVE_URL}" --output "${TEMP_DIR}/presentation-studio.zip"
 mkdir -p "${TEMP_DIR}/source"
 ditto -x -k "${TEMP_DIR}/presentation-studio.zip" "${TEMP_DIR}/source"
@@ -132,10 +132,16 @@ LAUNCH_SCRIPT
 chmod 755 "${LAUNCHER}"
 
 print ""
-print "Presentation Studio 0.3.0 installed successfully."
+print "Presentation Studio 0.3.1 installed successfully."
 print "Install location: ${APP_DIR}"
 print "Launcher: ${LAUNCHER}"
 print "MCP configuration command: node \"${APP_DIR}/scripts/configure-mcp.mjs\""
+
+if [[ -d "${HOME}/.codex" ]]; then
+  print "Configuring the installed Presentation Studio MCP server in Codex..."
+  node "${APP_DIR}/scripts/configure-mcp.mjs" --codex "${HOME}/.codex/config.toml"
+  print "Restart Codex after installation so it reloads the MCP server list."
+fi
 
 if [[ "${PRESENTATION_STUDIO_NO_LAUNCH:-0}" != "1" ]]; then
   print "Starting Presentation Studio..."
