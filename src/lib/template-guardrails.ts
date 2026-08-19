@@ -45,6 +45,15 @@ export function isProtectedOrnlTemplateSlide(deck: OrnlTemplateDeck, slideNumber
     && (explicitlyProtected || isSacredOrnlTitleSlide(deck, slideNumber) || isSacredOrnlClosingSlide(deck, slideNumber));
 }
 
+/**
+ * Only an already-ORNL source deck contributes byte-preserved template slides.
+ * A sponsor/custom cover converted to an approved ORNL layout is protected in
+ * Studio, but copying its original source bytes would restore the wrong brand.
+ */
+export function shouldPreserveSourceOrnlTemplateSlide(deck: OrnlTemplateDeck, slideNumber: number): boolean {
+  return usesOrnlTemplate(deck) && isProtectedOrnlTemplateSlide(deck, slideNumber);
+}
+
 export function isUnqualifiedConvertedOrnlTitle(deck: OrnlTemplateDeck, slideNumber: number): boolean {
   if (slideNumber !== 1
     || deck.targetTemplateId !== PRESENTATION_DESIGN_STANDARD.defaults.template.id

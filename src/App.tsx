@@ -119,7 +119,7 @@ import { applyStudioTableExemplar, clearStudioTableContinuation, compatibleStudi
 import { attachStudioConceptReference, removeStudioConceptReference } from "./lib/studio-concept-reference";
 import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
 import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
-import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, isUnqualifiedConvertedOrnlTitle, markNativeQualifiedConvertedOrnlTitle, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
+import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, isUnqualifiedConvertedOrnlTitle, markNativeQualifiedConvertedOrnlTitle, shouldPreserveSourceOrnlTemplateSlide, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
 import { deckTemplateWorkflow, deckWithAutomaticTemplateRouting } from "./lib/template-routing";
 import { preserveNativeSlide } from "./lib/native-slide-preservation";
 import { buildDeckQualificationReport, qualificationEvidenceSlideNumber, recordDeckQualificationReviews, type DeckQualificationReport } from "./lib/deck-qualification";
@@ -4952,7 +4952,7 @@ export default function App() {
     const editableComposition = await buildStudioCompositionPptx(studioScene, { catalog, templateCatalog, sourceSlideRasters, sourceSlideText: Object.fromEntries(deck.audit.slides.map((slide) => [slide.number, slide.text])), nativeTemplateLayoutBaseId: defaultNativeLayout.id, strict: true, title: `${cleanFileStem(deck.name)} · Presentation Studio redesign` });
     const nativeTemplate = await applyStudioNativeTemplateLayouts({ bytes: editableComposition.bytes, scene: studioScene, outputSlides: editableComposition.outputSlides, templateBytes: templateSourceBytes, templateCatalog, defaultLayoutId: defaultNativeLayout.id });
     let result = { ...editableComposition, bytes: nativeTemplate.bytes, warnings: [...editableComposition.warnings, ...nativeTemplate.warnings] };
-    for (const sourceSlideNumber of studioScene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber)) {
+    for (const sourceSlideNumber of studioScene.slides.filter((slide) => shouldPreserveSourceOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber)) {
       const sourceBytes = sourceForDeck(projectRef.current, deck)?.bytes;
       if (!sourceBytes) throw new Error("The embedded source PowerPoint is required to preserve approved ORNL template slides natively.");
       const destinationSlideNumber = result.outputSlides.find((slide) => slide.sourceSlideNumber === sourceSlideNumber && !slide.continuation)?.outputSlideNumber;
