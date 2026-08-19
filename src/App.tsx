@@ -102,6 +102,7 @@ import { nativeTextFrameOverflows, solveTextFit } from "./lib/text-fit-solver";
 import { decideVisualIteration } from "./lib/visual-iteration";
 import { buildDesignRepairLedger } from "./lib/design-repair-loop";
 import { sha256 } from "./lib/hash";
+import { singleFlight } from "./lib/single-flight";
 import { cleanFileStem, projectSaveDefaultName } from "./lib/file-names";
 import { compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioConnectorAttachmentPoint, studioGeneratedComponents, studioSlideContentSignature, translateStudioFigureTreatment, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
 import { applyStudioLayoutConstraints, type StudioConstraintRequest } from "./lib/studio-layout-constraints";
@@ -1413,6 +1414,7 @@ export default function App() {
   const sourceFigureRastersRef = useRef(new Map<string, { data: string; width: number; height: number }>());
   const studioFreshPreviewsRef = useRef(studioFreshPreviews);
   const studioDeckBuildsRef = useRef(studioDeckBuilds);
+  const studioDeckBuildPromisesRef = useRef<Map<string, Promise<StudioDeckBuild>>>(new Map());
   const studioDeckQualificationsRef = useRef(studioDeckQualifications);
   const studioDeckQualificationHistoryRef = useRef<Record<string, StudioDeckQualification[]>>({});
   const studioEditHistoryRef = useRef<Record<string, { undo: StudioWebScene[]; redo: StudioWebScene[] }>>({});
@@ -2370,7 +2372,7 @@ export default function App() {
         if (unconverted.length) throw new Error(`The central presentation cannot be built until every slide has a Studio or converted-template design. Still source-only: ${unconverted.join(", ")}.`);
         const existing = studioDeckBuildsRef.current[buildDeck.id];
         const exactExisting = existing?.sceneRevision === upgradedScene.revision ? existing : undefined;
-        const build = exactExisting ?? await buildCentralStudioDeck(buildDeck, upgradedScene);
+        const build = exactExisting ?? await getOrBuildCentralStudioDeck(buildDeck, upgradedScene);
         const qualifiedProject = persistNativeQualifiedConvertedTitle(buildDeck, upgradedScene, `Locked converted ORNL title slide 1 of ${buildDeck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
         invalidateStudioQualification(deck.id);
         studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: build };
@@ -4991,6 +4993,12 @@ export default function App() {
     };
   }
 
+  function getOrBuildCentralStudioDeck(deck: DeckJob, studioScene: StudioWebScene): Promise<StudioDeckBuild> {
+    const existing = studioDeckBuildsRef.current[deck.id];
+    if (existing?.sceneRevision === studioScene.revision) return Promise.resolve(existing);
+    return singleFlight(studioDeckBuildPromisesRef.current, `${deck.id}:${studioScene.revision}`, () => buildCentralStudioDeck(deck, studioScene));
+  }
+
   async function previewFreshStudioSlide(slideNumber: number) {
     if (!selectedDeck?.studioScene) return;
     clearMessages();
@@ -5025,7 +5033,7 @@ export default function App() {
       const unconverted = unsupportedSourceSlideNumbers(deck, upgradedScene);
       if (unconverted.length) throw new Error(`Convert every slide into the central Studio design before Build all. Still source-only: ${unconverted.join(", ")}.`);
       setBusy(`Building and validating all ${upgradedScene.slides.length} slides in one Microsoft PowerPoint pass…`);
-      const centralBuild = await buildCentralStudioDeck(deck, upgradedScene);
+      const centralBuild = await getOrBuildCentralStudioDeck(deck, upgradedScene);
       persistNativeQualifiedConvertedTitle(deck, upgradedScene, `Locked converted ORNL title slide 1 of ${deck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
       invalidateStudioQualification(deck.id);
       studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: centralBuild };
@@ -5061,7 +5069,7 @@ export default function App() {
     const deckId = selectedDeck.id;
     const sceneRevision = selectedDeck.studioScene.revision;
     setStudioDeckBuildLoadingId(deckId);
-    void buildCentralStudioDeck(selectedDeck, selectedDeck.studioScene).then((build) => {
+    void getOrBuildCentralStudioDeck(selectedDeck, selectedDeck.studioScene).then((build) => {
       const currentDeck = projectRef.current.decks.find((deck) => deck.id === deckId);
       if (currentDeck?.studioScene?.revision !== sceneRevision) return;
       persistNativeQualifiedConvertedTitle(currentDeck, currentDeck.studioScene, `Locked converted ORNL title slide 1 of ${currentDeck.name} after the automatic central Studio presentation passed native PowerPoint build validation.`);
