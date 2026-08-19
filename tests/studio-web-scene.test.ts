@@ -764,6 +764,42 @@ test("first-class Studio table design survives project persistence and editable 
   assert.deepEqual(afterTable.cells?.filter((cell) => !cell.horizontalMergeContinuation && !cell.verticalMergeContinuation).map((cell) => cell.text), sourceAuditTable.cells?.filter((cell) => !cell.horizontalMergeContinuation && !cell.verticalMergeContinuation).map((cell) => cell.text));
 });
 
+test("fresh table composition normalizes legacy body fills and preserves srgb semantic colors", async () => {
+  const { deck, catalog } = await fixture();
+  let scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides.find((slide) => slide.nodes.some((node) => node.kind === "table" && node.table));
+  const sourceTable = sourceSlide?.nodes.find((node) => node.kind === "table" && node.table);
+  assert.ok(sourceSlide && sourceTable?.table);
+  const semanticCell = sourceTable.table.cells.find((cell) => cell.row > 1);
+  assert.ok(semanticCell);
+  scene = recomposeStudioWebSlide(scene, sourceSlide.slideNumber, "ornl-title-table", undefined, "Normalize accidental table styling while retaining meaning-bearing color.");
+  scene = {
+    ...scene,
+    slides: scene.slides.map((slide) => slide.slideNumber !== sourceSlide.slideNumber ? slide : {
+      ...slide,
+      nodes: slide.nodes.map((node) => node.id !== sourceTable.id || !node.table ? node : {
+        ...node,
+        table: {
+          ...node.table,
+          cells: node.table.cells.map((cell) => ({
+            ...cell,
+            fill: cell.id === semanticCell.id ? "srgb:B50094" : "srgb:005C82",
+            semanticColorRole: cell.id === semanticCell.id ? "source-category-plasma" : undefined,
+          })),
+        },
+      }),
+    }),
+  };
+  const rebuilt = await buildStudioCompositionPptx({ ...scene, slides: [scene.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!] }, { catalog, strict: false, title: "ORNL table fill normalization" });
+  const after = await auditPptx(rebuilt.bytes);
+  const cells = after.tables[0]?.cells?.filter((cell) => !cell.horizontalMergeContinuation && !cell.verticalMergeContinuation) ?? [];
+  assert.ok(cells.length > 0);
+  assert.ok(cells.filter((cell) => cell.row === 1).every((cell) => cell.fillToken === "srgb:00454d"));
+  assert.ok(cells.filter((cell) => cell.row > 1 && (cell.row !== semanticCell.row || cell.column !== semanticCell.column)).every((cell) => cell.fillToken === (cell.row % 2 === 0 ? "srgb:f0f2f1" : "srgb:ffffff")));
+  assert.equal(cells.find((cell) => cell.row === semanticCell.row && cell.column === semanticCell.column)?.fillToken, "srgb:b50094");
+  assert.equal(cells.some((cell) => cell.fillToken === "srgb:000000"), false);
+});
+
 test("approved table exemplars propagate only to compatible structures and preserve semantic fills", async () => {
   const { deck, catalog } = await fixture();
   let scene = compileStudioWebScene(deck, catalog);

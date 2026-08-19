@@ -57,7 +57,7 @@ function hex(value: string | undefined, fallback: string): string {
   const normalized = (candidate: string | undefined): string | undefined => {
     const direct = /^#([0-9a-f]{6})$/i.exec(candidate ?? "")?.[1];
     if (direct) return direct.toUpperCase();
-    const tagged = /^RGB:([0-9a-f]{6})$/i.exec(candidate ?? "")?.[1];
+    const tagged = /^(?:RGB|srgb):([0-9a-f]{6})$/i.exec(candidate ?? "")?.[1];
     return tagged?.toUpperCase();
   };
   return normalized(value) ?? normalized(fallback) ?? "000000";
@@ -146,7 +146,11 @@ function tableRows(node: StudioWebNode): PptxGenJS.TableRow[] {
         bold: (cellDesign?.fontWeight ?? (header ? 700 : 400)) >= 600,
         fontSize: cellDesign?.fontSizePt ?? node.style.fontSizePt,
         color: hex(cellDesign?.color, header && !cell.semanticColorRole ? "#FFFFFF" : node.style.color),
-        fill: { color: hex(cellDesign?.fill, cell.semanticColorRole ? cell.fill ?? "#FFFFFF" : header ? "#00454D" : cell.fill ?? (cell.row % 2 === 0 ? "#F0F2F1" : "#FFFFFF")) },
+        // Source table fills are formatting noise unless the audit assigned a
+        // meaning-bearing semantic role. Normalize ordinary body cells to the
+        // shared ORNL banding system, while preserving an explicitly styled
+        // cell or a semantic source color exactly.
+        fill: { color: hex(cellDesign?.fill, cell.semanticColorRole ? cell.fill ?? "#FFFFFF" : header ? "#00454D" : (cell.row % 2 === 0 ? "#F0F2F1" : "#FFFFFF")) },
         align: cellDesign?.textAlign ?? node.style.textAlign,
         valign: cellDesign?.verticalAlign ?? node.style.verticalAlign,
         margin: [padding.top, padding.right, padding.bottom, padding.left],
