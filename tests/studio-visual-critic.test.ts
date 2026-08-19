@@ -54,6 +54,13 @@ test("Studio production preflight blocks undersized ordinary type and crop-prone
   assert.equal(result.issues.some((issue) => issue.category === "brand" && issue.severity === "blocker"), true);
 });
 
+test("Studio production preflight preserves approved sacred-template typography", () => {
+  const source = scene();
+  source.slides[0] = { ...source.slides[0], recipe: "template-layout", nodes: source.slides[0].nodes.map((node) => node.id === "body" ? { ...node, style: { ...node.style, fontSizePt: 14 } } : node) };
+  const result = preflightStudioScene(source, { protectedSlideNumbers: [1] });
+  assert.equal(result.issues.some((issue) => issue.category === "legibility"), false);
+});
+
 test("native production QA treats editable table-cell overflow as a hard issue", () => {
   const native = measurement();
   native.slides[0].shapes.push({ slideNumber: 1, shapeIndex: 3, name: "Results table", zOrder: 3, boundsPt: { left: 30, top: 210, width: 300, height: 100 }, rotation: 0, hasTextFrame: false, hasTable: true, table: { rowCount: 1, columnCount: 1, rowHeightsPt: [100], columnWidthsPt: [300], cells: [{ row: 1, column: 1, boundsPt: { left: 0, top: 0, width: 300, height: 100 }, marginsPt: { left: 6, right: 6, top: 4, bottom: 4 }, renderedTextBoundsPt: { left: 6, top: 4, width: 290, height: 96 }, textCoordinateSpace: "cell-relative", textLength: 20, lineCount: 5, verticalAnchor: "top" }] } });

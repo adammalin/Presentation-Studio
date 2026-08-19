@@ -52,7 +52,8 @@ function overlapArea(left: StudioWebFrame, right: StudioWebFrame): number {
  * They prevent known-bad typography, header collisions, unsafe logo treatment,
  * and off-canvas geometry from entering an expensive native deck build.
  */
-export function preflightStudioScene(scene: StudioWebScene): StudioScenePreflight {
+export function preflightStudioScene(scene: StudioWebScene, options: { protectedSlideNumbers?: readonly number[] } = {}): StudioScenePreflight {
+  const protectedSlideNumbers = new Set(options.protectedSlideNumbers ?? []);
   const bySlide = scene.slides.map((slide) => {
     const issues: StudioQualityIssue[] = [];
     const add = (input: Omit<StudioQualityIssue, "id">) => issues.push({ id: `slide-${slide.slideNumber}-${input.category}-${issues.length + 1}`, ...input });
@@ -60,10 +61,11 @@ export function preflightStudioScene(scene: StudioWebScene): StudioScenePrefligh
     const sourceLocked = sourceLockedNodeIds(scene, slide.slideNumber);
     const editable = visible.filter((node) => !sourceLocked.has(node.id));
     const footerRoles = new Set(["footer", "slide-number", "date", "logo"]);
+    const protectedTemplateSlide = protectedSlideNumbers.has(slide.slideNumber);
 
     for (const node of editable) {
       if (node.frame.x < 0 || node.frame.y < 0 || node.frame.x + node.frame.width > scene.slideSize.width || node.frame.y + node.frame.height > scene.slideSize.height) add({ category: "safe-region", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} leaves the slide canvas.`, recommendation: "Recompose it inside the 16:9 canvas before building.", autoFixable: true });
-      if (node.kind === "text" && node.text?.trim() && node.component?.role !== "footer-meta" && !footerRoles.has(node.role)) {
+      if (!protectedTemplateSlide && node.kind === "text" && node.text?.trim() && node.component?.role !== "footer-meta" && !footerRoles.has(node.role)) {
         const floor = node.role === "title" ? 24 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" ? 14 : 16;
         if (node.style.fontFamily.trim().toLowerCase() !== "aptos") add({ category: "brand", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} uses ${node.style.fontFamily || "an unspecified font"} instead of Aptos.`, recommendation: "Use Aptos throughout ordinary ORNL presentation content.", autoFixable: true });
         if (node.style.fontSizePt < floor) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is ${node.style.fontSizePt} pt; the production floor for this role is ${floor} pt.`, recommendation: "Choose a roomier recipe, enlarge the region, or use an explicit continuation slide instead of miniaturizing type.", autoFixable: true });
@@ -80,7 +82,7 @@ export function preflightStudioScene(scene: StudioWebScene): StudioScenePrefligh
     }
 
     const textNodes = editable.filter((node) => node.kind === "text" && node.text?.trim() && !footerRoles.has(node.role));
-    for (let leftIndex = 0; leftIndex < textNodes.length; leftIndex += 1) for (let rightIndex = leftIndex + 1; rightIndex < textNodes.length; rightIndex += 1) {
+    if (!protectedTemplateSlide) for (let leftIndex = 0; leftIndex < textNodes.length; leftIndex += 1) for (let rightIndex = leftIndex + 1; rightIndex < textNodes.length; rightIndex += 1) {
       const left = textNodes[leftIndex];
       const right = textNodes[rightIndex];
       const overlap = overlapArea(left.frame, right.frame);

@@ -4896,7 +4896,7 @@ export default function App() {
     const studioSlide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
     if (!sourceSlide || !studioSlide) throw new Error(`Slide ${slideNumber} is not present in the current Studio scene.`);
     const oneSlideScene: StudioWebScene = { ...studioScene, slides: [studioSlide] };
-    const preflight = preflightStudioScene(oneSlideScene);
+    const preflight = preflightStudioScene(oneSlideScene, { protectedSlideNumbers: isProtectedOrnlTemplateSlide(deck, slideNumber) ? [slideNumber] : [] });
     if (!preflight.ready) throw new Error(`Studio production preflight rejected slide ${slideNumber}: ${preflight.issues.slice(0, 5).map((item) => item.message).join(" ")}`);
     const sourceCatalog = await getOrBuildSlideCatalog(deck, projectRef.current);
     const catalog = catalogWithStudioResources(sourceCatalog, await studioResourceMedia(oneSlideScene, projectRef.current.resources), oneSlideScene);
@@ -4935,7 +4935,7 @@ export default function App() {
     assertSacredOrnlTitleSlideIntegrity(deck, studioScene);
     const unconverted = unsupportedSourceSlideNumbers(deck, studioScene);
     if (unconverted.length) throw new Error(`Convert every slide into the Studio design system before exporting one central presentation. Still using source geometry: ${unconverted.join(", ")}.`);
-    const preflight = preflightStudioScene(studioScene);
+    const preflight = preflightStudioScene(studioScene, { protectedSlideNumbers: studioScene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber) });
     if (!preflight.ready) {
       const slides = preflight.bySlide.map((item) => item.slideNumber);
       const details = preflight.bySlide.slice(0, 5).map((item) => `slide ${item.slideNumber}: ${item.issues[0]?.message}`).join("; ");
