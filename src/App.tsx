@@ -118,7 +118,7 @@ import { applyStudioTableExemplar, clearStudioTableContinuation, compatibleStudi
 import { attachStudioConceptReference, removeStudioConceptReference } from "./lib/studio-concept-reference";
 import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
 import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
-import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, markNativeQualifiedConvertedOrnlTitle, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
+import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, isUnqualifiedConvertedOrnlTitle, markNativeQualifiedConvertedOrnlTitle, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
 import { deckTemplateWorkflow, deckWithAutomaticTemplateRouting } from "./lib/template-routing";
 import { preserveNativeSlide } from "./lib/native-slide-preservation";
 import { buildDeckQualificationReport, qualificationEvidenceSlideNumber, recordDeckQualificationReviews, type DeckQualificationReport } from "./lib/deck-qualification";
@@ -3078,7 +3078,7 @@ export default function App() {
         const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"];
         const recipe = String(request.input.recipe ?? "") as StudioLayoutRecipe;
         if (!allowedRecipes.includes(recipe)) throw new Error("Choose a supported Studio web recipe.");
-        if (isProtectedOrnlTemplateSlide(deck, slideNumber)) throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and locked. Its source or converted-template design, artwork, content bindings, typography, and geometry cannot be recomposed or restyled.`);
+        if (isProtectedOrnlTemplateSlide(deck, slideNumber) && !isUnqualifiedConvertedOrnlTitle(deck, slideNumber)) throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and locked. Its source or converted-template design, artwork, content bindings, typography, and geometry cannot be recomposed or restyled.`);
         const layoutId = typeof request.input.layoutId === "string" ? request.input.layoutId : undefined;
         const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
         if (recipe === "template-layout" && !layout) throw new Error("Choose an installed Template Pack layout ID before staging template-layout.");

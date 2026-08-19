@@ -45,6 +45,16 @@ export function isProtectedOrnlTemplateSlide(deck: OrnlTemplateDeck, slideNumber
     && (explicitlyProtected || isSacredOrnlTitleSlide(deck, slideNumber) || isSacredOrnlClosingSlide(deck, slideNumber));
 }
 
+export function isUnqualifiedConvertedOrnlTitle(deck: OrnlTemplateDeck, slideNumber: number): boolean {
+  if (slideNumber !== 1
+    || deck.targetTemplateId !== PRESENTATION_DESIGN_STANDARD.defaults.template.id
+    || usesOrnlTemplate(deck)) return false;
+  const title = deck.studioScene?.slides.find((slide) => slide.slideNumber === slideNumber);
+  return title?.recipe === "template-layout"
+    && Boolean(title.targetLayoutId)
+    && deck.nativeQualifiedStudioSlideRevisions?.[String(slideNumber)] !== title.updatedAt;
+}
+
 /**
  * Converted sponsor/custom title slides become sacred only after their exact
  * Studio revision has compiled, rendered, and measured successfully in native

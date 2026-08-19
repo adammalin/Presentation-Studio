@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlClosingSlide, isSacredOrnlTitleSlide, markNativeQualifiedConvertedOrnlTitle, unsupportedSourceSlideNumbers } from "../src/lib/template-guardrails";
+import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlClosingSlide, isSacredOrnlTitleSlide, isUnqualifiedConvertedOrnlTitle, markNativeQualifiedConvertedOrnlTitle, unsupportedSourceSlideNumbers } from "../src/lib/template-guardrails";
 import type { DeckJob, StudioWebScene } from "../src/types";
 
 const ornlDeck = { targetTemplateId: "ornl-16x9-v1", templateClassification: "current-ornl" as const, protectedSlideNumbers: [] as number[] };
@@ -47,9 +47,11 @@ test("a converted non-ORNL title becomes sacred only after its exact native-qual
   converted.slides[0].targetLayoutId = "layout-1";
   converted.slides[0].targetLayoutName = "Title | Standard";
   assert.equal(isProtectedOrnlTemplateSlide({ ...deck, studioScene: converted }, 1), false);
+  assert.equal(isUnqualifiedConvertedOrnlTitle({ ...deck, studioScene: converted }, 1), true);
   assert.doesNotThrow(() => assertSacredOrnlTitleSlideIntegrity({ ...deck, studioScene: converted }, converted));
   const qualified = markNativeQualifiedConvertedOrnlTitle({ ...deck, studioScene: converted } as DeckJob, converted);
   assert.equal(isProtectedOrnlTemplateSlide(qualified, 1), true);
+  assert.equal(isUnqualifiedConvertedOrnlTitle(qualified, 1), false);
   assert.doesNotThrow(() => assertSacredOrnlTitleSlideIntegrity(qualified, converted));
   const changed = scene("ornl-title-content");
   assert.equal(isProtectedOrnlTemplateSlide({ ...qualified, studioScene: changed }, 1), false);
