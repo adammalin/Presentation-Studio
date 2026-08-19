@@ -258,7 +258,7 @@ export function buildSlideDesignWorkOrder(input: {
       "Persist the complete exact-content composition with stage_studio_web_design in the one central Studio scene. Do not route an ORNL-target deck through a source-bound cleanup proposal.",
       "When the staged transaction fully addresses a submitted comment, pass that exact comment ID in addressedThreadIds so it leaves the clean canvas; never clear unrelated or partially addressed feedback.",
       "Compile the exact Studio revision with preview_studio_fresh_composition, render and measure it in Microsoft PowerPoint, and compare the finished ORNL pixels with the source for content and message integrity.",
-      "Fix objective and visual regressions in the same central scene, then build_studio_presentation and run whole-deck qualification before the ORNL output is called ready.",
+      "Fix objective and visual regressions in the same central scene, start build_studio_presentation, poll get_studio_presentation_build_status until the exact job is ready, and then run whole-deck qualification before the ORNL output is called ready.",
     ],
     pauseOnlyWhen: PRESENTATION_DESIGN_STANDARD.askOnlyWhen,
     definitionOfDone: sourceTemplateCleanup

@@ -164,7 +164,8 @@ export interface DesktopBridge {
   getNativeRenderCapabilities(): Promise<NativeRenderCapabilities>;
   getNativeMeasurementCapabilities(): Promise<NativeMeasurementCapabilities>;
   renderPowerPoint(payload: { name: string; bytes: Uint8Array; width?: number; format?: "jpeg" | "png" }): Promise<NativeRenderResult>;
-  measurePowerPoint(payload: { name: string; bytes: Uint8Array }): Promise<NativeMeasurementResult>;
+  measurePowerPoint(payload: { name: string; bytes: Uint8Array; operationId?: string }): Promise<NativeMeasurementResult>;
+  cancelPowerPointMeasurement(payload: { operationId: string }): Promise<{ canceled: boolean; operationId: string }>;
   captureDeckQualification(payload: { projectId: string; deckId: string; runId: string; width?: number; source: { name: string; bytes: Uint8Array }; candidate: { name: string; bytes: Uint8Array } }): Promise<DeckQualificationCaptureResult>;
   finalizeDeckQualification(payload: { outputRoot: string; report: DeckQualificationReport }): Promise<{ outputRoot: string; reportPath: string; htmlPath: string }>;
   readDeckQualificationSlide(payload: { outputRoot: string; representation: "source" | "candidate"; slideNumber: number }): Promise<{ mimeType: "image/png"; bytes: Uint8Array; filePath: string }>;

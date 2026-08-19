@@ -160,6 +160,22 @@ function mcpActivityCopy(activity: McpActivityState) {
 }
 type StudioFreshPreview = Omit<StudioCompositionExportResult, "bytes"> & { bytes: Uint8Array; deckId: string; sourceSlideNumber: number; sceneRevision: string; slideUpdatedAt: string; contentValidation: StudioCompositionContentValidation; nativeRender?: NativeRenderResult; nativeMeasurement?: NativeMeasurementResult };
 type StudioDeckBuild = Omit<StudioCompositionExportResult, "bytes"> & { bytes: Uint8Array; deckId: string; sceneRevision: string; slideUpdatedAts: Record<number, string>; contentValidation: StudioCompositionContentValidation; nativeRender: NativeRenderResult; nativeMeasurement: NativeMeasurementResult; candidateAudit: NonNullable<DeckJob["audit"]> };
+type StudioDeckBuildJobPhase = "queued" | "preflight" | "compiling" | "templating" | "rendering" | "measuring" | "validating" | "ready" | "cancel-requested" | "canceled" | "superseded" | "failed";
+type StudioDeckBuildJob = {
+  id: string;
+  deckId: string;
+  deckName: string;
+  sceneRevision: string;
+  phase: StudioDeckBuildJobPhase;
+  progressPercent: number;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  cancelRequested?: boolean;
+  error?: string;
+  slideCount?: number;
+};
 type StudioDeckQualification = { report: DeckQualificationReport; outputRoot: string; reportPath: string; htmlPath: string; sceneRevision: string; candidateSha256: string };
 const MAX_PROJECT_PACKAGE_BYTES = 1_500_000_000;
 
@@ -1396,6 +1412,7 @@ export default function App() {
   const [nativeRenderLoadingKey, setNativeRenderLoadingKey] = useState<string>();
   const [studioFreshPreviews, setStudioFreshPreviews] = useState<Record<string, StudioFreshPreview>>({});
   const [studioDeckBuilds, setStudioDeckBuilds] = useState<Record<string, StudioDeckBuild>>({});
+  const [studioDeckBuildJobs, setStudioDeckBuildJobs] = useState<Record<string, StudioDeckBuildJob>>({});
   const [studioDeckBuildLoadingId, setStudioDeckBuildLoadingId] = useState<string>();
   const [studioDeckQualifications, setStudioDeckQualifications] = useState<Record<string, StudioDeckQualification>>({});
   const [, setStudioHistoryVersion] = useState(0);
@@ -1414,6 +1431,7 @@ export default function App() {
   const sourceFigureRastersRef = useRef(new Map<string, { data: string; width: number; height: number }>());
   const studioFreshPreviewsRef = useRef(studioFreshPreviews);
   const studioDeckBuildsRef = useRef(studioDeckBuilds);
+  const studioDeckBuildJobsRef = useRef(studioDeckBuildJobs);
   const studioDeckBuildPromisesRef = useRef<Map<string, Promise<StudioDeckBuild>>>(new Map());
   const studioDeckQualificationsRef = useRef(studioDeckQualifications);
   const studioDeckQualificationHistoryRef = useRef<Record<string, StudioDeckQualification[]>>({});
@@ -2370,30 +2388,41 @@ export default function App() {
         const buildDeck = persistStudioProductionUpgrade(deck, upgradedScene);
         const unconverted = unsupportedSourceSlideNumbers(buildDeck, upgradedScene);
         if (unconverted.length) throw new Error(`The central presentation cannot be built until every slide has a Studio or converted-template design. Still source-only: ${unconverted.join(", ")}.`);
-        const existing = studioDeckBuildsRef.current[buildDeck.id];
-        const exactExisting = existing?.sceneRevision === upgradedScene.revision ? existing : undefined;
-        const build = exactExisting ?? await getOrBuildCentralStudioDeck(buildDeck, upgradedScene);
-        const qualifiedProject = persistNativeQualifiedConvertedTitle(buildDeck, upgradedScene, `Locked converted ORNL title slide 1 of ${buildDeck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
-        invalidateStudioQualification(deck.id);
-        studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: build };
-        setStudioDeckBuilds(studioDeckBuildsRef.current);
+        const job = startCentralStudioDeckBuild(buildDeck, upgradedScene);
         setSelectedDeckId(deck.id);
         setActiveView("slides");
         return {
-          projectUpdatedAt: qualifiedProject.project.updatedAt,
+          projectUpdatedAt: projectRef.current.project.updatedAt,
           deck: { id: buildDeck.id, name: buildDeck.name },
           sceneRevision: upgradedScene.revision,
-          slideCount: build.slideCount,
-          editablePowerPoint: { textNodeCount: build.textNodeCount, tableCount: build.tableCount, imageCount: build.imageCount, generatedComponentCount: build.generatedComponentCount },
-          renderer: build.nativeRender.renderer,
-          powerPointVersion: build.nativeRender.powerPointVersion,
-          measurementAuthority: build.nativeMeasurement.authority,
-          incrementalBuild: { rebuiltSlideCount: exactExisting ? 0 : build.outputSlides.length, reusedSlideCount: exactExisting ? build.outputSlides.length : 0 },
-          readyForInAppReview: true,
+          job,
+          readyForInAppReview: job.phase === "ready",
           saved: false,
           exported: false,
-          instruction: "Review the same central result in Slides. Location comments bind to each exact Studio slide revision. Export remains a separate user action.",
+          instruction: job.phase === "ready" ? "Review the same central result in Slides. Location comments bind to each exact Studio slide revision. Export remains a separate user action." : "Poll get_studio_presentation_build_status. The app remains usable, shows the same progress, and will not expose this candidate for export until native PowerPoint QA succeeds.",
         };
+      }
+      if (request.operation === "get_studio_presentation_build_status") {
+        const requestedJobId = String(request.input.jobId ?? "");
+        const requestedDeckId = String(request.input.deckId ?? "");
+        const job = requestedJobId
+          ? Object.values(studioDeckBuildJobsRef.current).find((candidate) => candidate.id === requestedJobId)
+          : studioDeckBuildJobsRef.current[requestedDeckId];
+        if (!job) throw new Error("No central Studio build job matches this request. Start one with build_studio_presentation.");
+        const currentBuild = studioDeckBuildsRef.current[job.deckId];
+        return {
+          projectUpdatedAt: projectRef.current.project.updatedAt,
+          job,
+          readyForInAppReview: job.phase === "ready" && currentBuild?.sceneRevision === job.sceneRevision,
+          saved: false,
+          exported: false,
+          instruction: job.phase === "ready" ? "Inspect the exact central result in Slides and run deck qualification before asking the user to export." : job.phase === "failed" ? "Use the exact hold reason to repair the Studio scene or engine, then start a new build. Do not call the deck finished." : job.phase === "canceled" || job.phase === "superseded" ? "Start a new build for the current Studio scene when ready." : "Continue polling this job. The user may keep working in the app while PowerPoint runs.",
+        };
+      }
+      if (request.operation === "cancel_studio_presentation_build") {
+        const job = cancelStudioDeckBuildJob(String(request.input.jobId ?? ""));
+        if (!job) throw new Error("No running central Studio build job matches this request.");
+        return { projectUpdatedAt: projectRef.current.project.updatedAt, job, saved: false, exported: false, instruction: "The saved scene and prior verified result remain intact. A PowerPoint operation already at a native boundary may take a moment to release cleanly." };
       }
       if (request.operation === "run_deck_qualification") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read the Studio deck again before qualification.");
@@ -4184,6 +4213,7 @@ export default function App() {
     sourceFigureRastersRef.current.clear();
     studioFreshPreviewsRef.current = {};
     studioDeckBuildsRef.current = {};
+    studioDeckBuildJobsRef.current = {};
     studioDeckQualificationsRef.current = {};
     studioDeckQualificationHistoryRef.current = {};
     setSlideCatalogs({});
@@ -4191,6 +4221,7 @@ export default function App() {
     setNativeRenderCatalogs({});
     setStudioFreshPreviews({});
     setStudioDeckBuilds({});
+    setStudioDeckBuildJobs({});
     setStudioDeckBuildLoadingId(undefined);
     setStudioDeckQualifications({});
     setSlideCatalogLoadingDeckId(undefined);
@@ -4210,6 +4241,8 @@ export default function App() {
     setNativeRenderCatalogs((catalog) => withoutDeck(catalog));
     studioFreshPreviewsRef.current = withoutDeck(studioFreshPreviewsRef.current);
     studioDeckBuildsRef.current = withoutDeck(studioDeckBuildsRef.current);
+    studioDeckBuildJobsRef.current = withoutDeck(studioDeckBuildJobsRef.current);
+    setStudioDeckBuildJobs(studioDeckBuildJobsRef.current);
     studioDeckQualificationsRef.current = withoutDeck(studioDeckQualificationsRef.current);
     studioDeckQualificationHistoryRef.current = withoutDeck(studioDeckQualificationHistoryRef.current);
     setStudioFreshPreviews(studioFreshPreviewsRef.current);
@@ -4931,7 +4964,18 @@ export default function App() {
     return { ...result, deckId: deck.id, sourceSlideNumber: slideNumber, sceneRevision: studioScene.revision, slideUpdatedAt: studioSlide.updatedAt, contentValidation, nativeRender, nativeMeasurement };
   }
 
-  async function buildCentralStudioDeck(deck: DeckJob, studioScene: StudioWebScene): Promise<StudioDeckBuild> {
+  async function buildCentralStudioDeck(
+    deck: DeckJob,
+    studioScene: StudioWebScene,
+    progress?: (phase: StudioDeckBuildJobPhase, progressPercent: number, message: string) => void,
+    canceled?: () => boolean,
+    measurementOperationId?: string,
+  ): Promise<StudioDeckBuild> {
+    const checkpoint = (phase: StudioDeckBuildJobPhase, progressPercent: number, message: string) => {
+      if (canceled?.()) throw new Error("The central Studio build was canceled. The saved scene remains unchanged.");
+      progress?.(phase, progressPercent, message);
+    };
+    checkpoint("preflight", 4, "Checking the complete Studio scene against the ORNL production standard…");
     if (!deck.audit) throw new Error("Audit the source PowerPoint before building the central presentation.");
     if (!templateCatalog || !templateSourceBytes) throw new Error("Install the approved ORNL Template Pack before building the central presentation.");
     assertSacredOrnlTitleSlideIntegrity(deck, studioScene);
@@ -4943,6 +4987,7 @@ export default function App() {
       const details = preflight.bySlide.slice(0, 5).map((item) => `slide ${item.slideNumber}: ${item.issues[0]?.message}`).join("; ");
       throw new Error(`Studio production preflight found ${preflight.blockerCount} blocker${preflight.blockerCount === 1 ? "" : "s"} and ${preflight.majorCount} major issue${preflight.majorCount === 1 ? "" : "s"} on slides ${slides.slice(0, 18).join(", ")}${slides.length > 18 ? "…" : ""}. ${details}`);
     }
+    checkpoint("compiling", 10, "Preparing exact source-bound text, figures, and editable table content…");
     const sourceCatalog = await getOrBuildSlideCatalog(deck, projectRef.current);
     const catalog = catalogWithStudioResources(sourceCatalog, await studioResourceMedia(studioScene, projectRef.current.resources), studioScene);
     const sourceRender = await getOrBuildNativeRender(deck, "current", projectRef.current);
@@ -4951,7 +4996,9 @@ export default function App() {
     // Full-deck builds crop source-locked evidence from the already-authoritative
     // source-deck render. Do not open one temporary PowerPoint per figure: that
     // O(slides × figures) path exhausted the Electron renderer on large decks.
+    checkpoint("compiling", 25, "Compiling every slide from the central JSON design into editable PowerPoint objects…");
     const editableComposition = await buildStudioCompositionPptx(studioScene, { catalog, templateCatalog, sourceSlideRasters, sourceSlideText: Object.fromEntries(deck.audit.slides.map((slide) => [slide.number, slide.text])), nativeTemplateLayoutBaseId: defaultNativeLayout.id, strict: true, title: `${cleanFileStem(deck.name)} · Presentation Studio redesign` });
+    checkpoint("templating", 38, "Applying approved ORNL masters, layouts, artwork, footer marks, and protected title treatment…");
     const nativeTemplate = await applyStudioNativeTemplateLayouts({ bytes: editableComposition.bytes, scene: studioScene, outputSlides: editableComposition.outputSlides, templateBytes: templateSourceBytes, templateCatalog, defaultLayoutId: defaultNativeLayout.id });
     let result = { ...editableComposition, bytes: nativeTemplate.bytes, warnings: [...editableComposition.warnings, ...nativeTemplate.warnings] };
     for (const sourceSlideNumber of studioScene.slides.filter((slide) => shouldPreserveSourceOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber)) {
@@ -4962,6 +5009,7 @@ export default function App() {
       const preserved = await preserveNativeSlide({ destinationBytes: result.bytes, sourceBytes, sourceSlideNumber, destinationSlideNumber });
       result = { ...result, bytes: preserved.bytes, warnings: [...result.warnings, `Source slide ${sourceSlideNumber} → output slide ${destinationSlideNumber}: approved native ORNL template composition, layout, master, theme, and ${preserved.receipt.copiedMediaCount} related media part${preserved.receipt.copiedMediaCount === 1 ? "" : "s"} preserved.`] };
     }
+    checkpoint("validating", 48, "Verifying exact content, table structure, package integrity, and source-locked evidence…");
     const candidateAudit = await auditPptx(result.bytes);
     const contentValidation = validateStudioCompositionContent({ scene: studioScene, sourceAudit: deck.audit, candidateAudit, outputSlides: result.outputSlides });
     if (!contentValidation.valid) throw new Error(`Central presentation validation rejected the candidate: ${contentValidation.errors.join(" ")}`);
@@ -4970,10 +5018,13 @@ export default function App() {
     // PowerPoint for Mac is a single UI application. Render and measurement
     // must be serialized so two AppleScript bridges never compete for the same
     // temporary presentation or leave the app session locked.
+    checkpoint("rendering", 58, "Rendering the complete editable candidate in Microsoft PowerPoint…");
     const nativeRender = await desktop.renderPowerPoint({ name: artifactName, bytes: result.bytes, width: 1600, format: "png" });
-    const nativeMeasurement = await desktop.measurePowerPoint({ name: artifactName, bytes: result.bytes });
+    checkpoint("measuring", 76, "Measuring titles, body text, logos, figures, and every table cell in Microsoft PowerPoint. Large technical decks can take several minutes…");
+    const nativeMeasurement = await desktop.measurePowerPoint({ name: artifactName, bytes: result.bytes, operationId: measurementOperationId });
     if (nativeRender.status !== "ready" || !nativeRender.authoritative || nativeRender.slides.length !== result.outputSlides.length) throw new Error(nativeRender.reason ?? "Microsoft PowerPoint could not render every materialized slide in the central presentation.");
     if (nativeMeasurement.status !== "ready" || nativeMeasurement.authority !== "powerpoint-native") throw new Error(nativeMeasurement.reason ?? "Microsoft PowerPoint could not measure the central presentation.");
+    checkpoint("validating", 94, "Applying the hard typography, overflow, alignment, logo, and ORNL brand acceptance gate…");
     const protectedSourceSlides = new Set(studioScene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber));
     const protectedSlides = new Set(result.outputSlides.filter((slide) => protectedSourceSlides.has(slide.sourceSlideNumber)).map((slide) => slide.outputSlideNumber));
     const productionIssues = nativeStudioProductionIssues(nativeMeasurement).filter((item) => !protectedSlides.has(item.slideNumber));
@@ -4981,6 +5032,7 @@ export default function App() {
       const failingSlides = [...new Set(productionIssues.map((item) => item.slideNumber))];
       throw new Error(`PowerPoint-native production QA held slides ${failingSlides.slice(0, 20).join(", ")}${failingSlides.length > 20 ? "…" : ""}: ${productionIssues.slice(0, 6).map((item) => `slide ${item.slideNumber} · ${item.message}`).join("; ")}`);
     }
+    checkpoint("validating", 99, "Finalizing the single authoritative Slides, Studio, comments, qualification, and export result…");
     return {
       ...result,
       deckId: deck.id,
@@ -4993,10 +5045,87 @@ export default function App() {
     };
   }
 
-  function getOrBuildCentralStudioDeck(deck: DeckJob, studioScene: StudioWebScene): Promise<StudioDeckBuild> {
+  function getOrBuildCentralStudioDeck(
+    deck: DeckJob,
+    studioScene: StudioWebScene,
+    progress?: (phase: StudioDeckBuildJobPhase, progressPercent: number, message: string) => void,
+    canceled?: () => boolean,
+    measurementOperationId?: string,
+  ): Promise<StudioDeckBuild> {
     const existing = studioDeckBuildsRef.current[deck.id];
     if (existing?.sceneRevision === studioScene.revision) return Promise.resolve(existing);
-    return singleFlight(studioDeckBuildPromisesRef.current, `${deck.id}:${studioScene.revision}`, () => buildCentralStudioDeck(deck, studioScene));
+    return singleFlight(studioDeckBuildPromisesRef.current, `${deck.id}:${studioScene.revision}`, () => buildCentralStudioDeck(deck, studioScene, progress, canceled, measurementOperationId));
+  }
+
+  function publishStudioDeckBuildJob(job: StudioDeckBuildJob) {
+    studioDeckBuildJobsRef.current = { ...studioDeckBuildJobsRef.current, [job.deckId]: job };
+    setStudioDeckBuildJobs(studioDeckBuildJobsRef.current);
+  }
+
+  function updateStudioDeckBuildJob(deckId: string, jobId: string, patch: Partial<StudioDeckBuildJob>) {
+    const currentJob = studioDeckBuildJobsRef.current[deckId];
+    if (!currentJob || currentJob.id !== jobId) return;
+    publishStudioDeckBuildJob({ ...currentJob, ...patch, updatedAt: new Date().toISOString() });
+  }
+
+  function cancelStudioDeckBuildJob(jobId: string) {
+    const job = Object.values(studioDeckBuildJobsRef.current).find((candidate) => candidate.id === jobId);
+    if (!job || !["queued", "preflight", "compiling", "templating", "rendering", "measuring", "validating"].includes(job.phase)) return job;
+    const next: StudioDeckBuildJob = { ...job, phase: "cancel-requested", cancelRequested: true, message: "Cancellation requested. Presentation Studio will discard this candidate at the next safe PowerPoint boundary.", updatedAt: new Date().toISOString() };
+    publishStudioDeckBuildJob(next);
+    void desktop?.cancelPowerPointMeasurement({ operationId: job.id }).catch(() => undefined);
+    return next;
+  }
+
+  function startCentralStudioDeckBuild(deck: DeckJob, studioScene: StudioWebScene): StudioDeckBuildJob {
+    const matching = studioDeckBuildJobsRef.current[deck.id];
+    if (matching?.sceneRevision === studioScene.revision && ["queued", "preflight", "compiling", "templating", "rendering", "measuring", "validating", "cancel-requested"].includes(matching.phase)) return matching;
+    const exactExisting = studioDeckBuildsRef.current[deck.id]?.sceneRevision === studioScene.revision ? studioDeckBuildsRef.current[deck.id] : undefined;
+    const now = new Date().toISOString();
+    const job: StudioDeckBuildJob = {
+      id: crypto.randomUUID(), deckId: deck.id, deckName: deck.name, sceneRevision: studioScene.revision,
+      phase: exactExisting ? "ready" : "queued", progressPercent: exactExisting ? 100 : 0,
+      message: exactExisting ? "This exact Studio scene revision already has a PowerPoint-native validated result." : "Build queued. The saved Studio scene remains editable while PowerPoint works in the background.",
+      startedAt: now, updatedAt: now, completedAt: exactExisting ? now : undefined, slideCount: exactExisting?.slideCount,
+    };
+    publishStudioDeckBuildJob(job);
+    if (exactExisting) return job;
+    setStudioDeckBuildLoadingId(deck.id);
+    void getOrBuildCentralStudioDeck(
+      deck,
+      studioScene,
+      (phase, progressPercent, message) => updateStudioDeckBuildJob(deck.id, job.id, { phase, progressPercent, message }),
+      () => Boolean(studioDeckBuildJobsRef.current[deck.id]?.id === job.id && studioDeckBuildJobsRef.current[deck.id]?.cancelRequested),
+      job.id,
+    ).then((build) => {
+      const activeJob = studioDeckBuildJobsRef.current[deck.id];
+      if (!activeJob || activeJob.id !== job.id) return;
+      if (activeJob.cancelRequested) {
+        updateStudioDeckBuildJob(deck.id, job.id, { phase: "canceled", progressPercent: activeJob.progressPercent, message: "Build canceled. The prior verified result and saved Studio scene were preserved.", completedAt: new Date().toISOString() });
+        return;
+      }
+      const currentDeck = projectRef.current.decks.find((candidate) => candidate.id === deck.id);
+      if (currentDeck?.studioScene?.revision !== studioScene.revision) {
+        updateStudioDeckBuildJob(deck.id, job.id, { phase: "superseded", message: "The Studio scene changed during the build. This stale candidate was discarded; rebuild the current revision.", completedAt: new Date().toISOString() });
+        return;
+      }
+      persistNativeQualifiedConvertedTitle(currentDeck, currentDeck.studioScene, `Locked converted ORNL title slide 1 of ${currentDeck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
+      invalidateStudioQualification(deck.id);
+      studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: build };
+      setStudioDeckBuilds(studioDeckBuildsRef.current);
+      updateStudioDeckBuildJob(deck.id, job.id, { phase: "ready", progressPercent: 100, message: `All ${build.outputSlides.length} slides passed the native production gate and now share one authoritative result.`, completedAt: new Date().toISOString(), slideCount: build.slideCount });
+      setNotice(`All ${build.outputSlides.length} finished slide results are ready. Studio, Slides, comments, qualification, and export now refer to this exact editable PowerPoint candidate.`);
+    }).catch((caught) => {
+      const activeJob = studioDeckBuildJobsRef.current[deck.id];
+      if (!activeJob || activeJob.id !== job.id) return;
+      const message = caught instanceof Error ? caught.message : "PowerPoint validation failed";
+      const canceled = activeJob.cancelRequested || /was canceled/i.test(message);
+      updateStudioDeckBuildJob(deck.id, job.id, { phase: canceled ? "canceled" : "failed", message: canceled ? "Build canceled. The saved Studio scene and any prior verified result were preserved." : `Build held before completion: ${message}`, error: canceled ? undefined : message, completedAt: new Date().toISOString() });
+      if (!canceled) setError(`Build all held the deck before it could be called finished: ${message}`);
+    }).finally(() => {
+      setStudioDeckBuildLoadingId((value) => value === deck.id ? undefined : value);
+    });
+    return job;
   }
 
   async function previewFreshStudioSlide(slideNumber: number) {
@@ -5032,17 +5161,10 @@ export default function App() {
     try {
       const unconverted = unsupportedSourceSlideNumbers(deck, upgradedScene);
       if (unconverted.length) throw new Error(`Convert every slide into the central Studio design before Build all. Still source-only: ${unconverted.join(", ")}.`);
-      setBusy(`Building and validating all ${upgradedScene.slides.length} slides in one Microsoft PowerPoint pass…`);
-      const centralBuild = await getOrBuildCentralStudioDeck(deck, upgradedScene);
-      persistNativeQualifiedConvertedTitle(deck, upgradedScene, `Locked converted ORNL title slide 1 of ${deck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
-      invalidateStudioQualification(deck.id);
-      studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: centralBuild };
-      setStudioDeckBuilds(studioDeckBuildsRef.current);
-      setNotice(`All ${centralBuild.outputSlides.length} finished slide results are ready from one central editable PowerPoint build. Studio, Slides, comments, qualification, and export now refer to this exact design revision.`);
+      const job = startCentralStudioDeckBuild(deck, upgradedScene);
+      setNotice(job.phase === "ready" ? job.message : `Build all started in the background for ${upgradedScene.slides.length} slides. You can keep reviewing and editing; visible progress and any exact hold reason will stay on screen.`);
     } catch (caught) {
       setError(`Build all held the deck before it could be called finished: ${caught instanceof Error ? caught.message : "deck validation failed"}`);
-    } finally {
-      setBusy(undefined);
     }
   }
 
@@ -5066,22 +5188,7 @@ export default function App() {
     const buildKey = `${selectedDeck.id}:${selectedDeck.studioScene.revision}`;
     if (automaticStudioBuildAttempted.current.has(buildKey)) return;
     automaticStudioBuildAttempted.current.add(buildKey);
-    const deckId = selectedDeck.id;
-    const sceneRevision = selectedDeck.studioScene.revision;
-    setStudioDeckBuildLoadingId(deckId);
-    void getOrBuildCentralStudioDeck(selectedDeck, selectedDeck.studioScene).then((build) => {
-      const currentDeck = projectRef.current.decks.find((deck) => deck.id === deckId);
-      if (currentDeck?.studioScene?.revision !== sceneRevision) return;
-      persistNativeQualifiedConvertedTitle(currentDeck, currentDeck.studioScene, `Locked converted ORNL title slide 1 of ${currentDeck.name} after the automatic central Studio presentation passed native PowerPoint build validation.`);
-      invalidateStudioQualification(deckId);
-      studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deckId]: build };
-      setStudioDeckBuilds(studioDeckBuildsRef.current);
-      setNotice(`Rebuilt the saved Studio design into ${build.outputSlides.length} editable PowerPoint slide${build.outputSlides.length === 1 ? "" : "s"}. Slides and export now show this exact scene revision.`);
-    }).catch((caught) => {
-      setError(`The saved Studio design remains intact, but its automatic PowerPoint projection could not be completed: ${caught instanceof Error ? caught.message : "PowerPoint validation failed"}`);
-    }).finally(() => {
-      setStudioDeckBuildLoadingId((value) => value === deckId ? undefined : value);
-    });
+    startCentralStudioDeckBuild(selectedDeck, selectedDeck.studioScene);
   }, [activeView, desktop, nativeRenderCatalogs, selectedDeck?.id, selectedDeck?.proposal?.status, selectedDeck?.studioScene?.revision, slideCatalogs, slideWorkspaceRequest, templateCatalog, templateSourceBytes]);
 
   async function qualifyStudioDeck(deck: DeckJob, build: StudioDeckBuild): Promise<StudioDeckQualification> {
@@ -5448,6 +5555,9 @@ export default function App() {
   const currentStudioDeckBuild = selectedDeck?.studioScene && studioDeckBuilds[selectedDeck.id]?.sceneRevision === selectedDeck.studioScene.revision
     ? studioDeckBuilds[selectedDeck.id]
     : undefined;
+  const currentStudioDeckBuildJob = selectedDeck?.studioScene && studioDeckBuildJobs[selectedDeck.id]?.sceneRevision === selectedDeck.studioScene.revision
+    ? studioDeckBuildJobs[selectedDeck.id]
+    : undefined;
   const currentStudioQualification = selectedDeck?.studioScene && studioDeckQualifications[selectedDeck.id]?.sceneRevision === selectedDeck.studioScene.revision
     ? studioDeckQualifications[selectedDeck.id]
     : undefined;
@@ -5503,6 +5613,11 @@ export default function App() {
       <main className="workspace">{mainContent}</main>
       <Inspector deck={selectedDeck} onOpenReview={() => setActiveView("review")} />
       <OnboardingTour open={tourOpen} stepIndex={tourStepIndex} onStepChange={setTourStepIndex} onClose={closeOnboardingTour} />
+      {currentStudioDeckBuildJob && currentStudioDeckBuildJob.phase !== "ready" && <div className={`studio-build-activity phase-${currentStudioDeckBuildJob.phase}`} role="status" aria-live="polite">
+        <span>{["failed", "canceled", "superseded"].includes(currentStudioDeckBuildJob.phase) ? <Warning size={18} /> : <ArrowsClockwise className="spinner" size={18} />}</span>
+        <div><strong>{currentStudioDeckBuildJob.phase === "failed" ? "Build held before completion" : currentStudioDeckBuildJob.phase === "canceled" ? "Build canceled" : currentStudioDeckBuildJob.phase === "superseded" ? "Build result superseded" : `Building in background · ${currentStudioDeckBuildJob.progressPercent}%`}</strong><small>{currentStudioDeckBuildJob.message}</small><i><b style={{ width: `${currentStudioDeckBuildJob.progressPercent}%` }} /></i></div>
+        {["queued", "preflight", "compiling", "templating", "rendering", "measuring", "validating"].includes(currentStudioDeckBuildJob.phase) && <button className="button ghost small" onClick={() => cancelStudioDeckBuildJob(currentStudioDeckBuildJob.id)}>Cancel</button>}
+      </div>}
       {mcpActivity && mcpActivityMessage && <div className={`mcp-activity ${mcpActivity.state} phase-${mcpActivity.phase}`} role="status" aria-live="polite"><span>{mcpActivity.state === "active" ? <ArrowsClockwise className="spinner" size={17} /> : mcpActivity.state === "completed" ? <CheckCircle size={17} /> : <Warning size={17} />}</span><div><strong>{mcpActivityMessage.title}</strong><small>{mcpActivityMessage.detail}</small></div></div>}
       {(notice || error) && <div className={`toast ${error ? "error" : "success"}`}><span>{error ? <Warning size={18} /> : <CheckCircle size={18} />}</span><p>{error ?? notice}</p><button onClick={clearMessages}><X size={16} /></button></div>}
       {fileDragActive && <div className="file-drop-overlay"><div className="file-drop-card"><UploadSimple size={38} /><strong>Drop to open a project or add Resources</strong><span>A single .pstudio package opens as the active project. Other files are processed locally, embedded by hash, and preserved with the current project.</span></div></div>}

@@ -36,6 +36,7 @@ let autosaveQueue = Promise.resolve();
 let checkpointQueue = Promise.resolve();
 let preferencesQueue = Promise.resolve();
 let nativeRenderQueue = Promise.resolve();
+const nativeMeasurementControllers = new Map();
 const rasterizePdfWithChromium = createChromiumPdfRasterizer(BrowserWindow);
 
 function runtimePath() {
@@ -230,6 +231,8 @@ async function startMcpBridge() {
 }
 
 function stopMcpBridge() {
+  for (const controller of nativeMeasurementControllers.values()) controller.abort();
+  nativeMeasurementControllers.clear();
   for (const pending of pendingMcpCommands.values()) {
     clearTimeout(pending.timer);
     pending.reject(new Error("Presentation Studio is closing."));
@@ -337,8 +340,22 @@ function registerIpc() {
     const name = path.basename(String(payload?.name ?? "presentation.pptx"));
     if (!/\.pptx$/i.test(name)) throw new Error("PowerPoint-native measurement requires a PPTX file.");
     const bytes = validateBinary(payload?.bytes);
-    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => measurePowerPointNative({ bytes, name, homePath: app.getPath("home") }));
+    const operationId = safeSegment(payload?.operationId, randomUUID());
+    const controller = new AbortController();
+    nativeMeasurementControllers.get(operationId)?.abort();
+    nativeMeasurementControllers.set(operationId, controller);
+    nativeRenderQueue = nativeRenderQueue.catch(() => undefined).then(() => measurePowerPointNative({ bytes, name, homePath: app.getPath("home"), signal: controller.signal })).finally(() => {
+      if (nativeMeasurementControllers.get(operationId) === controller) nativeMeasurementControllers.delete(operationId);
+    });
     return nativeRenderQueue;
+  });
+
+  ipcMain.handle("measurement:cancel", (_event, payload) => {
+    const operationId = safeSegment(payload?.operationId, "");
+    const controller = operationId ? nativeMeasurementControllers.get(operationId) : undefined;
+    if (!controller) return { canceled: false, operationId };
+    controller.abort();
+    return { canceled: true, operationId };
   });
 
   ipcMain.handle("qualification:capture", async (_event, payload) => {

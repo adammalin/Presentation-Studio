@@ -12,8 +12,9 @@ import type { NativeMeasurementResult } from "../src/lib/desktop";
 import type { DeckJob } from "../src/types";
 
 const require = createRequire(import.meta.url);
-const { POWERPOINT_MEASUREMENT_SCRIPT, parsePowerPointMeasurement, nativeMeasurementCapabilities } = require("../electron/native-measurement.cjs") as {
+const { POWERPOINT_MEASUREMENT_SCRIPT, measurePowerPointNative, parsePowerPointMeasurement, nativeMeasurementCapabilities } = require("../electron/native-measurement.cjs") as {
   POWERPOINT_MEASUREMENT_SCRIPT: string;
+  measurePowerPointNative(input: { bytes: Uint8Array; signal?: AbortSignal }): Promise<unknown>;
   parsePowerPointMeasurement(text: string, options?: { sourceSha256?: string }): {
     status: string;
     authority: string;
@@ -22,6 +23,12 @@ const { POWERPOINT_MEASUREMENT_SCRIPT, parsePowerPointMeasurement, nativeMeasure
   };
   nativeMeasurementCapabilities(platform?: string): { available: boolean; adapter: string };
 };
+
+test("native measurement honors cancellation before opening PowerPoint", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(() => measurePowerPointNative({ bytes: new Uint8Array([80, 75]), signal: controller.signal }), /canceled before it started/i);
+});
 
 test("native measurement automation closes its exact temporary presentation after success or failure", () => {
   assert.doesNotMatch(POWERPOINT_MEASUREMENT_SCRIPT, /set targetPresentation to active presentation/i);

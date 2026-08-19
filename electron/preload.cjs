@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("presentationStudioDesktop", {
   getNativeMeasurementCapabilities: () => ipcRenderer.invoke("measurement:get-capabilities"),
   renderPowerPoint: (payload) => ipcRenderer.invoke("render:powerpoint", payload),
   measurePowerPoint: (payload) => ipcRenderer.invoke("measurement:powerpoint", payload),
+  cancelPowerPointMeasurement: (payload) => ipcRenderer.invoke("measurement:cancel", payload),
   captureDeckQualification: (payload) => ipcRenderer.invoke("qualification:capture", payload),
   finalizeDeckQualification: (payload) => ipcRenderer.invoke("qualification:finalize", payload),
   readDeckQualificationSlide: (payload) => ipcRenderer.invoke("qualification:read-slide", payload),

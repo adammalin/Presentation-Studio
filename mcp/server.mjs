@@ -171,13 +171,30 @@ server.registerTool("record_studio_visual_critique", {
 
 server.registerTool("build_studio_presentation", {
   title: "Build the central Studio presentation",
-  description: "Build every slide from the one persisted Studio Web Scene, including converted ORNL Template Pack artwork, into one editable PowerPoint candidate. The operation rejects source-only slides, incomplete exact-content mapping, missing media, unsupported native internals, changed text/table content, PowerPoint text overflow, or non-authoritative rendering. On success, the Slides tab, comments, and later export all point to this same scene revision. The project revision is crash-checkpointed automatically; this does not save or export a user-named file.",
+  description: "Start or reuse one background build of every slide from the one persisted Studio Web Scene, including converted ORNL Template Pack artwork, into one editable PowerPoint candidate. The app stays usable and visibly reports compile, template, render, measurement, and hard-QA progress. Source-only slides, incomplete exact-content mapping, missing media, unsupported native internals, changed text/table content, PowerPoint text overflow, distorted protected marks, and non-authoritative rendering hold the build. Poll get_studio_presentation_build_status until ready; never call a started job finished. The project revision is crash-checkpointed automatically; this does not save or export a user-named file.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, (input) => call("build_studio_presentation", input, (result) => `Built and PowerPoint-validated all ${result.slideCount} slides in the central Studio presentation for ${result.deck.name}. Slides and export now reference scene ${result.sceneRevision}. No file was saved or exported.`));
+}, (input) => call("build_studio_presentation", input, (result) => result.job.phase === "ready" ? `The exact central Studio result for ${result.deck.name} is already PowerPoint-validated and ready for review. No file was saved or exported.` : `Started background central build ${result.job.id} for ${result.deck.name}. Poll get_studio_presentation_build_status; do not call the deck ready yet.`));
+
+server.registerTool("get_studio_presentation_build_status", {
+  title: "Read central Studio build progress",
+  description: "Read the live compile, ORNL templating, native rendering, native measurement, and production-QA phase for a background central Studio build without blocking the app. Supply either the returned job ID or the deck ID. A job is reviewable only when phase is ready; failed, canceled, or superseded jobs are not export candidates.",
+  inputSchema: {
+    jobId: z.string().min(1).max(120).optional(),
+    deckId: z.string().min(1).max(120).optional(),
+  },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_studio_presentation_build_status", input, (result) => `Central build ${result.job.id} is ${result.job.phase} at ${result.job.progressPercent}%. ${result.job.message}`));
+
+server.registerTool("cancel_studio_presentation_build", {
+  title: "Cancel a central Studio build",
+  description: "Request cancellation of one background central Studio build. The saved JSON scene, immutable source, and any prior verified result remain intact. Presentation Studio discards the candidate at the next safe PowerPoint boundary.",
+  inputSchema: { jobId: z.string().min(1).max(120) },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("cancel_studio_presentation_build", input, (result) => `Cancellation requested for central build ${result.job.id}. The saved scene and prior verified result remain intact.`));
 
 server.registerTool("run_deck_qualification", {
   title: "Build the native deck qualification evidence bundle",

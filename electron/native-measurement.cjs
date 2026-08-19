@@ -17,6 +17,7 @@ const execFileAsync = promisify(execFile);
 const POWERPOINT_MAC_PATH = "/Applications/Microsoft PowerPoint.app";
 const MAX_NATIVE_SOURCE_BYTES = 1_250_000_000;
 const MAX_MEASUREMENT_BYTES = 64 * 1024 * 1024;
+const MAX_NATIVE_MEASUREMENT_MS = 30 * 60 * 1000;
 
 async function openPresentationCount() {
   const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", 'tell application "Microsoft PowerPoint" to return count of presentations'], { timeout: 10_000, maxBuffer: 64 * 1024 });
@@ -318,7 +319,8 @@ function nativeMeasurementCapabilities(platform = process.platform) {
     : { available: false, adapter: "ooxml-fallback", reason: "Microsoft PowerPoint is not installed.", sessionLocked: false };
 }
 
-async function measurePowerPointNative({ bytes: inputBytes, name = "presentation.pptx", homePath = os.homedir() }) {
+async function measurePowerPointNative({ bytes: inputBytes, name = "presentation.pptx", homePath = os.homedir(), signal }) {
+  if (signal?.aborted) throw new Error("PowerPoint-native measurement was canceled before it started.");
   const capabilities = nativeMeasurementCapabilities();
   if (capabilities.sessionLocked) return { status: "failed", reason: "mac-session-locked", adapter: capabilities.adapter, authority: "unknown", slides: [], warnings: ["Unlock the Mac, leave Microsoft PowerPoint available, and retry native measurement."] };
   if (!capabilities.available) return { status: "unavailable", authority: "unknown", slides: [], warnings: capabilities.reason ? [capabilities.reason] : [], ...capabilities };
@@ -342,12 +344,15 @@ async function measurePowerPointNative({ bytes: inputBytes, name = "presentation
         // A full 100-200 slide export-acceptance pass can legitimately exceed
         // three minutes. Interactive slide tools isolate one slide before
         // calling this adapter, while whole-deck qualification gets a bounded
-        // ten-minute lane instead of being misreported as unavailable.
-        run: () => execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_MEASUREMENT_SCRIPT, sourcePath, measurementPath], { timeout: 600_000, maxBuffer: 2 * 1024 * 1024 }),
+        // background lane instead of being misreported as unavailable. The
+        // caller can abort this exact private bridge process without touching
+        // any user-open presentation.
+        run: () => execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_MEASUREMENT_SCRIPT, sourcePath, measurementPath], { timeout: MAX_NATIVE_MEASUREMENT_MS, maxBuffer: 2 * 1024 * 1024, signal }),
         presentationCount: openPresentationCount,
         quit: quitPowerPointWithoutPresentations,
       });
     } catch (error) {
+      if (signal?.aborted) throw new Error("PowerPoint-native measurement was canceled. The private candidate was closed and discarded.");
       const diagnostic = describePowerPointAutomationError(error, "measurement");
       return { status: diagnostic.status, reason: diagnostic.reason, adapter: capabilities.adapter, authority: "unknown", sourceSha256: digest, slides: [], warnings: [diagnostic.message] };
     }

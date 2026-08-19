@@ -208,7 +208,7 @@ Design direction:
 Workflow:
 1. Develop the narrative and slide plan.
 2. Create the presentation in the single central Studio HTML/CSS scene.
-3. Build the complete editable PowerPoint candidate.
+3. Start the complete editable PowerPoint build, then poll get_studio_presentation_build_status until that exact background job reports ready. Do not treat started, measuring, failed, canceled, or superseded as ready.
 4. Inspect the PowerPoint-native contact sheet and every full-size candidate slide.
 5. Run Found issues -> Fixing -> Rechecking original intent. Correct overflow, alignment, hierarchy, spacing, tables, missing imagery, and message drift.
 6. Do not call the presentation ready while any blocker or major visual issue remains.
