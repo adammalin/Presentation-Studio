@@ -8,7 +8,7 @@ import { sha256 } from "../src/lib/hash";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, touchProject } from "../src/lib/project";
 import { buildProjectPackage, openProjectPackage } from "../src/lib/project-package";
-import { applyProjectRecoveryCheckpoint, buildProjectRecoveryCheckpoint, createLatestOnlySaver, type AutosaveProgress } from "../src/lib/project-durability";
+import { applyProjectRecoveryCheckpoint, buildProjectRecoveryCheckpoint, createLatestOnlySaver, projectHasRecoverableWork, type AutosaveProgress } from "../src/lib/project-durability";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
 import { compileStudioWebScene, recomposeStudioWebSlide } from "../src/lib/studio-web-scene";
@@ -47,6 +47,12 @@ async function projectWithStudioScene(): Promise<{ base: PresentationStudioProje
   const designed = touchProject({ ...project, decks: [{ ...deck, studioScene }] }, "studio-slide-designed", "Designed slide 1 in the central Studio scene.");
   return { base, designed };
 }
+
+test("a new untouched workspace does not overwrite the prior recoverable project", () => {
+  const blank = createProject();
+  assert.equal(projectHasRecoverableWork(blank), false);
+  assert.equal(projectHasRecoverableWork(touchProject(blank, "project-renamed", "Named the new project.")), true);
+});
 
 test("a lightweight recovery checkpoint restores the latest Studio scene over matching embedded Resources", async () => {
   const { base, designed } = await projectWithStudioScene();

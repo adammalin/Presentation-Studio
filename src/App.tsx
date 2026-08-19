@@ -15,6 +15,7 @@ import {
   Crosshair,
   FileArrowDown,
   FileLock,
+  FilePlus,
   FileText,
   Files,
   FolderOpen,
@@ -72,7 +73,7 @@ import { compilePresentationScene, sceneNeedsRebuild } from "./lib/scene-graph";
 import { semanticRecompositionRequests, type SemanticSlotBinding } from "./lib/recomposition";
 import { compareNativeSlideRenders, type PixelComparisonMetrics } from "./lib/render-comparison";
 import { buildProjectPackage, openProjectPackage } from "./lib/project-package";
-import { applyProjectRecoveryCheckpoint, buildProjectRecoveryCheckpoint, createLatestOnlySaver, type AutosaveProgress, type LatestOnlySaver } from "./lib/project-durability";
+import { applyProjectRecoveryCheckpoint, buildProjectRecoveryCheckpoint, createLatestOnlySaver, projectHasRecoverableWork, projectResourceInventoryKey, type AutosaveProgress, type LatestOnlySaver } from "./lib/project-durability";
 import { projectPackageFromDrop } from "./lib/project-drop";
 import { removeResourceFromProject, resourceRemovalImpact } from "./lib/resource-removal";
 import { resourceWithAiSessionAccess, resourcesWithAiSessionAccess } from "./lib/resource-ai-access";
@@ -135,14 +136,6 @@ type McpActivityPhase = "working" | "inspecting" | "found-issues" | "fixing" | "
 type McpActivityState = { id: string; operation: string; state: "active" | "completed" | "failed"; phase: McpActivityPhase; issueCount?: number; autoFixableCount?: number };
 type AutosaveSnapshot = { project: PresentationStudioProject; password?: string };
 type AutosaveUiState = { checkpoint?: AutosaveProgress; package?: AutosaveProgress };
-
-function projectHasRecoverableWork(project: PresentationStudioProject): boolean {
-  return project.resources.length > 0 || project.decks.length > 0 || project.designThreads.length > 0 || project.activity.length > 0;
-}
-
-function projectResourceInventoryKey(project: PresentationStudioProject): string {
-  return `${project.project.id}:${project.resources.map((resource) => `${resource.id}:${resource.sha256}:${resource.byteLength}:${(resource.derivatives ?? []).map((derivative) => `${derivative.id}:${derivative.sha256}:${derivative.byteLength}`).join(",")}`).join("|")}`;
-}
 
 function mcpPhaseForOperation(operation: string, input: Record<string, unknown>): McpActivityPhase {
   if (operation === "run_deck_qualification" || operation === "get_deck_qualification" || operation === "get_qualification_slide" || operation === "get_qualification_contact_sheet") return "inspecting";
@@ -1380,6 +1373,7 @@ export default function App() {
   const [secureAutosavePassword, setSecureAutosavePassword] = useState<string>();
   const [autosaveUi, setAutosaveUi] = useState<AutosaveUiState>({});
   const autosaveUiRef = useRef(autosaveUi);
+  const [recoveryAvailability, setRecoveryAvailability] = useState<{ available: boolean; latestModifiedAt?: string }>({ available: false });
   const [fileDragActive, setFileDragActive] = useState(false);
   const [templateCatalog, setTemplateCatalog] = useState<TemplateCatalog>();
   const [templateSourceBytes, setTemplateSourceBytes] = useState<Uint8Array>();
@@ -1495,39 +1489,7 @@ export default function App() {
   useEffect(() => {
     if (!desktop || recoveryChecked.current) return;
     recoveryChecked.current = true;
-    void desktop.getAutosaveRecovery().then(async ({ candidates }) => {
-      let lastError: Error | undefined;
-      for (const candidate of candidates) {
-        try {
-          let checkpointWarning: string | undefined;
-          let password: string | undefined;
-          let packageBytes = bytesFrom(candidate.package.bytes);
-          if (candidate.encrypted) {
-            password = window.prompt("Presentation Studio found encrypted autosaved work. Enter its password to recover it.") ?? undefined;
-            if (!password) continue;
-            packageBytes = await decryptProjectPackage(packageBytes, password);
-          }
-          let recovered = await openProjectPackage(packageBytes);
-          if (candidate.checkpoint?.bytes) {
-            try {
-              let checkpointBytes = bytesFrom(candidate.checkpoint.bytes);
-              if (candidate.encrypted && password) checkpointBytes = await decryptProjectPackage(checkpointBytes, password);
-              recovered = applyProjectRecoveryCheckpoint(recovered, checkpointBytes);
-            } catch (caught) {
-              checkpointWarning = caught instanceof Error ? caught.message : "The newest lightweight checkpoint was unavailable.";
-            }
-          }
-          adoptOpenedProject(await upgradeOpenedProjectAudits(recovered), password);
-          setNotice(checkpointWarning
-            ? `Recovered the latest complete snapshot of ${recovered.project.name}. The newer lightweight checkpoint could not be applied (${checkpointWarning}), so verify the last edit. AI and human Studio edits now checkpoint automatically.`
-            : `Recovered ${recovered.project.name} through ${new Date(recovered.project.updatedAt).toLocaleString()}. AI and human Studio edits now checkpoint automatically.`);
-          return;
-        } catch (caught) {
-          lastError = caught instanceof Error ? caught : new Error("The autosaved project could not be recovered.");
-        }
-      }
-      if (lastError) setError(`Autosave recovery needs attention: ${lastError.message}`);
-    }).catch((caught) => setError(caught instanceof Error ? caught.message : "Autosave recovery is unavailable."));
+    void desktop.getAutosaveStatus().then(setRecoveryAvailability).catch(() => undefined);
   }, [desktop]);
   useEffect(() => {
     if (activeView !== "studio") return;
@@ -4203,12 +4165,15 @@ export default function App() {
     nativeRenderCatalogsRef.current.clear();
     nativeMeasurementsRef.current.clear();
     inspectionRendersRef.current.clear();
+    sourceFigureRastersRef.current.clear();
+    studioFreshPreviewsRef.current = {};
     studioDeckBuildsRef.current = {};
     studioDeckQualificationsRef.current = {};
     studioDeckQualificationHistoryRef.current = {};
     setSlideCatalogs({});
     setProposalCatalogs({});
     setNativeRenderCatalogs({});
+    setStudioFreshPreviews({});
     setStudioDeckBuilds({});
     setStudioDeckBuildLoadingId(undefined);
     setStudioDeckQualifications({});
@@ -4248,6 +4213,8 @@ export default function App() {
     setProject(accessible);
     setSelectedDeckId(accessible.decks[0]?.id);
     setSecureAutosavePassword(password);
+    setAutosaveUi({});
+    setRecoveryAvailability({ available: false });
     setActiveView("batch");
     setNotice(`Opened ${opened.project.name}; all embedded resource hashes passed validation.`);
   }
@@ -4272,6 +4239,92 @@ export default function App() {
     } finally {
       setBusy(undefined);
     }
+  }
+
+  async function recoverAutosavedProject() {
+    if (!desktop) return;
+    clearMessages();
+    setBusy("Opening the selected local recovery snapshot…");
+    try {
+      const { candidates } = await desktop.getAutosaveRecovery();
+      if (candidates.length === 0) throw new Error("No recoverable Presentation Studio project is available.");
+      let lastError: Error | undefined;
+      for (const candidate of candidates) {
+        try {
+          let checkpointWarning: string | undefined;
+          let password: string | undefined;
+          let packageBytes = bytesFrom(candidate.package.bytes);
+          if (candidate.encrypted) {
+            password = window.prompt("Enter the password for this encrypted recovery snapshot.") ?? undefined;
+            if (!password) continue;
+            packageBytes = await decryptProjectPackage(packageBytes, password);
+          }
+          let recovered = await openProjectPackage(packageBytes);
+          if (candidate.checkpoint?.bytes) {
+            try {
+              let checkpointBytes = bytesFrom(candidate.checkpoint.bytes);
+              if (candidate.encrypted && password) checkpointBytes = await decryptProjectPackage(checkpointBytes, password);
+              recovered = applyProjectRecoveryCheckpoint(recovered, checkpointBytes);
+            } catch (caught) {
+              checkpointWarning = caught instanceof Error ? caught.message : "The newest lightweight checkpoint was unavailable.";
+            }
+          }
+          adoptOpenedProject(await upgradeOpenedProjectAudits(recovered), password);
+          setNotice(checkpointWarning
+            ? `Recovered the latest complete snapshot of ${recovered.project.name}. The newer lightweight checkpoint could not be applied (${checkpointWarning}), so verify the last edit.`
+            : `Recovered ${recovered.project.name} through ${new Date(recovered.project.updatedAt).toLocaleString()}.`);
+          return;
+        } catch (caught) {
+          lastError = caught instanceof Error ? caught : new Error("The selected project could not be recovered.");
+        }
+      }
+      if (lastError) throw lastError;
+    } catch (caught) {
+      setError(caught instanceof Error ? `Recovery needs attention: ${caught.message}` : "The selected project could not be recovered.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function startNewProject() {
+    const current = projectRef.current;
+    const hadWork = projectHasRecoverableWork(current);
+    const canPreserveCurrent = Boolean(desktop && current.settings.autosave);
+    const confirmation = canPreserveCurrent
+      ? "Start a new blank project? Presentation Studio will finish a local recovery snapshot of the current project first."
+      : "Start a new blank project? Automatic local recovery is unavailable, so save the current project first if you need to keep it.";
+    if (hadWork && !window.confirm(confirmation)) return;
+    clearMessages();
+    let preservedCurrent = false;
+    if (desktop && hadWork && current.settings.autosave) {
+      setBusy("Finishing a complete recovery snapshot before starting a new project…");
+      try {
+        const snapshot = { project: current, password: secureAutosavePassword };
+        checkpointSaverRef.current?.request(snapshot);
+        packageSaverRef.current?.request(snapshot);
+        if (!checkpointSaverRef.current || !packageSaverRef.current) throw new Error("The local project durability service is unavailable.");
+        await checkpointSaverRef.current.flush();
+        await packageSaverRef.current.flush();
+        preservedCurrent = true;
+      } catch (caught) {
+        setError(caught instanceof Error ? `A new project was not started because the current recovery snapshot failed: ${caught.message}` : "A new project was not started because the current recovery snapshot failed.");
+        setBusy(undefined);
+        return;
+      }
+    }
+    resetProjectRenderState();
+    const blank = createProject();
+    projectRef.current = blank;
+    fullPackageInventoryRef.current = undefined;
+    setProject(blank);
+    setSelectedDeckId(undefined);
+    setSecureAutosavePassword(undefined);
+    setAutosaveUi({});
+    setMcpActivity(undefined);
+    setActiveView("batch");
+    setRecoveryAvailability((currentAvailability) => ({ available: preservedCurrent || currentAvailability.available, latestModifiedAt: preservedCurrent ? new Date().toISOString() : currentAvailability.latestModifiedAt }));
+    setBusy(undefined);
+    setNotice(preservedCurrent ? "Started a blank project. The previous project remains available from Recover until new work replaces the rotating snapshots." : "Started a blank project. Add Resources or open a saved project when ready.");
   }
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
@@ -5382,7 +5435,9 @@ export default function App() {
         <div className="top-actions" data-tour="save">
           <div className={`autosave-status ${autosavePhase}`} role="status" aria-live="polite" title={autosaveError}>{autosavePhase === "saving" ? <ArrowsClockwise className="spinner" size={15} /> : autosavePhase === "error" ? <Warning size={15} /> : <CheckCircle size={15} />}<span>{autosaveLabel}</span></div>
           <button className="button ghost small" data-tour="tour" aria-haspopup="dialog" onClick={openOnboardingTour}><Info size={17} />Tour</button>
+          <button className="button ghost small" disabled={Boolean(busy || mcpActivity?.state === "active")} onClick={() => void startNewProject()}><FilePlus size={17} />New</button>
           <button className="button ghost small" onClick={() => void openProject()}><FolderOpen size={17} />Open</button>
+          {recoveryAvailability.available && <button className="button ghost small" disabled={Boolean(busy || mcpActivity?.state === "active")} title={recoveryAvailability.latestModifiedAt ? `Latest local snapshot: ${new Date(recoveryAvailability.latestModifiedAt).toLocaleString()}` : "Open the latest local recovery snapshot"} onClick={() => void recoverAutosavedProject()}><ArrowCounterClockwise size={17} />Recover</button>}
           <button className="button ghost small" onClick={() => void saveProject(false)}><FileArrowDown size={17} />Save</button>
           <button className="button secondary small" onClick={() => void saveProject(true)}><FileLock size={17} />Save encrypted</button>
         </div>

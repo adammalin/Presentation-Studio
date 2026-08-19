@@ -157,6 +157,7 @@ export interface DesktopBridge {
   saveBinary(payload: { kind: "project" | "secure-project" | "pptx" | "report"; defaultName: string; bytes: Uint8Array }): Promise<{ canceled: boolean; filePath?: string }>;
   autosaveProject(payload: { bytes: Uint8Array; encrypted: boolean }): Promise<{ recoveryPath: string }>;
   checkpointProjectState(payload: { bytes: Uint8Array; encrypted: boolean }): Promise<{ recoveryPath: string }>;
+  getAutosaveStatus(): Promise<{ available: boolean; latestModifiedAt?: string }>;
   getAutosaveRecovery(): Promise<{ available: boolean; candidates: Array<{ encrypted: boolean; previous: boolean; modifiedAt: string; package: PickedBinaryFile; checkpoint?: PickedBinaryFile }> }>;
   getMcpStatus(): Promise<{ available: boolean; address: string | null; runtimeFile: string }>;
   getPresentationFonts(): Promise<{ fonts: LocalPresentationFont[] }>;

@@ -506,6 +506,24 @@ function registerIpc() {
     return { recoveryPath: target };
   });
 
+  ipcMain.handle("project:get-autosave-status", async () => {
+    if (launchProjectPath) return { available: false };
+    let latestModifiedAt;
+    for (const encrypted of [false, true]) {
+      for (const previous of [false, true]) {
+        const packagePath = previous ? previousRecoveryPath(encrypted) : recoveryPath(encrypted);
+        try {
+          const stats = await fs.stat(packagePath);
+          const modifiedAt = stats.mtime.toISOString();
+          if (!latestModifiedAt || Date.parse(modifiedAt) > Date.parse(latestModifiedAt)) latestModifiedAt = modifiedAt;
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+      }
+    }
+    return { available: Boolean(latestModifiedAt), latestModifiedAt };
+  });
+
   ipcMain.handle("project:get-autosave-recovery", async () => {
     if (launchProjectPath) return { available: false, candidates: [] };
     const candidates = [];

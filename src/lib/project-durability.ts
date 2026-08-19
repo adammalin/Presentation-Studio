@@ -1,6 +1,18 @@
 import type { PresentationStudioProject, ProjectResource } from "../types";
 import { projectForJson, projectSchema } from "./project";
 
+export function projectHasRecoverableWork(project: PresentationStudioProject): boolean {
+  return project.resources.length > 0
+    || project.decks.length > 0
+    || project.designThreads.length > 0
+    || project.styleExemplars.length > 0
+    || project.activity.some((entry) => entry.action !== "project-created");
+}
+
+export function projectResourceInventoryKey(project: PresentationStudioProject): string {
+  return `${project.project.id}:${project.resources.map((resource) => `${resource.id}:${resource.sha256}:${resource.byteLength}:${(resource.derivatives ?? []).map((derivative) => `${derivative.id}:${derivative.sha256}:${derivative.byteLength}`).join(",")}`).join("|")}`;
+}
+
 export const PROJECT_RECOVERY_CHECKPOINT_SCHEMA = "presentation-studio/recovery-checkpoint" as const;
 export const PROJECT_RECOVERY_CHECKPOINT_VERSION = 1 as const;
 
