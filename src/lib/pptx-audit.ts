@@ -788,7 +788,7 @@ function classifyTemplate(input: { allText: string; structuralText: string; them
   if (hasLegacyOrnlFont) evidence.push("The package contains Century Gothic legacy typography.");
 
   if (sponsorThemeIdentity) {
-    evidence.push("Preserve the detected sponsor source template unless a person explicitly chooses cross-template conversion.");
+    evidence.push("Retain the detected sponsor theme as read-only source evidence. Presentation Studio still targets the current ORNL Template Pack by default; preserve the sponsor template only when a person explicitly selects that override.");
     return { classification: "sponsor", evidence };
   }
   if (hasStructuralOrnlIdentity) {

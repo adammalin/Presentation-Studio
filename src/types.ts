@@ -1160,6 +1160,7 @@ export interface DeckJob {
   studioScene?: StudioWebScene;
   proposal?: CleanupProposal;
   protectedSlideNumbers: number[];
+  nativeQualifiedStudioSlideRevisions?: Record<string, string>;
   failureMessage?: string;
   exportedAt?: string;
 }

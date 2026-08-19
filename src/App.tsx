@@ -118,7 +118,7 @@ import { applyStudioTableExemplar, clearStudioTableContinuation, compatibleStudi
 import { attachStudioConceptReference, removeStudioConceptReference } from "./lib/studio-concept-reference";
 import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
 import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
-import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
+import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, markNativeQualifiedConvertedOrnlTitle, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
 import { deckTemplateWorkflow, deckWithAutomaticTemplateRouting } from "./lib/template-routing";
 import { preserveNativeSlide } from "./lib/native-slide-preservation";
 import { buildDeckQualificationReport, qualificationEvidenceSlideNumber, recordDeckQualificationReviews, type DeckQualificationReport } from "./lib/deck-qualification";
@@ -1432,6 +1432,18 @@ export default function App() {
     setStudioHistoryVersion((value) => value + 1);
   }
 
+  function persistNativeQualifiedConvertedTitle(deck: DeckJob, scene: StudioWebScene, detail: string): PresentationStudioProject {
+    const qualifiedDeck = markNativeQualifiedConvertedOrnlTitle(deck, scene);
+    if (qualifiedDeck === deck) return projectRef.current;
+    const next = touchProject({
+      ...projectRef.current,
+      decks: projectRef.current.decks.map((item) => item.id === deck.id ? qualifiedDeck : item),
+    }, "converted-ornl-title-native-qualified", detail);
+    projectRef.current = next;
+    setProject(next);
+    return next;
+  }
+
   function restoreStudioHistory(direction: "undo" | "redo") {
     const current = projectRef.current;
     const deck = current.decks.find((item) => item.id === selectedDeck?.id);
@@ -2158,10 +2170,13 @@ export default function App() {
         if (!images.length || images.length !== preview.outputSlides.length) throw new Error("Microsoft PowerPoint did not return every materialized fresh-composition slide image.");
         studioFreshPreviewsRef.current = { ...studioFreshPreviewsRef.current, [`${deck.id}:${slideNumber}`]: preview };
         setStudioFreshPreviews(studioFreshPreviewsRef.current);
+        const qualifiedProject = slideNumber === 1
+          ? persistNativeQualifiedConvertedTitle(deck, deck.studioScene, `Locked converted ORNL title slide 1 of ${deck.name} only after its exact Studio revision compiled, rendered, and measured successfully in Microsoft PowerPoint.`)
+          : current;
         setSelectedDeckId(deck.id);
         setActiveView("studio");
         return {
-          updatedAt: current.project.updatedAt,
+          updatedAt: qualifiedProject.project.updatedAt,
           deck: { id: deck.id, name: deck.name },
           slide: { number: slideNumber, recipe: studioSlide.recipe, rationale: studioSlide.designRationale },
           sceneRevision: deck.studioScene.revision,
@@ -2360,13 +2375,14 @@ export default function App() {
           rebuiltSlideCount += 1;
         }
         const build = await buildCentralStudioDeck(deck, deck.studioScene);
+        const qualifiedProject = persistNativeQualifiedConvertedTitle(deck, deck.studioScene, `Locked converted ORNL title slide 1 of ${deck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
         invalidateStudioQualification(deck.id);
         studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: build };
         setStudioDeckBuilds(studioDeckBuildsRef.current);
         setSelectedDeckId(deck.id);
         setActiveView("slides");
         return {
-          projectUpdatedAt: current.project.updatedAt,
+          projectUpdatedAt: qualifiedProject.project.updatedAt,
           deck: { id: deck.id, name: deck.name },
           sceneRevision: deck.studioScene.revision,
           slideCount: build.slideCount,
@@ -3133,12 +3149,15 @@ export default function App() {
         }
         const visualNeedIds = Array.isArray(request.input.visualNeedIds) ? request.input.visualNeedIds.map(String) : [];
         if (visualNeedIds.length) studioScene = markStudioVisualNeedsReconstructionReady(studioScene, slideNumber, visualNeedIds);
-        const protectConvertedTitle = slideNumber === 1 && recipe === "template-layout" && layout?.category === "title";
+        const nextQualifiedRevisions = { ...(deck.nativeQualifiedStudioSlideRevisions ?? {}) };
+        delete nextQualifiedRevisions[String(slideNumber)];
+        const releaseUnqualifiedConvertedTitle = slideNumber === 1 && !isSacredOrnlTitleSlide(deck, slideNumber);
         const adoptedDeck: DeckJob = {
           ...deck,
           operationScope: "reflow",
           studioScene,
-          protectedSlideNumbers: protectConvertedTitle ? [...new Set([...deck.protectedSlideNumbers, 1])] : deck.protectedSlideNumbers,
+          protectedSlideNumbers: releaseUnqualifiedConvertedTitle ? deck.protectedSlideNumbers.filter((number) => number !== slideNumber) : deck.protectedSlideNumbers,
+          nativeQualifiedStudioSlideRevisions: nextQualifiedRevisions,
         };
         if (request.input.compilerMode !== undefined && request.input.compilerMode !== "fresh-composition") throw new Error("Studio has one central composition path. Use compilerMode fresh-composition; source-bound proposals are separate legacy cleanup evidence and cannot become the Studio design authority.");
         const compilerMode = "fresh-composition" as const;
@@ -4942,6 +4961,7 @@ export default function App() {
       const preview = await buildFreshStudioPreview(deck, slideNumber, deck.studioScene);
       studioFreshPreviewsRef.current = { ...studioFreshPreviewsRef.current, [`${deck.id}:${slideNumber}`]: preview };
       setStudioFreshPreviews(studioFreshPreviewsRef.current);
+      if (slideNumber === 1) persistNativeQualifiedConvertedTitle(deck, deck.studioScene, `Locked converted ORNL title slide 1 of ${deck.name} only after its exact Studio revision compiled, rendered, and measured successfully in Microsoft PowerPoint.`);
       if (preview.nativeRender?.status === "ready" && preview.nativeMeasurement?.status === "ready") setNotice(`${preview.slideCount} fresh-composition PowerPoint output slide${preview.slideCount === 1 ? "" : "s"} from source slide ${slideNumber} passed explicit source/output copy, native-table, PowerPoint-render, and measured-text-fit guards. Compare every result in Studio before saving.`);
       else setNotice(`Fresh-composition PowerPoint for source slide ${slideNumber} passed exact-copy and native-table guards. Native visual review is still required before it can be saved.`);
     } catch (caught) {
@@ -4990,6 +5010,7 @@ export default function App() {
           setBusy("Assembling and validating the one central editable PowerPoint presentation…");
           try {
             const centralBuild = await buildCentralStudioDeck(deck, deck.studioScene);
+            persistNativeQualifiedConvertedTitle(deck, deck.studioScene, `Locked converted ORNL title slide 1 of ${deck.name} after the complete central Studio presentation passed native PowerPoint build validation.`);
             invalidateStudioQualification(deck.id);
             studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deck.id]: centralBuild };
             setStudioDeckBuilds(studioDeckBuildsRef.current);
@@ -5023,6 +5044,7 @@ export default function App() {
     void buildCentralStudioDeck(selectedDeck, selectedDeck.studioScene).then((build) => {
       const currentDeck = projectRef.current.decks.find((deck) => deck.id === deckId);
       if (currentDeck?.studioScene?.revision !== sceneRevision) return;
+      persistNativeQualifiedConvertedTitle(currentDeck, currentDeck.studioScene, `Locked converted ORNL title slide 1 of ${currentDeck.name} after the automatic central Studio presentation passed native PowerPoint build validation.`);
       invalidateStudioQualification(deckId);
       studioDeckBuildsRef.current = { ...studioDeckBuildsRef.current, [deckId]: build };
       setStudioDeckBuilds(studioDeckBuildsRef.current);

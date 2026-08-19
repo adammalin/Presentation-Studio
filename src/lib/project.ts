@@ -812,6 +812,7 @@ const deckSchema = z.object({
   studioScene: z.preprocess((value) => value && typeof value === "object" && (value as { version?: unknown }).version !== STUDIO_WEB_SCENE_VERSION ? undefined : value, studioWebSceneSchema.optional()),
   proposal: proposalSchema.optional(),
   protectedSlideNumbers: z.array(z.number().int().positive()),
+  nativeQualifiedStudioSlideRevisions: z.record(z.string(), isoTimestamp).default({}),
   failureMessage: z.string().max(700).optional(),
   exportedAt: isoTimestamp.optional(),
 });

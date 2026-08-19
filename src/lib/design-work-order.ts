@@ -251,19 +251,19 @@ export function buildSlideDesignWorkOrder(input: {
       "Materialize and render the Proposal through Microsoft PowerPoint.",
       "Compare Current and Proposal, reject regressions, and revise until the proposal is materially better or record approved-as-is evidence.",
     ] : [
-      "Inspect the authoritative Current render and every structured object.",
+      "Inspect the authoritative source PowerPoint render, every structured object, and the current central Studio Web Scene.",
+      "Treat the current ORNL Template Pack and shared Studio recipes as the required visible design system. Source theme, master, artwork, and coordinates are evidence only and must not remain the exported brand layer.",
       "Diagnose hierarchy, optical text alignment, fit, visual balance, table/figure treatment, and layout compatibility using PowerPoint-native bounds where available; do not estimate point geometry from pixels.",
-      "Classify the slide into one shared layout recipe and compose it from the named components; do not invent a new spacing system for the slide.",
-      "Choose a compatible approved PowerPoint layout or explain why the current native arrangement is stronger.",
-      "Stage one bounded semantic recomposition or atomic geometry transaction without rewriting content.",
+      "Classify the slide into one shared layout recipe in the ORNL system or a compatible converted Template Pack layout and compose it from named components; do not invent a new spacing system for the slide.",
+      "Persist the complete exact-content composition with stage_studio_web_design in the one central Studio scene. Do not route an ORNL-target deck through a source-bound cleanup proposal.",
       "When the staged transaction fully addresses a submitted comment, pass that exact comment ID in addressedThreadIds so it leaves the clean canvas; never clear unrelated or partially addressed feedback.",
-      "Materialize and render the Proposal through Microsoft PowerPoint.",
-      "Compare Current and Proposal, reject regressions, and revise until the proposal is materially better or record approved-as-is evidence.",
+      "Compile the exact Studio revision with preview_studio_fresh_composition, render and measure it in Microsoft PowerPoint, and compare the finished ORNL pixels with the source for content and message integrity.",
+      "Fix objective and visual regressions in the same central scene, then build_studio_presentation and run whole-deck qualification before the ORNL output is called ready.",
     ],
     pauseOnlyWhen: PRESENTATION_DESIGN_STANDARD.askOnlyWhen,
     definitionOfDone: sourceTemplateCleanup
       ? "The native Proposal render is visibly stronger and more consistent within the detected source design system, every approved word and native technical object remains present, the source master/layout/theme remains intact, no fit/collision/safe-area regression is known, and the result stays editable in PowerPoint."
-      : "The native Proposal render is visibly stronger than Current, every approved word and native technical object remains present, no fit/collision/safe-area regression is known, and the result stays editable in PowerPoint.",
+      : "The central Studio scene and its native PowerPoint result visibly use the current ORNL Template Pack on every slide and are visibly stronger than the source arrangement, every approved word and native technical object remains present, no fit/collision/safe-area regression is known, and the result stays editable in PowerPoint.",
   };
 }
 

@@ -170,6 +170,7 @@ test("template classification preserves sponsor source identity while ORNL remai
   const audit = await auditPptx(await fixtureWithOrnlSlideCopyAndSponsorTheme());
   assert.equal(audit.classification, "sponsor");
   assert.ok(audit.classificationEvidence.some((item) => /theme identity.*sponsor/i.test(item)));
+  assert.ok(audit.classificationEvidence.some((item) => /targets the current ORNL Template Pack by default/i.test(item)));
   const base: DeckJob = { id: "sponsor-routing", name: "sponsor.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "cleanup-only", templateClassification: "older-or-modified-ornl", targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", targetTemplateConfirmedAt: "2026-08-18T12:00:00.000Z", designProfile: createOrnlDesignProfile("automatic-default", "2026-08-18T12:00:00.000Z"), status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
   const routed = deckWithAutomaticTemplateRouting({ deck: base, audit, adoptedAt: "2026-08-18T13:00:00.000Z" });
   assert.equal(routed.targetTemplateId, "ornl-16x9-v1");

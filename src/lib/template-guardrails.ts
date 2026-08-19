@@ -3,7 +3,7 @@ import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 
 const ORNL_TEMPLATE_CLASSIFICATIONS = new Set(["current-ornl", "older-or-modified-ornl", "mixed"]);
 
-type OrnlTemplateDeck = Pick<DeckJob, "targetTemplateId" | "templateClassification" | "audit" | "protectedSlideNumbers">;
+type OrnlTemplateDeck = Pick<DeckJob, "targetTemplateId" | "templateClassification" | "audit" | "protectedSlideNumbers" | "nativeQualifiedStudioSlideRevisions" | "studioScene">;
 
 function usesOrnlTemplate(deck: Pick<DeckJob, "targetTemplateId" | "templateClassification">): boolean {
   return deck.targetTemplateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id
@@ -33,8 +33,40 @@ export function isSacredOrnlClosingSlide(deck: OrnlTemplateDeck, slideNumber: nu
 }
 
 export function isProtectedOrnlTemplateSlide(deck: OrnlTemplateDeck, slideNumber: number): boolean {
+  const studioSlide = deck.studioScene?.slides.find((slide) => slide.slideNumber === slideNumber);
+  const convertedTitleProtectionIsCurrent = slideNumber === 1
+    && !usesOrnlTemplate(deck)
+    && studioSlide?.recipe === "template-layout"
+    && Boolean(studioSlide.targetLayoutId)
+    && deck.nativeQualifiedStudioSlideRevisions?.[String(slideNumber)] === studioSlide.updatedAt;
+  const explicitlyProtected = deck.protectedSlideNumbers?.includes(slideNumber)
+    && (slideNumber !== 1 || usesOrnlTemplate(deck) || convertedTitleProtectionIsCurrent);
   return deck.targetTemplateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id
-    && (deck.protectedSlideNumbers?.includes(slideNumber) || isSacredOrnlTitleSlide(deck, slideNumber) || isSacredOrnlClosingSlide(deck, slideNumber));
+    && (explicitlyProtected || isSacredOrnlTitleSlide(deck, slideNumber) || isSacredOrnlClosingSlide(deck, slideNumber));
+}
+
+/**
+ * Converted sponsor/custom title slides become sacred only after their exact
+ * Studio revision has compiled, rendered, and measured successfully in native
+ * PowerPoint. A failed first layout remains editable instead of being trapped
+ * behind a premature template lock.
+ */
+export function markNativeQualifiedConvertedOrnlTitle<T extends DeckJob>(deck: T, scene: StudioWebScene): T {
+  const title = scene.slides.find((slide) => slide.slideNumber === 1);
+  if (deck.targetTemplateId !== PRESENTATION_DESIGN_STANDARD.defaults.template.id
+    || usesOrnlTemplate(deck)
+    || title?.recipe !== "template-layout"
+    || !title.targetLayoutId) return deck;
+  if (deck.protectedSlideNumbers.includes(1)
+    && deck.nativeQualifiedStudioSlideRevisions?.["1"] === title.updatedAt) return deck;
+  return {
+    ...deck,
+    protectedSlideNumbers: [...new Set([...deck.protectedSlideNumbers, 1])],
+    nativeQualifiedStudioSlideRevisions: {
+      ...(deck.nativeQualifiedStudioSlideRevisions ?? {}),
+      "1": title.updatedAt,
+    },
+  };
 }
 
 export function assertSacredOrnlTitleSlideIntegrity(deck: OrnlTemplateDeck, scene: StudioWebScene): void {
