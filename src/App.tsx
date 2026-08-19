@@ -106,6 +106,7 @@ import { cleanFileStem, projectSaveDefaultName } from "./lib/file-names";
 import { compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioConnectorAttachmentPoint, studioGeneratedComponents, studioSlideContentSignature, translateStudioFigureTreatment, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
 import { applyStudioLayoutConstraints, type StudioConstraintRequest } from "./lib/studio-layout-constraints";
 import { buildStudioCompositionPptx, type StudioCompositionExportResult } from "./lib/studio-composition-export";
+import { applyStudioNativeTemplateLayouts, canonicalOrnlContentLayout } from "./lib/studio-native-template";
 import { validateStudioCompositionContent, type StudioCompositionContentValidation } from "./lib/studio-composition-validation";
 import { nativeTextOverflows } from "./lib/fresh-composition-qa";
 import { composeLatestStudioNativeRender } from "./lib/studio-design-result";
@@ -2552,7 +2553,7 @@ export default function App() {
       }
       if (request.operation === "create_studio_presentation") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read app status and the authorized Resources again before creating a presentation.");
-        if (!templateCatalog) throw new Error("Install the approved ORNL Template Pack before creating a new presentation.");
+        if (!templateCatalog || !templateSourceBytes) throw new Error("Install the approved ORNL Template Pack before creating a new presentation.");
         const slides = request.input.slides as NewStudioPresentationInput["slides"];
         for (const [index, slide] of slides.entries()) {
           for (const reference of slide.sourceReferences) {
@@ -2578,17 +2579,16 @@ export default function App() {
         const resourceMedia = await studioResourceMedia(sceneDraft, current.resources);
         const templateRender = await getOrBuildTemplateNativeRender();
         if (templateRender.status !== "ready" || !templateRender.authoritative) throw new Error(templateRender.warnings[0] ?? "PowerPoint-native rendering of the approved ORNL Template Pack is required to create a protected title slide.");
-        const templateLayoutRasters = Object.fromEntries(templateCatalog.layouts.map((layout, index) => {
-          const rendered = templateRender.slides.find((slide) => slide.number === index + 1);
-          return [layout.id, rendered ? { data: `data:${rendered.mimeType};base64,${bytesToBase64(bytesFrom(rendered.bytes))}`, width: rendered.width, height: rendered.height } : undefined];
-        }).filter((entry): entry is [string, { data: string; width: number; height: number }] => Boolean(entry[1])));
-        const initialComposition = await buildStudioCompositionPptx(sceneDraft, {
+        const defaultNativeLayout = canonicalOrnlContentLayout(templateCatalog);
+        const editableComposition = await buildStudioCompositionPptx(sceneDraft, {
           catalog: catalogWithStudioResources(undefined, resourceMedia, sceneDraft),
           templateCatalog,
-          templateLayoutRasters,
+          nativeTemplateLayoutBaseId: defaultNativeLayout.id,
           strict: true,
           title: String(request.input.name ?? "Untitled presentation"),
         });
+        const nativeTemplate = await applyStudioNativeTemplateLayouts({ bytes: editableComposition.bytes, scene: sceneDraft, outputSlides: editableComposition.outputSlides, templateBytes: templateSourceBytes, templateCatalog, defaultLayoutId: defaultNativeLayout.id });
+        const initialComposition = { ...editableComposition, bytes: nativeTemplate.bytes, warnings: [...editableComposition.warnings, ...nativeTemplate.warnings] };
         const sourceName = `${cleanFileStem(String(request.input.name ?? "Untitled presentation"))}.pptx`;
         const generatedResource = resourceWithAiSessionAccess(await processResourceInput({ name: sourceName, mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", bytes: initialComposition.bytes }), true);
         const audit = await auditPptx(initialComposition.bytes);
@@ -4864,6 +4864,7 @@ export default function App() {
 
   async function buildFreshStudioPreview(deck: DeckJob, slideNumber: number, studioScene: StudioWebScene): Promise<StudioFreshPreview> {
     if (!deck.audit) throw new Error("Audit the source PowerPoint before building a fresh composition.");
+    if (!templateCatalog || !templateSourceBytes) throw new Error("Install the approved ORNL Template Pack before building a Studio slide.");
     const sourceSlide = deck.audit.slides.find((item) => item.number === slideNumber);
     const studioSlide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
     if (!sourceSlide || !studioSlide) throw new Error(`Slide ${slideNumber} is not present in the current Studio scene.`);
@@ -4872,20 +4873,20 @@ export default function App() {
     const catalog = catalogWithStudioResources(sourceCatalog, await studioResourceMedia(oneSlideScene, projectRef.current.resources), oneSlideScene);
     const sourceRender = await getOrBuildNativeRender(deck, "current", projectRef.current);
     const sourceRaster = sourceRender?.status === "ready" ? sourceRender.slides.find((slide) => slide.number === slideNumber) : undefined;
-    const templateRender = studioSlide.recipe === "template-layout" ? await getOrBuildTemplateNativeRender() : undefined;
-    const templateLayoutIndex = studioSlide.targetLayoutId ? templateCatalog?.layouts.findIndex((layout) => layout.id === studioSlide.targetLayoutId) ?? -1 : -1;
-    const templateLayoutRaster = templateRender?.status === "ready" && templateLayoutIndex >= 0 ? templateRender.slides.find((slide) => slide.number === templateLayoutIndex + 1) : undefined;
+    const defaultNativeLayout = canonicalOrnlContentLayout(templateCatalog);
     const sourceFigureRasters = await sourceLockedFigureRasters(deck, oneSlideScene, new Set([slideNumber]));
-    const result = await buildStudioCompositionPptx(oneSlideScene, {
+    const composition = await buildStudioCompositionPptx(oneSlideScene, {
       catalog,
       templateCatalog,
       sourceSlideRasters: sourceRaster ? { [slideNumber]: { data: `data:${sourceRaster.mimeType};base64,${bytesToBase64(bytesFrom(sourceRaster.bytes))}`, width: sourceRaster.width, height: sourceRaster.height } } : undefined,
       sourceFigureRasters,
       sourceSlideText: { [slideNumber]: sourceSlide.text },
-      templateLayoutRasters: templateLayoutRaster && studioSlide.targetLayoutId ? { [studioSlide.targetLayoutId]: { data: `data:${templateLayoutRaster.mimeType};base64,${bytesToBase64(bytesFrom(templateLayoutRaster.bytes))}`, width: templateLayoutRaster.width, height: templateLayoutRaster.height } } : undefined,
+      nativeTemplateLayoutBaseId: defaultNativeLayout.id,
       strict: true,
       title: `${cleanFileStem(deck.name)} · Studio slide ${slideNumber}`,
     });
+    const nativeTemplate = await applyStudioNativeTemplateLayouts({ bytes: composition.bytes, scene: oneSlideScene, outputSlides: composition.outputSlides, templateBytes: templateSourceBytes, templateCatalog, defaultLayoutId: defaultNativeLayout.id });
+    const result = { ...composition, bytes: nativeTemplate.bytes, warnings: [...composition.warnings, ...nativeTemplate.warnings] };
     const candidateAudit = await auditPptx(result.bytes);
     const contentValidation = validateStudioCompositionContent({ scene: oneSlideScene, sourceAudit: deck.audit, candidateAudit, outputSlides: result.outputSlides });
     if (!contentValidation.valid) throw new Error(`Fresh-composition validation rejected the candidate: ${contentValidation.errors.join(" ")}`);
@@ -4901,6 +4902,7 @@ export default function App() {
 
   async function buildCentralStudioDeck(deck: DeckJob, studioScene: StudioWebScene): Promise<StudioDeckBuild> {
     if (!deck.audit) throw new Error("Audit the source PowerPoint before building the central presentation.");
+    if (!templateCatalog || !templateSourceBytes) throw new Error("Install the approved ORNL Template Pack before building the central presentation.");
     assertSacredOrnlTitleSlideIntegrity(deck, studioScene);
     const unconverted = unsupportedSourceSlideNumbers(deck, studioScene);
     if (unconverted.length) throw new Error(`Convert every slide into the Studio design system before exporting one central presentation. Still using source geometry: ${unconverted.join(", ")}.`);
@@ -4908,14 +4910,11 @@ export default function App() {
     const catalog = catalogWithStudioResources(sourceCatalog, await studioResourceMedia(studioScene, projectRef.current.resources), studioScene);
     const sourceRender = await getOrBuildNativeRender(deck, "current", projectRef.current);
     const sourceSlideRasters = sourceRender?.status === "ready" ? Object.fromEntries(sourceRender.slides.map((slide) => [slide.number, { data: `data:${slide.mimeType};base64,${bytesToBase64(bytesFrom(slide.bytes))}`, width: slide.width, height: slide.height }])) : undefined;
-    const templateRender = studioScene.slides.some((slide) => slide.recipe === "template-layout") ? await getOrBuildTemplateNativeRender() : undefined;
-    const templateLayoutRasters = templateRender?.status === "ready" && templateCatalog ? Object.fromEntries(templateCatalog.layouts.map((layout, index) => {
-      const slide = templateRender.slides.find((candidate) => candidate.number === index + 1);
-      return [layout.id, slide ? { data: `data:${slide.mimeType};base64,${bytesToBase64(bytesFrom(slide.bytes))}`, width: slide.width, height: slide.height } : undefined];
-    }).filter((entry): entry is [string, { data: string; width: number; height: number }] => Boolean(entry[1]))) : undefined;
+    const defaultNativeLayout = canonicalOrnlContentLayout(templateCatalog);
     const sourceFigureRasters = await sourceLockedFigureRasters(deck, studioScene);
-    const composition = await buildStudioCompositionPptx(studioScene, { catalog, templateCatalog, sourceSlideRasters, sourceFigureRasters, sourceSlideText: Object.fromEntries(deck.audit.slides.map((slide) => [slide.number, slide.text])), templateLayoutRasters, strict: true, title: `${cleanFileStem(deck.name)} · Presentation Studio redesign` });
-    let result = composition;
+    const editableComposition = await buildStudioCompositionPptx(studioScene, { catalog, templateCatalog, sourceSlideRasters, sourceFigureRasters, sourceSlideText: Object.fromEntries(deck.audit.slides.map((slide) => [slide.number, slide.text])), nativeTemplateLayoutBaseId: defaultNativeLayout.id, strict: true, title: `${cleanFileStem(deck.name)} · Presentation Studio redesign` });
+    const nativeTemplate = await applyStudioNativeTemplateLayouts({ bytes: editableComposition.bytes, scene: studioScene, outputSlides: editableComposition.outputSlides, templateBytes: templateSourceBytes, templateCatalog, defaultLayoutId: defaultNativeLayout.id });
+    let result = { ...editableComposition, bytes: nativeTemplate.bytes, warnings: [...editableComposition.warnings, ...nativeTemplate.warnings] };
     for (const sourceSlideNumber of studioScene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber)) {
       const sourceBytes = sourceForDeck(projectRef.current, deck)?.bytes;
       if (!sourceBytes) throw new Error("The embedded source PowerPoint is required to preserve approved ORNL template slides natively.");

@@ -39,6 +39,12 @@ export interface StudioCompositionExportOptions {
   sourceFigureRasters?: Record<string, { data: string; width: number; height: number }>;
   sourceSlideText?: Record<number, string>;
   templateLayoutRasters?: Record<string, { data: string; width: number; height: number }>;
+  /**
+   * When present, the caller will attach real ORNL native layouts after this
+   * editable composition is written. Use the named neutral layout for shared
+   * recipes and suppress slide-local copies of template artwork.
+   */
+  nativeTemplateLayoutBaseId?: string;
   strict?: boolean;
   title?: string;
 }
@@ -268,12 +274,18 @@ function addConvertedTemplateArtwork(
   sourceSlide: StudioWebScene["slides"][number],
   templateCatalog: TemplateCatalog | undefined,
   templateLayoutRasters: StudioCompositionExportOptions["templateLayoutRasters"],
+  nativeTemplateLayoutBaseId: string | undefined,
   warnings: string[],
 ): void {
-  if (sourceSlide.recipe !== "template-layout") return;
-  const layout = templateCatalog?.layouts.find((item) => item.id === sourceSlide.targetLayoutId);
+  const layoutId = sourceSlide.recipe === "template-layout" ? sourceSlide.targetLayoutId : nativeTemplateLayoutBaseId;
+  if (!layoutId) return;
+  const layout = templateCatalog?.layouts.find((item) => item.id === layoutId);
   if (!layout || !templateCatalog) throw new Error(`Slide ${sourceSlide.slideNumber} references a converted ORNL template layout that is not available in the active Template Pack.`);
   slide.background = { color: hex(layout.background, sourceSlide.background) };
+  if (nativeTemplateLayoutBaseId) {
+    warnings.push(`Slide ${sourceSlide.slideNumber}: editable Studio content is prepared for the native ORNL ${layout.name} layout; the caller must attach its real master/layout dependency graph before native review.`);
+    return;
+  }
   const xScale = PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches / (templateCatalog.slideWidth / EMU_PER_INCH);
   const yScale = PRESENTATION_DESIGN_STANDARD.defaults.slide.heightInches / (templateCatalog.slideHeight / EMU_PER_INCH);
   const frame = (element: TemplatePreviewElement) => ({
@@ -436,7 +448,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
       warnings.push(`Slide ${sourceSlide.slideNumber}: preserved as one authoritative PowerPoint-rendered title composition; no template artwork or geometry was altered.`);
       continue;
     }
-    addConvertedTemplateArtwork(pptx, slide, sourceSlide, options.templateCatalog, options.templateLayoutRasters, warnings);
+    addConvertedTemplateArtwork(pptx, slide, sourceSlide, options.templateCatalog, options.templateLayoutRasters, options.nativeTemplateLayoutBaseId, warnings);
     for (const component of studioGeneratedComponents(sourceSlide)) {
       const x = inches(component.frame.x);
       const y = inches(component.frame.y);
