@@ -225,13 +225,17 @@ test("a grouped native diagram is automatically preserved while surrounding narr
   const title = { ...makeText("title", "Theory revisit", "editable-object", .3, .4, 12.5, .5), role: "title" as const };
   const narrative = makeText("narrative", "Where is the point of interconnection? Where is the main transformer? Preserve every exact question.", "editable-object", .3, 1.2, 12.5, 1.1);
   const native: StudioWebNode = { ...seed, id: "native-group", sourceObjectId: "native-group", sourceShapeId: "native-group", sourceBinding: "editable-object", name: "Grouped native diagram", kind: "native-object", role: "group", text: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(2.8), y: emu(2.5), width: emu(10), height: emu(4) , rotation: 0 }, frame: { x: emu(2.8), y: emu(2.5), width: emu(10), height: emu(4), rotation: 0 }, visible: true, locked: true };
+  const secondNative: StudioWebNode = { ...native, id: "native-group-2", sourceObjectId: "native-group-2", sourceShapeId: "native-group-2", name: "Second grouped native diagram", sourceFrame: { x: emu(9.2), y: emu(3), width: emu(3), height: emu(2), rotation: 0 }, frame: { x: emu(9.2), y: emu(3), width: emu(3), height: emu(2), rotation: 0 } };
   const embedded = makeText("embedded-label", "POI", "catalog-derived", 8.3, 3.2, .8, .3);
-  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, narrative, native, embedded] }] }, sourceSlide.slideNumber);
+  const secondEmbedded = makeText("embedded-label-2", "Second unit", "catalog-derived", 9.6, 3.4, 1.2, .3);
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, narrative, native, secondNative, embedded, secondEmbedded] }] }, sourceSlide.slideNumber);
   const slide = designed.slides[0];
   const treatment = slide.figureTreatments.find((candidate) => candidate.id.startsWith("studio-auto-technical-figure"));
   assert.equal(slide.recipe, "ornl-title-two-column");
   assert.ok(treatment?.nodeIds.includes(native.id));
+  assert.ok(treatment?.nodeIds.includes(secondNative.id));
   assert.ok(treatment?.nodeIds.includes(embedded.id));
+  assert.ok(treatment?.nodeIds.includes(secondEmbedded.id));
   assert.ok(slide.nodes.find((candidate) => candidate.id === narrative.id)!.frame.height >= emu(.8));
   assert.ok(!treatment?.nodeIds.includes(narrative.id));
 });

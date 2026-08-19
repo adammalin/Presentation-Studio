@@ -994,14 +994,15 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     if (leftovers.length) for (const [id, value] of stack(leftovers, frame(.58, 6.18, 3.18, .40), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-two-column") {
     const nativeObject = slide.nodes.find((node) => node.visible && node.kind === "native-object" && !footerNode(node));
+    const nativeObjects = slide.nodes.filter((node) => node.visible && node.kind === "native-object" && !footerNode(node));
     const technicalVisuals = slide.nodes.filter((node) => node.visible && !footerNode(node) && (node.kind === "native-object" || meaningfulImage(node)));
     const editableNarrative = [...content, ...captions].filter((node) => node.kind === "text" && node.role !== "title" && node.sourceBinding === "editable-object");
     const compositeTechnicalOverview = Boolean(nativeObject && technicalVisuals.length >= 2 && editableNarrative.length === 0);
     const visual = nativeObject ?? content.find((node) => meaningfulImage(node) || node.kind === "table");
     const connectors = slide.nodes.filter((node) => node.visible && !node.locked && node.kind === "connector" && !footerNode(node));
     const figureAnnotations = captions.filter(shortFigureAnnotation);
-    const embeddedNativeText = nativeObject
-      ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && node.kind === "text" && sourceFrameContains(nativeObject.sourceFrame, node.sourceFrame))
+    const embeddedNativeNodes = nativeObjects.length
+      ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && !footerNode(node) && nativeObjects.some((candidate) => sourceFrameContains(candidate.sourceFrame, node.sourceFrame)))
       : [];
     const relationshipBearingFigure = visual && (visual.kind === "native-object" || (visual.kind === "image" && connectors.length >= 1 && figureAnnotations.length >= 2));
     if (compositeTechnicalOverview) {
@@ -1022,7 +1023,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
         relationshipPolicy: "preserve-internal",
       });
     } else if (visual && relationshipBearingFigure) {
-      const groupNodes = [...new Map([visual, ...connectors, ...figureAnnotations, ...embeddedNativeText].map((node) => [node.id, node])).values()];
+      const groupNodes = [...new Map([...(visual.kind === "native-object" ? nativeObjects : [visual]), ...connectors, ...figureAnnotations, ...embeddedNativeNodes].map((node) => [node.id, node])).values()];
       const groupIds = new Set(groupNodes.map((node) => node.id));
       const narrative = [...content, ...captions].filter((node) => !groupIds.has(node.id));
       const narrativeParagraphs = narrative.reduce((sum, node) => sum + Math.max(1, node.sourceParagraphs?.length ?? 1), 0);
