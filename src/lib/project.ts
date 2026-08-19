@@ -6,6 +6,7 @@ import {
   PRESERVATION_ENVELOPE_VERSION,
   STUDIO_WEB_SCENE_SCHEMA,
   STUDIO_WEB_SCENE_VERSION,
+  STUDIO_COMPONENT_ROLES,
   PROJECT_SCHEMA,
   PROJECT_SCHEMA_VERSION,
   type PresentationStudioProject,
@@ -332,7 +333,7 @@ const studioNodeSchema = z.object({
     verificationStatus: z.literal("verified"),
   }).optional(),
   mediaPart: z.string().optional(),
-  component: z.object({ groupId: z.string().min(1), role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"]), ordinal: z.number().int().nonnegative().optional(), frame: studioFrameSchema.optional(), definitionId: z.string().min(1).optional() }).optional(),
+  component: z.object({ groupId: z.string().min(1), role: z.enum(STUDIO_COMPONENT_ROLES), ordinal: z.number().int().nonnegative().optional(), frame: studioFrameSchema.optional(), definitionId: z.string().min(1).optional() }).optional(),
   opticalInsets: z.object({
     left: z.number().nonnegative(), top: z.number().nonnegative(), right: z.number().nonnegative(), bottom: z.number().nonnegative(),
     authority: z.enum(["scene-frame", "source-estimate", "powerpoint-native"]),
@@ -370,7 +371,7 @@ const studioWebSceneSchema = z.object({
   componentLibrary: z.array(z.object({
     id: z.string().min(1),
     name: z.string().min(1),
-    role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "metric-card", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"]),
+    role: z.enum(STUDIO_COMPONENT_ROLES),
     surface: z.enum(["light", "dark"]),
     sourceNodeId: z.string().min(1),
     adoptedFromSlideNumber: z.number().int().positive(),
@@ -418,7 +419,11 @@ const studioWebSceneSchema = z.object({
     targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000), resourceBindings: z.array(studioResourceBindingSchema).max(40).optional(),
     figureTreatments: z.array(z.object({
       id: z.string().min(1).max(180),
-      nodeIds: z.array(z.string().min(1).max(180)).min(1).max(30),
+      // A source-locked complex PowerPoint figure may legitimately contain far
+      // more than the 30 nodes accepted by one interactive MCP edit. Persist
+      // the complete verified relationship group so recovery never truncates
+      // or rejects an automatically discovered technical figure.
+      nodeIds: z.array(z.string().min(1).max(180)).min(1).max(200),
       mode: z.enum(["preserve-as-unit", "preserve-and-frame", "hybrid-rebuild", "redraw-candidate"]),
       verificationStatus: z.enum(["source-locked", "needs-content-review", "verified"]),
       intentSummary: z.string().min(1).max(1_000),

@@ -72,6 +72,28 @@ test("a recovery checkpoint cannot attach to a different project or Resource inv
   assert.throws(() => applyProjectRecoveryCheckpoint({ ...base, resources: [] }, checkpoint), /does not match/i);
 });
 
+test("recovery accepts current metric components and complete source-locked figure groups", async () => {
+  const { base, designed } = await projectWithStudioScene();
+  const recoverable = structuredClone(designed);
+  const slide = recoverable.decks[0].studioScene!.slides[0];
+  slide.nodes[0] = { ...slide.nodes[0], component: { groupId: "metric-grid-1", role: "metric-card", ordinal: 0 } };
+  slide.figureTreatments = [{
+    id: "complex-source-figure",
+    nodeIds: Array.from({ length: 52 }, (_, index) => `source-figure-node-${index + 1}`),
+    mode: "preserve-as-unit",
+    verificationStatus: "source-locked",
+    intentSummary: "Preserve the complete source technical figure as one evidence unit.",
+    informationInventory: ["Complete source figure"],
+    invariants: ["Keep every source-bound object in the relationship group"],
+    rationale: "The source figure contains many related PowerPoint objects that must recover together.",
+  }];
+  recoverable.project.updatedAt = new Date(Date.parse(recoverable.project.updatedAt) + 1_000).toISOString();
+  const completeAutosave = await openProjectPackage(await buildProjectPackage(base));
+  const recovered = applyProjectRecoveryCheckpoint(completeAutosave, buildProjectRecoveryCheckpoint(recoverable));
+  assert.equal(recovered.decks[0].studioScene?.slides[0].nodes[0].component?.role, "metric-card");
+  assert.equal(recovered.decks[0].studioScene?.slides[0].figureTreatments[0].nodeIds.length, 52);
+});
+
 test("latest-only autosave coalesces a burst and durably writes the newest revision", async () => {
   const saved: number[] = [];
   const progress: AutosaveProgress[] = [];
