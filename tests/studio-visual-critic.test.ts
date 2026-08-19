@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { NativeMeasurementResult } from "../src/lib/desktop";
-import { critiqueStudioSlide } from "../src/lib/studio-visual-critic";
+import { critiqueStudioSlide, nativeStudioProductionIssues, preflightStudioScene } from "../src/lib/studio-visual-critic";
 import { applyStudioDeterministicRepairPass } from "../src/lib/studio-repair-pass";
 import type { StudioWebNode, StudioWebScene } from "../src/types";
 
@@ -40,6 +40,24 @@ test("Studio critic combines PowerPoint overflow, optical alignment, and hierarc
 
 test("Studio critic refuses non-native measurement evidence", () => {
   assert.throws(() => critiqueStudioSlide(scene(), 1, { ...measurement(), authority: "direct-ooxml" }), /Microsoft PowerPoint/i);
+});
+
+test("Studio production preflight blocks undersized ordinary type and crop-prone protected marks", () => {
+  const source = scene();
+  const body = source.slides[0].nodes.find((node) => node.id === "body")!;
+  const logoFrame = { x: 760 * PT, y: 470 * PT, width: 120 * PT, height: 35 * PT, rotation: 0 };
+  const logo: StudioWebNode = { ...body, id: "doe-logo", sourceObjectId: "doe-logo", sourceShapeId: "doe-logo", name: "DOE logo", kind: "image", role: "image", text: undefined, exactContent: false, sourceFrame: logoFrame, frame: logoFrame, style: { ...body.style, fontSizePt: 16, objectFit: "cover" } };
+  source.slides[0] = { ...source.slides[0], nodes: source.slides[0].nodes.map((node) => node.id === "body" ? { ...node, style: { ...node.style, fontSizePt: 12 } } : node).concat(logo) };
+  const result = preflightStudioScene(source);
+  assert.equal(result.ready, false);
+  assert.equal(result.issues.some((issue) => issue.category === "legibility" && /12 pt/.test(issue.message)), true);
+  assert.equal(result.issues.some((issue) => issue.category === "brand" && issue.severity === "blocker"), true);
+});
+
+test("native production QA treats editable table-cell overflow as a hard issue", () => {
+  const native = measurement();
+  native.slides[0].shapes.push({ slideNumber: 1, shapeIndex: 3, name: "Results table", zOrder: 3, boundsPt: { left: 30, top: 210, width: 300, height: 100 }, rotation: 0, hasTextFrame: false, hasTable: true, table: { rowCount: 1, columnCount: 1, rowHeightsPt: [100], columnWidthsPt: [300], cells: [{ row: 1, column: 1, boundsPt: { left: 0, top: 0, width: 300, height: 100 }, marginsPt: { left: 6, right: 6, top: 4, bottom: 4 }, renderedTextBoundsPt: { left: 6, top: 4, width: 290, height: 96 }, textCoordinateSpace: "cell-relative", textLength: 20, lineCount: 5, verticalAnchor: "top" }] } });
+  assert.equal(nativeStudioProductionIssues(native).some((issue) => /cell r1c1 overflows/.test(issue.message)), true);
 });
 
 test("deterministic Studio repair replays native optical constraints and restores title hierarchy without changing copy", () => {

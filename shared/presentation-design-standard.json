@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-18.36-ornl-metric-grid",
+  "version": "2026-08-19.37-native-brand-qa",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -251,12 +251,15 @@
       "xInches": 0.47,
       "yInches": 0.29,
       "widthInches": 12.39,
-      "heightInches": 0.63,
+      "heightInches": 0.56,
       "fontSizePt": 29.25,
       "ruleXInches": 0.47,
-      "ruleYInches": 0.93,
-      "ruleWidthInches": 0.96,
-      "ruleHeightInches": 0.063
+      "ruleYInches": 0.89,
+      "ruleWidthInches": 0.934,
+      "ruleHeightInches": 0.079,
+      "ruleGapInches": 0.04,
+      "contentGapInches": 0.16,
+      "ruleColor": "#00B38F"
     },
     "patterns": {
       "content": "One primary content region aligned to the page grid; avoid ornamental boxes unless they communicate grouping.",
@@ -280,7 +283,7 @@
       "primarySeparationPt": 24
     },
     "components": {
-      "titleBar": "One Aptos title frame and one ORNL Green rule at the exact shared title geometry.",
+      "titleBar": "One Aptos title frame and one Biome accent rule copied from the approved ORNL title-layout token: 0.934 inches wide by 0.079 inches high, placed 0.04 inches below the rendered title region. The rule must never be positioned from an oversized placeholder frame or overlap body content.",
       "semanticTextAtom": "One exact source paragraph or ordered paragraph group with a stable source locator and hash. It may be placed independently in fresh composition but may not be rewritten or silently omitted.",
       "bodyList": "One left-aligned content frame using shared paragraph spacing and bullet indentation; preserve exact wording.",
       "twoColumn": "Two content regions with equal optical top edges and a 0.38-inch gutter; images use contain behavior unless an intentional crop is approved.",
@@ -468,7 +471,9 @@
     "Prioritize readable titles, concise visual groupings, balanced whitespace, and clear reading order.",
     "Normalize tables and figures as coherent systems: headers, row treatment, captions, borders, image framing, size, alignment, and spacing must be consistent.",
     "Keep dense technical slides readable without deleting content. If exact content cannot fit safely, stage a split-slide recommendation and request one focused approval.",
-    "Use restrained, semantically meaningful icons or native vector diagrams only when they improve comprehension. Decoration alone is not a reason to add media."
+    "Use restrained, semantically meaningful icons or native vector diagrams only when they improve comprehension. Decoration alone is not a reason to add media.",
+    "Treat the ORNL and DOE marks as protected artwork. Use only approved template or source assets, preserve their aspect ratio with contain behavior, and reject any crop, stretch, recolor, substitution, or reconstruction.",
+    "A slide is not done until its exact current central-deck revision has rendered and measured successfully in Microsoft PowerPoint, every ordinary body run is at least 16 pt, every ordinary label or caption is at least 14 pt, every title is clear and dominant, and there is zero text overflow, accidental text collision, table-cell overflow, off-slide content, or protected-mark distortion."
   ],
   "collaborationRules": [
     "Stage related object moves and resizes on one slide as one atomic layout transaction. Calculate the final arrangement together and reject new overlap, worsened text fit, unsafe-edge regression, or accidental picture distortion unless a deliberate exception and rationale are recorded.",

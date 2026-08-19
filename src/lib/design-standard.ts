@@ -40,7 +40,7 @@ export interface PresentationDesignStandard {
     version: number;
     principle: string;
     page: Record<string, number>;
-    title: Record<string, number>;
+    title: Record<string, number | string>;
     patterns: Record<string, string>;
     paragraph: Record<string, number>;
     spacing: { compactPt: number; normalPt: number; primarySeparationPt: number };

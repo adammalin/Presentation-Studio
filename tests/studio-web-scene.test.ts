@@ -72,6 +72,12 @@ test("shared ORNL web recipes recompose complete slides and compile back to sour
   const visual = studioVisualDesignRequest(designed, slideNumber);
   assert.equal(visual.slideNumber, slideNumber);
   assert.equal(visual.decorations[0]?.name, "ORNL title rule");
+  const titleNode = slide?.nodes.find((node) => node.visible && node.role === "title");
+  const titleRule = slide ? studioGeneratedComponents(slide).find((component) => component.id.includes("title-rule")) : undefined;
+  assert.equal(titleRule?.fillColor, "#00B38F");
+  assert.equal(titleRule?.frame.width, Math.round(.934 * 914_400));
+  assert.equal(titleRule?.frame.height, Math.round(.079 * 914_400));
+  assert.equal(titleNode && titleRule ? titleRule.frame.y - titleNode.frame.y - titleNode.frame.height : undefined, Math.round(.04 * 914_400));
   assert.equal(visual.textStyles.every((style) => style.fontSizePt && style.fontSizePt >= 14), true);
 });
 
@@ -88,7 +94,7 @@ test("recomposition keeps only the topmost source heading as the deck title and 
   assert.equal(designed.nodes.find((node) => node.id === "true-title")?.role, "title");
   assert.equal(designed.nodes.find((node) => node.id === "false-title")?.role, "body");
   assert.equal(designed.nodes.filter((node) => node.role === "title").length, 1);
-  assert.equal(designed.nodes.find((node) => node.id === "true-title")?.frame.y, emu(.26));
+  assert.equal(designed.nodes.find((node) => node.id === "true-title")?.frame.y, emu(.29));
 });
 
 test("source-locked figure treatments preserve the technical object and add one shared ORNL frame", async () => {
@@ -167,7 +173,7 @@ test("two labeled figures reserve a real narrative region instead of squeezing e
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.endsWith("-visual-field")).length, 2);
   const designedTitle = slide.nodes.find((candidate) => candidate.id === "title-1")!;
   const titleRule = studioGeneratedComponents(slide).find((component) => component.id.includes("title-rule"))!;
-  assert.ok(designedTitle.frame.height >= emu(1.13));
+  assert.ok(designedTitle.frame.height >= emu(.93));
   assert.ok(titleRule.frame.y >= designedTitle.frame.y + designedTitle.frame.height);
   assert.ok(titleRule.frame.y + titleRule.frame.height <= Math.min(...images.map((image) => image.component!.frame!.y)));
 

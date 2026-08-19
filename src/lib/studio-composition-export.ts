@@ -573,7 +573,8 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
           warnings.push(message);
           continue;
         }
-        const targetFrame = node.style.objectFit === "contain"
+        const protectedBrandMark = node.component?.role === "footer-logo" || /(?:^|\b)(?:ornl|doe|department of energy|oak ridge|wordmark|logo)(?:\b|$)/i.test(node.name);
+        const targetFrame = node.style.objectFit === "contain" || protectedBrandMark
           ? containFigureFrame(node.frame, cropFrame, undefined)
           : node.frame;
         slide.addImage({

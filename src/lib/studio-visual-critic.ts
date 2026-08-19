@@ -1,7 +1,9 @@
 import type { NativeMeasurementResult } from "./desktop";
 import { nativeTextOverflows } from "./fresh-composition-qa";
+import { calculateNativeCellClearances } from "./native-measurement";
 import { analyzeStudioDesignImpact, type StudioDesignImpact } from "./studio-design-impact";
 import { studioNodeOpticalBox } from "./studio-layout-constraints";
+import { studioGeneratedComponents } from "./studio-web-scene";
 import type { StudioLayoutConstraint, StudioQualityIssue, StudioWebFrame, StudioWebNode, StudioWebScene } from "../types";
 
 const PT = 12_700;
@@ -19,6 +21,98 @@ export interface StudioVisualCritique {
   verdict: "ready" | "revise";
   iteration: { currentPass: number; maxPasses: 3; remainingPasses: number };
   checks: string[];
+}
+
+export interface StudioScenePreflight {
+  issues: StudioQualityIssue[];
+  blockerCount: number;
+  majorCount: number;
+  bySlide: Array<{ slideNumber: number; issues: StudioQualityIssue[] }>;
+  ready: boolean;
+}
+
+function protectedBrandMark(node: StudioWebNode): boolean {
+  return node.component?.role === "footer-logo" || /(?:^|\b)(?:ornl|doe|department of energy|oak ridge|wordmark|logo)(?:\b|$)/i.test(node.name);
+}
+
+function sourceLockedNodeIds(scene: StudioWebScene, slideNumber: number): Set<string> {
+  const slide = scene.slides.find((candidate) => candidate.slideNumber === slideNumber);
+  return new Set((slide?.figureTreatments ?? [])
+    .filter((treatment) => ["preserve-as-unit", "preserve-and-frame"].includes(treatment.mode) && ["source-locked", "verified"].includes(treatment.verificationStatus))
+    .flatMap((treatment) => treatment.nodeIds));
+}
+
+function overlapArea(left: StudioWebFrame, right: StudioWebFrame): number {
+  return Math.max(0, Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x))
+    * Math.max(0, Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y));
+}
+
+/**
+ * Fast, deterministic fail-closed checks that run before Microsoft PowerPoint.
+ * They prevent known-bad typography, header collisions, unsafe logo treatment,
+ * and off-canvas geometry from entering an expensive native deck build.
+ */
+export function preflightStudioScene(scene: StudioWebScene): StudioScenePreflight {
+  const bySlide = scene.slides.map((slide) => {
+    const issues: StudioQualityIssue[] = [];
+    const add = (input: Omit<StudioQualityIssue, "id">) => issues.push({ id: `slide-${slide.slideNumber}-${input.category}-${issues.length + 1}`, ...input });
+    const visible = slide.nodes.filter((node) => node.visible);
+    const sourceLocked = sourceLockedNodeIds(scene, slide.slideNumber);
+    const editable = visible.filter((node) => !sourceLocked.has(node.id));
+    const footerRoles = new Set(["footer", "slide-number", "date", "logo"]);
+
+    for (const node of editable) {
+      if (node.frame.x < 0 || node.frame.y < 0 || node.frame.x + node.frame.width > scene.slideSize.width || node.frame.y + node.frame.height > scene.slideSize.height) add({ category: "safe-region", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} leaves the slide canvas.`, recommendation: "Recompose it inside the 16:9 canvas before building.", autoFixable: true });
+      if (node.kind === "text" && node.text?.trim() && node.component?.role !== "footer-meta" && !footerRoles.has(node.role)) {
+        const floor = node.role === "title" ? 24 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" ? 14 : 16;
+        if (node.style.fontFamily.trim().toLowerCase() !== "aptos") add({ category: "brand", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} uses ${node.style.fontFamily || "an unspecified font"} instead of Aptos.`, recommendation: "Use Aptos throughout ordinary ORNL presentation content.", autoFixable: true });
+        if (node.style.fontSizePt < floor) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is ${node.style.fontSizePt} pt; the production floor for this role is ${floor} pt.`, recommendation: "Choose a roomier recipe, enlarge the region, or use an explicit continuation slide instead of miniaturizing type.", autoFixable: true });
+      }
+      if (protectedBrandMark(node) && node.kind === "image" && node.style.objectFit !== "contain") add({ category: "brand", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} is protected brand artwork but is not using aspect-preserving contain behavior.`, recommendation: "Restore the approved asset with locked aspect ratio; never crop or stretch ORNL or DOE marks.", autoFixable: true });
+    }
+
+    for (const treatment of slide.figureTreatments) {
+      const protectedIds = treatment.nodeIds.filter((id) => {
+        const node = visible.find((candidate) => candidate.id === id);
+        return node ? protectedBrandMark(node) : false;
+      });
+      if (protectedIds.length && treatment.lockAspectRatio === false) add({ category: "brand", severity: "blocker", source: "scene", nodeIds: protectedIds, message: "A figure treatment can distort protected ORNL or DOE artwork.", recommendation: "Lock the complete mark group aspect ratio and use contain behavior.", autoFixable: true });
+    }
+
+    const textNodes = editable.filter((node) => node.kind === "text" && node.text?.trim() && !footerRoles.has(node.role));
+    for (let leftIndex = 0; leftIndex < textNodes.length; leftIndex += 1) for (let rightIndex = leftIndex + 1; rightIndex < textNodes.length; rightIndex += 1) {
+      const left = textNodes[leftIndex];
+      const right = textNodes[rightIndex];
+      const overlap = overlapArea(left.frame, right.frame);
+      const smaller = Math.max(1, Math.min(left.frame.width * left.frame.height, right.frame.width * right.frame.height));
+      if (overlap / smaller > .08) add({ category: "spacing", severity: "blocker", source: "scene", nodeIds: [left.id, right.id], message: `${left.name} and ${right.name} occupy overlapping text regions.`, recommendation: "Recompose both regions on the shared grid before native rendering.", autoFixable: true });
+    }
+
+    if (!["source", "template-layout"].includes(slide.recipe)) {
+      const rule = studioGeneratedComponents(slide).find((component) => component.id.includes("title-rule"));
+      if (rule) for (const node of textNodes.filter((candidate) => candidate.role !== "title")) if (overlapArea(rule.frame, node.frame) > 0) add({ category: "spacing", severity: "blocker", source: "scene", nodeIds: [node.id], message: `The ORNL title accent overlaps ${node.name}.`, recommendation: "Place body content below the complete title and accent system.", autoFixable: true });
+    }
+
+    return { slideNumber: slide.slideNumber, issues };
+  });
+  const issues = bySlide.flatMap((slide) => slide.issues);
+  const blockerCount = issues.filter((item) => item.severity === "blocker").length;
+  const majorCount = issues.filter((item) => item.severity === "major").length;
+  return { issues, blockerCount, majorCount, bySlide: bySlide.filter((slide) => slide.issues.length > 0), ready: blockerCount === 0 && majorCount === 0 };
+}
+
+export function nativeStudioProductionIssues(measurement: NativeMeasurementResult): Array<{ slideNumber: number; message: string }> {
+  if (measurement.status !== "ready" || measurement.authority !== "powerpoint-native") return [{ slideNumber: 0, message: measurement.reason ?? "PowerPoint-native measurement is unavailable." }];
+  const issues = nativeTextOverflows(measurement).map((overflow) => ({ slideNumber: overflow.slideNumber, message: `${overflow.name || "Text"} renders outside its frame (${overflow.edges.join(", ")}).` }));
+  for (const slide of measurement.slides) for (const shape of slide.shapes) for (const cell of shape.table?.cells ?? []) {
+    const bounds = cell.boundsPt;
+    const text = cell.renderedTextBoundsPt;
+    const margins = cell.marginsPt;
+    if (bounds && text && margins && (text.width > bounds.width - margins.left - margins.right + .5 || text.height > bounds.height - margins.top - margins.bottom + .5)) issues.push({ slideNumber: slide.number, message: `${shape.name ?? "Table"} cell r${cell.row}c${cell.column} overflows its editable PowerPoint cell.` });
+    const clearance = calculateNativeCellClearances(cell);
+    if (clearance && (Math.min(clearance.left, clearance.right) < 1 || Math.min(clearance.top, clearance.bottom) < 1)) issues.push({ slideNumber: slide.number, message: `${shape.name ?? "Table"} cell r${cell.row}c${cell.column} has less than 1 pt native text clearance.` });
+  }
+  return issues;
 }
 
 function union(frames: StudioWebFrame[]) {
