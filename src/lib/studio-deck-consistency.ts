@@ -41,7 +41,9 @@ function tableSignature(node: StudioWebNode): string {
 export function analyzeStudioDeckConsistency(scene: StudioWebScene): StudioDeckConsistencyReview {
   const designed = scene.slides.filter((slide) => slide.status === "designed" && slide.recipe !== "source");
   const issues: StudioDeckConsistencyIssue[] = [];
-  const titles = designed.flatMap((slide) => slide.nodes.filter((node) => node.visible && node.role === "title" && node.kind === "text").map((node) => ({ slideNumber: slide.slideNumber, node })));
+  const titles = designed
+    .filter((slide) => slide.recipe !== "template-layout")
+    .flatMap((slide) => slide.nodes.filter((node) => node.visible && node.role === "title" && node.kind === "text").map((node) => ({ slideNumber: slide.slideNumber, node })));
   if (titles.length >= 3) {
     const expectedX = median(titles.map(({ node }) => node.frame.x));
     const expectedY = median(titles.map(({ node }) => node.frame.y));

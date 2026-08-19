@@ -75,6 +75,22 @@ test("shared ORNL web recipes recompose complete slides and compile back to sour
   assert.equal(visual.textStyles.every((style) => style.fontSizePt && style.fontSizePt >= 14), true);
 });
 
+test("recomposition keeps only the topmost source heading as the deck title and demotes false duplicate titles", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides.find((slide) => slide.nodes.filter((node) => node.kind === "text").length >= 2)!;
+  const textNodes = sourceSlide.nodes.filter((node) => node.kind === "text").slice(0, 2);
+  const emu = (value: number) => value * 914_400;
+  const falseTitle = { ...textNodes[0], id: "false-title", role: "title" as const, text: "A long evidence assertion that is not the page title", sourceFrame: { x: emu(7.5), y: emu(1.1), width: emu(5), height: emu(3), rotation: 0 } };
+  const trueTitle = { ...textNodes[1], id: "true-title", role: "title" as const, text: "3.2 - S&T Management", sourceFrame: { x: emu(.47), y: emu(.12), width: emu(8), height: emu(.6), rotation: 0 } };
+  const scene = { ...source, slides: source.slides.map((slide) => slide.slideNumber === sourceSlide.slideNumber ? { ...slide, nodes: [falseTitle, trueTitle] } : slide) };
+  const designed = recomposeStudioWebSlide(scene, sourceSlide.slideNumber, "ornl-title-content").slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!;
+  assert.equal(designed.nodes.find((node) => node.id === "true-title")?.role, "title");
+  assert.equal(designed.nodes.find((node) => node.id === "false-title")?.role, "body");
+  assert.equal(designed.nodes.filter((node) => node.role === "title").length, 1);
+  assert.equal(designed.nodes.find((node) => node.id === "true-title")?.frame.y, emu(.26));
+});
+
 test("source-locked figure treatments preserve the technical object and add one shared ORNL frame", async () => {
   const { bytes, deck, catalog } = await fixture();
   const source = compileStudioWebScene(deck, catalog);
@@ -330,6 +346,76 @@ test("comparison-card recipe ignores footer furniture and composes repeated sema
   assert.equal(new Set(slide.nodes.filter((node) => node.component?.role === "card-body").map((node) => node.component?.groupId)).size, 4);
   assert.equal(studioGeneratedComponents(slide).length, 10);
   assert.deepEqual(slide.nodes.map((node) => node.text).filter(Boolean).sort(), nodes.map((node) => node.text).filter(Boolean).sort());
+});
+
+test("repeated sponsor metric groups become an editable ORNL metric grid instead of a preserved legacy figure", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const title: StudioWebNode = {
+    ...seed,
+    id: "metric-title",
+    sourceObjectId: "metric-title",
+    sourceShapeId: "metric-title",
+    sourceBinding: "editable-object",
+    name: "Metric title",
+    kind: "text",
+    role: "title",
+    text: "Program outcomes",
+    sourceFrame: { x: emu(.47), y: emu(.28), width: emu(12), height: emu(.6), rotation: 0 },
+    frame: { x: emu(.47), y: emu(.28), width: emu(12), height: emu(.6), rotation: 0 },
+    visible: true,
+    locked: false,
+  };
+  const metricTexts = ["27 projects", "$18M invested", "14 partners", "6 states", "42 publications", "9 patents", "31 demonstrations", "12 awards", "85% complete", "4 technologies"];
+  const metrics = metricTexts.map((text, index): StudioWebNode => ({
+    ...seed,
+    id: `metric-${index + 1}`,
+    sourceObjectId: `metric-${index + 1}`,
+    sourceShapeId: `metric-${index + 1}`,
+    sourceBinding: "editable-object",
+    name: `Metric ${index + 1}`,
+    kind: "text",
+    role: "body",
+    text,
+    sourceTextOrder: index + 2,
+    zIndex: index + 2,
+    sourceFrame: { x: emu(index % 2 ? 6.8 : .7), y: emu(1.4 + Math.floor(index / 2) * .95), width: emu(5.6), height: emu(.62), rotation: 0 },
+    frame: { x: emu(index % 2 ? 6.8 : .7), y: emu(1.4 + Math.floor(index / 2) * .95), width: emu(5.6), height: emu(.62), rotation: 0 },
+    visible: true,
+    locked: false,
+  }));
+  const groups = Array.from({ length: 5 }, (_, index): StudioWebNode => ({
+    ...seed,
+    id: `legacy-group-${index + 1}`,
+    sourceObjectId: `legacy-group-${index + 1}`,
+    sourceShapeId: `legacy-group-${index + 1}`,
+    sourceBinding: "editable-object",
+    name: `Legacy metric row ${index + 1}`,
+    kind: "native-object",
+    role: "group",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    sourceFrame: { x: emu(.5), y: emu(1.25 + index * 1.02), width: emu(12.3), height: emu(.86), rotation: 0 },
+    frame: { x: emu(.5), y: emu(1.25 + index * 1.02), width: emu(12.3), height: emu(.86), rotation: 0 },
+    zIndex: 30 + index,
+    visible: true,
+    locked: true,
+  }));
+  const source = { ...scene, slides: [{ ...sourceSlide, nodes: [title, ...metrics, ...groups] }] };
+  assert.equal(recommendedStudioRecipe(source.slides[0]), "ornl-title-metric-grid");
+  const slide = recomposeStudioWebSlide(source, sourceSlide.slideNumber).slides[0];
+  const metricCards = slide.nodes.filter((node) => node.component?.role === "metric-card");
+  assert.equal(slide.recipe, "ornl-title-metric-grid");
+  assert.equal(metricCards.length, metricTexts.length);
+  assert.deepEqual(metricCards.map((node) => node.text), metricTexts);
+  assert.equal(groups.every((group) => slide.nodes.find((node) => node.id === group.id)?.visible === false), true);
+  assert.equal(metricCards.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 16), true);
+  assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("studio-metric-") && component.id.endsWith("-surface")).length, metricTexts.length);
+  assert.equal(studioGeneratedComponents(slide).some((component) => component.id.includes("studio-auto") || component.lineWidthPt > 0), false);
 });
 
 test("process-flow recipe keeps low technical inputs out of the footer and pairs the true output by source order", async () => {

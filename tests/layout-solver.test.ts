@@ -54,6 +54,8 @@ test("optical alignment solver anchors visible text starts without AI coordinate
 
 test("cell-level table solver materializes row, column, and margin changes without content loss", async () => {
   const { bytes, audit, deck, measurement } = await fixture();
+  deck.targetTemplateId = "ornl-16x9-v1";
+  deck.targetTemplateDecisionSource = "user-selected";
   const table = audit.tables[0];
   assert.ok(table.cells?.length && table.rows?.length && table.columns?.length);
   const standard = solveTableLayout({ deck, measurement, tableId: table.id, rationale: "Check the standard ORNL table floor.", variant: "standard" });
@@ -66,7 +68,11 @@ test("cell-level table solver materializes row, column, and margin changes witho
   assert.equal(solved.command.constraints.minimumHorizontalPaddingPt, 6);
   assert.equal(solved.command.constraints.minimumVerticalPaddingPt, 4);
   const proposal = createTableLayoutProposal(deck, "2026-08-12T20:00:00.000Z", solved.command);
-  const output = await buildCleanupProposalPptx(bytes, proposal);
+  const sourceZip = await JSZip.loadAsync(bytes);
+  const sourceSlideXml = await sourceZip.file("ppt/slides/slide1.xml")!.async("text");
+  sourceZip.file("ppt/slides/slide1.xml", sourceSlideXml.replace(/<a:gridCol\b([^>]*)\/>/g, "<a:gridCol$1></a:gridCol>"));
+  const pairedGridSource = new Uint8Array(await sourceZip.generateAsync({ type: "uint8array" }));
+  const output = await buildCleanupProposalPptx(pairedGridSource, proposal);
   const outputZip = await JSZip.loadAsync(output.bytes);
   const slideXml = await outputZip.file("ppt/slides/slide1.xml")!.async("text");
   assert.equal(XMLValidator.validate(slideXml), true);
@@ -116,6 +122,8 @@ test("table solver preserves a PowerPoint-native table that already meets the sh
 
 test("table solver returns a minimum safe-region growth plan for a clipped short table", async () => {
   const { deck, measurement } = await canaryFixture();
+  deck.targetTemplateId = "ornl-16x9-v1";
+  deck.targetTemplateDecisionSource = "user-selected";
   const table = deck.audit!.tables.find((item) => item.slideNumber === 10)!;
   const object = deck.scene!.objects.find((item) => item.sourceLocator.tableId === table.id)!;
   const result = solveTableLayout({ deck, measurement, tableId: table.id, rationale: "Create enough native row height without shrinking type.", variant: "standard" });
@@ -136,6 +144,17 @@ test("table solver returns a minimum safe-region growth plan for a clipped short
   assert.equal(atomic.status, "solved");
   assert.ok(atomic.command);
   assert.ok(Math.abs(atomic.command.rowHeightsEmu.reduce((sum, value) => sum + value, 0) - plan.target.height) <= 1);
+});
+
+test("source-template table solver never grows into unmeasured inherited master furniture", async () => {
+  const { deck, measurement } = await canaryFixture();
+  deck.targetTemplateId = "sponsor-source";
+  deck.targetTemplateDecisionSource = "user-selected";
+  const table = deck.audit!.tables.find((item) => item.slideNumber === 10)!;
+  const object = deck.scene!.objects.find((item) => item.sourceLocator.tableId === table.id)!;
+  const result = solveTableLayout({ deck, measurement, tableId: table.id, rationale: "Preserve the source-template content frame.", variant: "standard" });
+  assert.equal(result.status, "infeasible");
+  assert.equal(recommendedTableGrowthPlan(result, object.id, "Do not enter inherited footer furniture."), undefined);
 });
 
 test("grouped distribution preserves panel-content relationships while equalizing outer gaps", async () => {

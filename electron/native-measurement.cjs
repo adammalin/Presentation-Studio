@@ -272,12 +272,25 @@ function parsePowerPointMeasurement(text, { sourceSha256, generatedAt = new Date
     } else if (kind === "COL") {
       shape.table.columnWidthsPt[(finiteNumber(fields[3]) || 1) - 1] = finiteNumber(fields[4]) || 0;
     } else if (kind === "CELL") {
+      const cellBounds = bounds(fields[5], fields[6], fields[7], fields[8]);
+      const tableRelativeTextBounds = bounds(fields[13], fields[14], fields[15], fields[16]);
+      // PowerPoint's cell TextRange bounds are relative to the table shape,
+      // while the cell shape bounds are slide-relative. Normalize the text
+      // bounds to the cell before exposing the declared cell-relative packet.
+      // Treating the raw table-relative left/top as cell-relative produces
+      // increasingly negative clearance values in later columns.
+      const cellRelativeTextBounds = cellBounds && tableRelativeTextBounds && shape.boundsPt ? {
+        left: shape.boundsPt.left + tableRelativeTextBounds.left - cellBounds.left,
+        top: shape.boundsPt.top + tableRelativeTextBounds.top - cellBounds.top,
+        width: tableRelativeTextBounds.width,
+        height: tableRelativeTextBounds.height,
+      } : tableRelativeTextBounds;
       shape.table.cells.push({
         row: finiteNumber(fields[3]) || 0,
         column: finiteNumber(fields[4]) || 0,
-        boundsPt: bounds(fields[5], fields[6], fields[7], fields[8]),
+        boundsPt: cellBounds,
         marginsPt: margins(fields[9], fields[10], fields[11], fields[12]),
-        renderedTextBoundsPt: bounds(fields[13], fields[14], fields[15], fields[16]),
+        renderedTextBoundsPt: cellRelativeTextBounds,
         textCoordinateSpace: "cell-relative",
         textLength: finiteNumber(fields[17]) || 0,
         lineCount: finiteNumber(fields[18]) || 0,
@@ -326,7 +339,11 @@ async function measurePowerPointNative({ bytes: inputBytes, name = "presentation
     try {
       await runPowerPointAutomationWithStartupRecovery({
         action: "measurement",
-        run: () => execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_MEASUREMENT_SCRIPT, sourcePath, measurementPath], { timeout: 180_000, maxBuffer: 2 * 1024 * 1024 }),
+        // A full 100-200 slide export-acceptance pass can legitimately exceed
+        // three minutes. Interactive slide tools isolate one slide before
+        // calling this adapter, while whole-deck qualification gets a bounded
+        // ten-minute lane instead of being misreported as unavailable.
+        run: () => execFileAsync("/usr/bin/osascript", ["-e", POWERPOINT_MEASUREMENT_SCRIPT, sourcePath, measurementPath], { timeout: 600_000, maxBuffer: 2 * 1024 * 1024 }),
         presentationCount: openPresentationCount,
         quit: quitPowerPointWithoutPresentations,
       });

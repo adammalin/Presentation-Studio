@@ -33,6 +33,7 @@ let mcpServer = null;
 let mcpAddress = null;
 const pendingMcpCommands = new Map();
 let autosaveQueue = Promise.resolve();
+let checkpointQueue = Promise.resolve();
 let preferencesQueue = Promise.resolve();
 let nativeRenderQueue = Promise.resolve();
 const rasterizePdfWithChromium = createChromiumPdfRasterizer(BrowserWindow);
@@ -43,6 +44,15 @@ function runtimePath() {
 
 function recoveryPath(encrypted) {
   return path.join(app.getPath("userData"), "autosave", encrypted ? "current-project.pstudio-secure" : "current-project.pstudio");
+}
+
+function checkpointPath(encrypted, previous = false) {
+  const name = `${previous ? "previous" : "current"}-project-state.${encrypted ? "pstudio-state-secure" : "json"}`;
+  return path.join(app.getPath("userData"), "autosave", name);
+}
+
+function previousRecoveryPath(encrypted) {
+  return path.join(app.getPath("userData"), "autosave", encrypted ? "previous-project.pstudio-secure" : "previous-project.pstudio");
 }
 
 function preferencesPath() {
@@ -163,7 +173,7 @@ function dispatchMcpCommand(operation, input) {
   }
   const id = randomUUID();
   return new Promise((resolve, reject) => {
-    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_qualification_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation);
+    const nativeRenderOperation = ["get_slide_render", "get_slide_render_comparison", "get_template_layout_render", "get_slide_design_work_order", "get_deck_design_work_order", "get_deck_contact_sheet", "get_qualification_contact_sheet", "get_slide_inspection_packet", "get_slide_measurements", "preview_studio_fresh_composition", "get_studio_slide_critique", "repair_studio_objective_issues", "record_studio_visual_critique", "record_proposal_visual_critique", "solve_and_stage_alignment", "solve_and_stage_distribution", "solve_and_stage_safe_region", "solve_and_stage_group_layout", "fit_scene_to_layout", "solve_and_stage_table_layout", "solve_and_stage_text_fit"].includes(operation);
     // A central Studio build deliberately renders and measures every slide in
     // PowerPoint before it becomes the Slides/export authority. Large decks
     // therefore need a deck-scale timeout rather than the single-slide guard.
@@ -245,6 +255,18 @@ async function atomicWrite(target, bytes) {
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   await fs.writeFile(temporary, bytes, { mode: 0o600 });
   await fs.rename(temporary, target);
+}
+
+async function rotateAndAtomicWrite(target, previous, bytes) {
+  try {
+    const temporaryPrevious = `${previous}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.mkdir(path.dirname(previous), { recursive: true });
+    await fs.copyFile(target, temporaryPrevious);
+    await fs.rename(temporaryPrevious, previous);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await atomicWrite(target, bytes);
 }
 
 function filtersFor(kind) {
@@ -467,10 +489,54 @@ function registerIpc() {
 
   ipcMain.handle("project:autosave", async (_event, payload) => {
     const bytes = validateBinary(payload?.bytes);
-    const target = recoveryPath(Boolean(payload?.encrypted));
-    autosaveQueue = autosaveQueue.catch(() => undefined).then(() => atomicWrite(target, bytes));
+    const encrypted = Boolean(payload?.encrypted);
+    const target = recoveryPath(encrypted);
+    autosaveQueue = autosaveQueue.catch(() => undefined).then(() => rotateAndAtomicWrite(target, previousRecoveryPath(encrypted), bytes));
     await autosaveQueue;
     return { recoveryPath: target };
+  });
+
+  ipcMain.handle("project:checkpoint-state", async (_event, payload) => {
+    const bytes = validateBinary(payload?.bytes);
+    if (bytes.byteLength > 50 * 1024 * 1024) throw new Error("The recovery checkpoint exceeds the 50 MB metadata limit.");
+    const encrypted = Boolean(payload?.encrypted);
+    const target = checkpointPath(encrypted);
+    checkpointQueue = checkpointQueue.catch(() => undefined).then(() => rotateAndAtomicWrite(target, checkpointPath(encrypted, true), bytes));
+    await checkpointQueue;
+    return { recoveryPath: target };
+  });
+
+  ipcMain.handle("project:get-autosave-recovery", async () => {
+    if (launchProjectPath) return { available: false, candidates: [] };
+    const candidates = [];
+    for (const encrypted of [false, true]) {
+      for (const previous of [false, true]) {
+        const packagePath = previous ? previousRecoveryPath(encrypted) : recoveryPath(encrypted);
+        try {
+          const [packageBytes, stats] = await Promise.all([fs.readFile(packagePath), fs.stat(packagePath)]);
+          let stateBytes;
+          let statePath = checkpointPath(encrypted);
+          try {
+            stateBytes = await fs.readFile(statePath);
+          } catch (error) {
+            if (error?.code !== "ENOENT") throw error;
+            statePath = checkpointPath(encrypted, true);
+            try { stateBytes = await fs.readFile(statePath); } catch (fallbackError) { if (fallbackError?.code !== "ENOENT") throw fallbackError; }
+          }
+          candidates.push({
+            encrypted,
+            previous,
+            modifiedAt: stats.mtime.toISOString(),
+            package: { name: path.basename(packagePath), filePath: packagePath, bytes: new Uint8Array(packageBytes) },
+            checkpoint: stateBytes ? { name: path.basename(statePath), filePath: statePath, bytes: new Uint8Array(stateBytes) } : undefined,
+          });
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+      }
+    }
+    candidates.sort((left, right) => Date.parse(right.modifiedAt) - Date.parse(left.modifiedAt));
+    return { available: candidates.length > 0, candidates };
   });
 
   ipcMain.handle("app:open-user-guide", async () => {
@@ -626,7 +692,7 @@ async function createWindow() {
         if (ready) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      const removeReady = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.resource-remove') && document.body.innerText.includes('Remove affects only the embedded project copy'))");
+      const removeReady = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.resource-remove') && document.body.innerText.includes('Its original location is never required again.'))");
       if (!removeReady) throw new Error("The project-only Resource removal control did not render.");
     }
     await new Promise((resolve) => setTimeout(resolve, 250));

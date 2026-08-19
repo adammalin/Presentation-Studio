@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createSyntheticLegacyDeck } from "../scripts/create-synthetic-fixture";
-import { bindNativeMeasurement, calculateNativeCellClearances, calculateNativeTextOverflowEdges } from "../src/lib/native-measurement";
+import { bindNativeMeasurement, calculateNativeCellClearances, calculateNativeTextOverflowEdges, remapSingleSlideNativeMeasurement } from "../src/lib/native-measurement";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import type { NativeMeasurementResult } from "../src/lib/desktop";
@@ -18,7 +18,7 @@ const { POWERPOINT_MEASUREMENT_SCRIPT, parsePowerPointMeasurement, nativeMeasure
     status: string;
     authority: string;
     slideCount: number;
-    slides: Array<{ number: number; shapes: Array<{ nativeShapeId?: string; name?: string; text?: { renderedBoundsPt?: { left: number; top: number; width: number; height: number } }; table?: { rowHeightsPt: number[]; columnWidthsPt: number[]; cells: Array<{ renderedTextBoundsPt?: { width: number }; marginsPt?: { left: number } }> } }> }>;
+    slides: Array<{ number: number; shapes: Array<{ nativeShapeId?: string; name?: string; text?: { renderedBoundsPt?: { left: number; top: number; width: number; height: number } }; table?: { rowHeightsPt: number[]; columnWidthsPt: number[]; cells: Array<{ renderedTextBoundsPt?: { left: number; top: number; width: number; height: number }; marginsPt?: { left: number } }> } }> }>;
   };
   nativeMeasurementCapabilities(platform?: string): { available: boolean; adapter: string };
 };
@@ -44,7 +44,7 @@ test("native PowerPoint measurement parser retains rendered text and cell geomet
     "COL\t1\t2\t1\t300",
     "COL\t1\t2\t2\t300",
     "CELL\t1\t2\t1\t1\t51.84\t120\t300\t44\t5\t5\t4\t4\t5\t0\t80\t16\t10\t1\tanchor top",
-    "CELL\t1\t2\t1\t2\t351.84\t120\t300\t44\t5\t5\t4\t4\t5\t0\t60\t16\t8\t1\tanchor top",
+    "CELL\t1\t2\t1\t2\t351.84\t120\t300\t44\t5\t5\t4\t4\t305\t0\t60\t16\t8\t1\tanchor top",
   ].join("\n"), { sourceSha256: "a".repeat(64) });
   assert.equal(parsed.status, "ready");
   assert.equal(parsed.authority, "powerpoint-native");
@@ -56,6 +56,7 @@ test("native PowerPoint measurement parser retains rendered text and cell geomet
   assert.deepEqual(parsed.slides[0].shapes[1].table?.columnWidthsPt, [300, 300]);
   assert.equal(parsed.slides[0].shapes[1].table?.cells[0].marginsPt?.left, 5);
   assert.equal(parsed.slides[0].shapes[1].table?.cells[0].renderedTextBoundsPt?.width, 80);
+  assert.ok(Math.abs((parsed.slides[0].shapes[1].table?.cells[1].renderedTextBoundsPt?.left ?? 0) - 5) < 0.001);
   assert.doesNotMatch(JSON.stringify(parsed), /technical copy/i);
 });
 
@@ -90,6 +91,51 @@ test("native measurements bind by stable PowerPoint shape ID before z-order or p
   assert.equal(bound?.measuredGeometryPt?.left, 300);
 });
 
+test("isolated native measurements remap PowerPoint slide one to the original slide number", () => {
+  const native: NativeMeasurementResult = {
+    status: "ready",
+    adapter: "macos-powerpoint-applescript",
+    authority: "powerpoint-native",
+    slideCount: 1,
+    slides: [{
+      number: 1,
+      shapeCount: 1,
+      shapes: [{ slideNumber: 1, shapeIndex: 1, nativeShapeId: "7", zOrder: 1, boundsPt: { left: 10, top: 20, width: 30, height: 40 }, rotation: 0, hasTextFrame: false, hasTable: false }],
+    }],
+    warnings: [],
+  };
+  const remapped = remapSingleSlideNativeMeasurement(native, 13);
+  assert.equal(remapped.slideCount, 1);
+  assert.equal(remapped.slides[0].number, 13);
+  assert.equal(remapped.slides[0].shapes[0].slideNumber, 13);
+});
+
+test("native measurement binding can return only one requested source slide", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-native-slide-binding-"));
+  const filePath = path.join(directory, "synthetic.pptx");
+  await createSyntheticLegacyDeck(filePath);
+  const audit = await auditPptx(new Uint8Array(await fs.readFile(filePath)));
+  const deck: DeckJob = { id: "native-slide-binding", name: "synthetic.pptx", sourceResourceId: "native-slide-binding-source", sourceSha256: "d".repeat(64), operationScope: "reflow", templateClassification: audit.classification, status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
+  deck.scene = compilePresentationScene({ ...deck, audit });
+  const object = deck.scene.objects.find((candidate) => candidate.slideNumber === 2);
+  assert.ok(object);
+  const native: NativeMeasurementResult = {
+    status: "ready",
+    adapter: "macos-powerpoint-applescript",
+    authority: "powerpoint-native",
+    sourceSha256: deck.sourceSha256,
+    slideCount: 1,
+    slides: [{ number: 2, shapeCount: 1, shapes: [
+      { slideNumber: 2, shapeIndex: 1, nativeShapeId: object.shapeId, name: object.name, zOrder: object.zIndex + 1, boundsPt: { left: 100, top: 100, width: 200, height: 50 }, rotation: 0, hasTextFrame: true, hasTable: false },
+    ] }],
+    warnings: [],
+  };
+  const packet = bindNativeMeasurement(deck, native, { slideNumbers: [2] });
+  assert.ok(packet.objects.length > 0);
+  assert.ok(packet.objects.every((candidate) => candidate.slideNumber === 2));
+  assert.equal(packet.objects.find((candidate) => candidate.objectId === object.id)?.provenance.authority, "powerpoint-native");
+});
+
 test("native measurement binding ignores duplicate legacy scene IDs instead of consuming another PowerPoint shape", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-native-duplicate-"));
   const filePath = path.join(directory, "synthetic.pptx");
@@ -122,7 +168,7 @@ test("native cell clearance retains negative clipping evidence instead of clampi
   assert.deepEqual(clearances, { left: -2, right: -2, top: 4, bottom: 0 });
 });
 
-test("native text overflow uses the inset text region rather than the outer shape edge", () => {
+test("native text overflow tolerates inset and glyph overhang but detects escape from the outer frame", () => {
   const object = {
     objectId: "text",
     shapeId: "1",
@@ -133,7 +179,9 @@ test("native text overflow uses the inset text region rather than the outer shap
     binding: { method: "shape-id" as const, confidence: "high" as const },
     provenance: { authority: "powerpoint-native" as const, adapter: "macos-powerpoint-applescript", confidence: "high" as const, note: "test" },
   };
-  assert.deepEqual(calculateNativeTextOverflowEdges(object), ["left"]);
+  assert.deepEqual(calculateNativeTextOverflowEdges(object), []);
+  object.text.renderedBoundsPt.width = 98;
+  assert.deepEqual(calculateNativeTextOverflowEdges(object), ["right"]);
 });
 
 test("native measurement capabilities keep platform adapters explicit", () => {

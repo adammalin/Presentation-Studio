@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import JSZip from "jszip";
-import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createTableStyleProposal } from "../src/lib/cleanup";
+import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createTableStyleProposal, withDesignerCleanupScope } from "../src/lib/cleanup";
 import { createOrnlDesignProfile, PRESENTATION_DESIGN_STANDARD } from "../src/lib/design-standard";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { buildAuditReport } from "../src/lib/report";
@@ -75,6 +75,15 @@ async function fixtureWithOrnlSlideCopyOnly(): Promise<Uint8Array> {
   return zip.generateAsync({ type: "uint8array" });
 }
 
+async function fixtureWithBlockingExternalImage(): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await fixtureBytes());
+  const relationships = zip.file("ppt/slides/_rels/slide1.xml.rels");
+  assert.ok(relationships);
+  const xml = await relationships.async("text");
+  zip.file("ppt/slides/_rels/slide1.xml.rels", xml.replace("</Relationships>", '<Relationship Id="rIdLinkedImageTest" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.invalid/linked-image.png" TargetMode="External"/></Relationships>'));
+  return zip.generateAsync({ type: "uint8array" });
+}
+
 test("OOXML audit selects the active AlternateContent branch instead of duplicating PowerPoint shapes", async () => {
   const audit = await auditPptx(await alternateContentFixtureBytes());
   const slideObjects = audit.editableObjects.filter((object) => object.slideNumber === 1);
@@ -126,28 +135,70 @@ test("OOXML audit inventories synthetic slides, fonts, and tables", async () => 
   assert.ok(audit.findings.some((finding) => finding.ruleId === "font.legacy.century-gothic"));
   assert.equal(audit.containsMacros, false);
   assert.equal(audit.containsOleObjects, false);
+  assert.equal(audit.containsExternalRelationships, true);
+  assert.equal(audit.externalHyperlinkCount, 1);
+  assert.equal(audit.blockingExternalRelationshipCount, 0);
+  assert.equal(audit.containsBlockingExternalRelationships, false);
+  assert.ok(audit.findings.some((finding) => finding.ruleId === "production.external-hyperlinks"));
+  assert.equal(audit.findings.some((finding) => finding.ruleId === "production.advanced-content"), false);
 });
 
-test("template classification gives sponsor theme identity precedence over ORNL names in slide copy", async () => {
+test("ordinary hyperlinks remain editable while linked media stays blocked", async () => {
+  const hyperlinkBytes = await fixtureBytes();
+  const hyperlinkAudit = await auditPptx(hyperlinkBytes);
+  const revision = "2026-08-18T19:00:00.000Z";
+  const hyperlinkDeck: DeckJob = { id: "deck-hyperlinks", name: "hyperlinks.pptx", sourceResourceId: "resource-hyperlinks", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: hyperlinkAudit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateConfirmedAt: revision, status: "ready-for-cleanup", audit: hyperlinkAudit, protectedSlideNumbers: [] };
+  const proposal = createDesignerCleanupProposal(hyperlinkDeck, revision);
+  const preview = await buildCleanupProposalPptx(hyperlinkBytes, proposal);
+  const beforeZip = await JSZip.loadAsync(hyperlinkBytes);
+  const afterZip = await JSZip.loadAsync(preview.bytes);
+  const beforeRelationships = await beforeZip.file("ppt/slides/_rels/slide1.xml.rels")?.async("text");
+  const afterRelationships = await afterZip.file("ppt/slides/_rels/slide1.xml.rels")?.async("text");
+  assert.equal(afterRelationships, beforeRelationships);
+  assert.match(afterRelationships ?? "", /relationships\/hyperlink/);
+  assert.match(afterRelationships ?? "", /TargetMode="External"/);
+
+  const linkedAudit = await auditPptx(await fixtureWithBlockingExternalImage());
+  assert.equal(linkedAudit.externalHyperlinkCount, 1);
+  assert.equal(linkedAudit.blockingExternalRelationshipCount, 1);
+  assert.equal(linkedAudit.containsBlockingExternalRelationships, true);
+  const linkedDeck: DeckJob = { ...hyperlinkDeck, id: "deck-linked-media", audit: linkedAudit };
+  assert.throws(() => createDesignerCleanupProposal(linkedDeck, revision), /externally linked content/i);
+});
+
+test("template classification preserves sponsor source identity while ORNL remains the automatic design target", async () => {
   const audit = await auditPptx(await fixtureWithOrnlSlideCopyAndSponsorTheme());
   assert.equal(audit.classification, "sponsor");
   assert.ok(audit.classificationEvidence.some((item) => /theme identity.*sponsor/i.test(item)));
   const base: DeckJob = { id: "sponsor-routing", name: "sponsor.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "cleanup-only", templateClassification: "older-or-modified-ornl", targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", targetTemplateConfirmedAt: "2026-08-18T12:00:00.000Z", designProfile: createOrnlDesignProfile("automatic-default", "2026-08-18T12:00:00.000Z"), status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
   const routed = deckWithAutomaticTemplateRouting({ deck: base, audit, adoptedAt: "2026-08-18T13:00:00.000Z" });
-  assert.equal(routed.targetTemplateId, "sponsor-source");
-  assert.equal(routed.targetTemplateDecisionSource, "automatic-source-preservation");
-  assert.equal(routed.designProfile, undefined);
-  assert.equal(deckTemplateWorkflow(routed), "source-template-cleanup");
-  const proposal = createDesignerCleanupProposal(routed, "2026-08-18T13:00:00.000Z");
-  assert.ok(proposal.changes.some((change) => change.kind === "alignment"));
-  assert.equal(proposal.changes.some((change) => ["font-family", "table-style", "text-style", "decoration", "layout-remap"].includes(change.kind)), false);
-  assert.throws(() => createFontCleanupProposal(routed, "2026-08-18T13:00:00.000Z"), /ORNL-specific typography/i);
+  assert.equal(routed.targetTemplateId, "ornl-16x9-v1");
+  assert.equal(routed.targetTemplateDecisionSource, "automatic-default");
+  assert.ok(routed.designProfile);
+  assert.equal(deckTemplateWorkflow(routed), "ornl-studio");
+  assert.equal(routed.status, "ready-for-cleanup");
 });
 
-test("ordinary ORNL slide copy alone does not silently select the ORNL template", async () => {
+test("Designer Cleanup enables source-bound sponsor reflow without converting its template", async () => {
+  const audit = await auditPptx(await fixtureWithOrnlSlideCopyAndSponsorTheme());
+  const revision = "2026-08-18T12:00:00.000Z";
+  const deck: DeckJob = { id: "sponsor-designer", name: "sponsor.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "cleanup-only", templateClassification: "sponsor", targetTemplateId: "sponsor-source", targetTemplateDecisionSource: "user-selected", targetTemplateConfirmedAt: revision, status: "audited", audit, protectedSlideNumbers: [] };
+  const designerDeck = withDesignerCleanupScope(deck);
+  assert.equal(designerDeck.operationScope, "reflow");
+  assert.equal(designerDeck.targetTemplateId, "sponsor-source");
+  assert.equal(designerDeck.templateClassification, "sponsor");
+  const proposal = createDesignerCleanupProposal(designerDeck, revision);
+  assert.equal(proposal.changes.some((change) => change.kind === "font-family" || change.kind === "table-style"), false);
+});
+
+test("ordinary ORNL slide copy alone does not alter source classification while ORNL remains the product default", async () => {
   const audit = await auditPptx(await fixtureWithOrnlSlideCopyOnly());
   assert.equal(audit.classification, "unknown");
   assert.ok(audit.classificationEvidence.some((item) => /ordinary slide copy|package copy/i.test(item)));
+  const deck: DeckJob = { id: "unknown-source", name: "unknown.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "cleanup-only", templateClassification: "unknown", status: "audited", audit, protectedSlideNumbers: [] };
+  const routed = deckWithAutomaticTemplateRouting({ deck, audit, adoptedAt: "2026-08-18T13:00:00.000Z" });
+  assert.equal(routed.targetTemplateId, "ornl-16x9-v1");
+  assert.equal(deckTemplateWorkflow(routed), "ornl-studio");
 });
 
 test("an explicit user-selected ORNL conversion survives later sponsor detection", async () => {
@@ -157,6 +208,15 @@ test("an explicit user-selected ORNL conversion survives later sponsor detection
   assert.equal(routed.targetTemplateId, "ornl-16x9-v1");
   assert.equal(routed.targetTemplateDecisionSource, "user-selected");
   assert.equal(deckTemplateWorkflow(routed), "ornl-studio");
+});
+
+test("an explicit user-selected source-template override survives automatic ORNL routing", async () => {
+  const audit = await auditPptx(await fixtureWithOrnlSlideCopyAndSponsorTheme());
+  const deck: DeckJob = { id: "explicit-source", name: "sponsor.pptx", sourceResourceId: "resource", sourceSha256: "0".repeat(64), operationScope: "reflow", templateClassification: "sponsor", targetTemplateId: "sponsor-source", targetTemplateDecisionSource: "user-selected", targetTemplateConfirmedAt: "2026-08-18T12:00:00.000Z", status: "audited", audit, protectedSlideNumbers: [] };
+  const routed = deckWithAutomaticTemplateRouting({ deck, audit, adoptedAt: "2026-08-18T13:00:00.000Z" });
+  assert.equal(routed.targetTemplateId, "sponsor-source");
+  assert.equal(routed.targetTemplateDecisionSource, "user-selected");
+  assert.equal(deckTemplateWorkflow(routed), "source-template-cleanup");
 });
 
 test("object geometry proposals move native objects while preserving exact slide and table content", async () => {

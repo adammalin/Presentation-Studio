@@ -52,17 +52,35 @@ export interface NativeMeasurementPacket {
   warnings: string[];
 }
 
+export function remapSingleSlideNativeMeasurement(native: NativeMeasurementResult, slideNumber: number): NativeMeasurementResult {
+  if (native.status !== "ready" || native.authority !== "powerpoint-native") return native;
+  if (native.slides.length !== 1) throw new Error(`Expected one isolated PowerPoint slide measurement, received ${native.slides.length}.`);
+  const slide = native.slides[0];
+  return {
+    ...native,
+    slideCount: 1,
+    slides: [{
+      ...slide,
+      number: slideNumber,
+      shapes: slide.shapes.map((shape) => ({ ...shape, slideNumber })),
+    }],
+  };
+}
+
 export function calculateNativeTextOverflowEdges(object: BoundObjectMeasurement, tolerancePt = .5): Array<"left" | "top" | "right" | "bottom"> {
   const box = object.measuredGeometryPt;
   const text = object.text?.renderedBoundsPt;
-  const margins = object.text?.marginsPt;
-  if (!box || !text || !margins || object.text?.coordinateSpace !== "slide") return [];
-  const inner = { left: box.left + margins.left, top: box.top + margins.top, right: box.left + box.width - margins.right, bottom: box.top + box.height - margins.bottom };
+  if (!box || !text || object.text?.coordinateSpace !== "slide") return [];
+  // TextRange2 bounds include normal glyph overhang and can extend into the
+  // frame's own inset area without being clipped. Overflow means the rendered
+  // text escapes the outer PowerPoint frame, not merely its margin box.
+  const effectiveTolerance = Math.max(tolerancePt, object.text.verticalAnchor.toLowerCase().includes("middle") ? 2 : .75);
+  const frame = { left: box.left, top: box.top, right: box.left + box.width, bottom: box.top + box.height };
   return [
-    text.left < inner.left - tolerancePt ? "left" as const : undefined,
-    text.top < inner.top - tolerancePt ? "top" as const : undefined,
-    text.left + text.width > inner.right + tolerancePt ? "right" as const : undefined,
-    text.top + text.height > inner.bottom + tolerancePt ? "bottom" as const : undefined,
+    text.left < frame.left - effectiveTolerance ? "left" as const : undefined,
+    text.top < frame.top - effectiveTolerance ? "top" as const : undefined,
+    text.left + text.width > frame.right + effectiveTolerance ? "right" as const : undefined,
+    text.top + text.height > frame.bottom + effectiveTolerance ? "bottom" as const : undefined,
   ].filter((edge): edge is "left" | "top" | "right" | "bottom" => Boolean(edge));
 }
 
@@ -164,14 +182,16 @@ function fallbackObject(deck: DeckJob, object: PresentationSceneObject): BoundOb
   };
 }
 
-export function bindNativeMeasurement(deck: DeckJob, native?: NativeMeasurementResult): NativeMeasurementPacket {
+export function bindNativeMeasurement(deck: DeckJob, native?: NativeMeasurementResult, options?: { slideNumbers?: number[] }): NativeMeasurementPacket {
   if (!deck.audit || !deck.scene) throw new Error("A current audit and scene are required before binding measurements.");
   const generatedAt = native?.generatedAt ?? new Date().toISOString();
   const nativeReady = native?.status === "ready" && native.authority === "powerpoint-native";
   const warnings = [...(native?.warnings ?? [])];
   const used = new Set<string>();
   const seenObjectIds = new Set<string>();
+  const requestedSlides = options?.slideNumbers ? new Set(options.slideNumbers) : undefined;
   const sceneObjects = deck.scene.objects.filter((object) => {
+    if (requestedSlides && !requestedSlides.has(object.slideNumber)) return false;
     if (seenObjectIds.has(object.id)) {
       warnings.push(`Duplicate scene object ${object.id} was ignored during native binding; rebuild the scene from the embedded source revision.`);
       return false;

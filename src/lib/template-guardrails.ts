@@ -3,7 +3,7 @@ import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 
 const ORNL_TEMPLATE_CLASSIFICATIONS = new Set(["current-ornl", "older-or-modified-ornl", "mixed"]);
 
-type OrnlTemplateDeck = Pick<DeckJob, "targetTemplateId" | "templateClassification" | "audit">;
+type OrnlTemplateDeck = Pick<DeckJob, "targetTemplateId" | "templateClassification" | "audit" | "protectedSlideNumbers">;
 
 function usesOrnlTemplate(deck: Pick<DeckJob, "targetTemplateId" | "templateClassification">): boolean {
   return deck.targetTemplateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id
@@ -33,14 +33,17 @@ export function isSacredOrnlClosingSlide(deck: OrnlTemplateDeck, slideNumber: nu
 }
 
 export function isProtectedOrnlTemplateSlide(deck: OrnlTemplateDeck, slideNumber: number): boolean {
-  return isSacredOrnlTitleSlide(deck, slideNumber) || isSacredOrnlClosingSlide(deck, slideNumber);
+  return deck.targetTemplateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id
+    && (deck.protectedSlideNumbers?.includes(slideNumber) || isSacredOrnlTitleSlide(deck, slideNumber) || isSacredOrnlClosingSlide(deck, slideNumber));
 }
 
 export function assertSacredOrnlTitleSlideIntegrity(deck: OrnlTemplateDeck, scene: StudioWebScene): void {
   const protectedSlides = scene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber));
-  const changed = protectedSlides.find((slide) => slide.recipe !== "source");
+  const changed = protectedSlides.find((slide) => isSacredOrnlTitleSlide(deck, slide.slideNumber) || isSacredOrnlClosingSlide(deck, slide.slideNumber)
+    ? slide.recipe !== "source"
+    : slide.recipe !== "template-layout" || !slide.targetLayoutId);
   if (changed) {
-    throw new Error(`The existing ORNL template composition on slide ${changed.slideNumber} is sacred and must remain source-preserved. Restore it to Source geometry; do not recompose, restyle, move, resize, or replace its approved template artwork.`);
+    throw new Error(`The approved ORNL template composition on slide ${changed.slideNumber} is sacred. Restore its approved source or converted-template layout; do not recompose, restyle, move, resize, or replace its template artwork.`);
   }
 }
 

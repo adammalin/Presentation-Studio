@@ -1,6 +1,7 @@
 import type { DeckJob, TableLayoutCommand } from "../types";
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import type { NativeMeasurementPacket } from "./native-measurement";
+import { deckTemplateWorkflow } from "./template-routing";
 
 const EMU_PER_POINT = 12_700;
 
@@ -64,9 +65,15 @@ export function solveTableLayout(input: {
   if (!object.operations.resize || !object.operations.editTableStyle || object.protected) throw new Error("The requested table is protected or is not safely editable in the current scene.");
   const dense = input.variant === "dense-technical";
   const variant = dense ? PRESENTATION_DESIGN_STANDARD.tableVariants.denseTechnical : PRESENTATION_DESIGN_STANDARD.tableVariants.standard;
-  const minimumFontPt = variant.bodyFontSizePt;
-  const horizontalPaddingPt = variant.horizontalPaddingPt;
-  const verticalPaddingPt = variant.verticalPaddingPt;
+  const sourceTemplateCleanup = deckTemplateWorkflow(deck) === "source-template-cleanup";
+  const measuredCellsWithText = measuredObject.table.cells.filter((cell) => cell.textLength > 0);
+  const observedHorizontalMargins = measuredCellsWithText.flatMap((cell) => cell.marginsPt ? [cell.marginsPt.left, cell.marginsPt.right] : []).filter((value) => value > 0);
+  const observedVerticalMargins = measuredCellsWithText.flatMap((cell) => cell.marginsPt ? [cell.marginsPt.top, cell.marginsPt.bottom] : []).filter((value) => value > 0);
+  const minimumObservedFont = Math.min(...(inventory.cells ?? []).flatMap((cell) => cell.fontSizes).filter((value) => value > 0), Number.POSITIVE_INFINITY);
+  const minimumFontPt = sourceTemplateCleanup && Number.isFinite(minimumObservedFont) ? minimumObservedFont : variant.bodyFontSizePt;
+  const horizontalPaddingPt = sourceTemplateCleanup && observedHorizontalMargins.length ? Math.min(...observedHorizontalMargins) : variant.horizontalPaddingPt;
+  const verticalPaddingPt = sourceTemplateCleanup && observedVerticalMargins.length ? Math.min(...observedVerticalMargins) : variant.verticalPaddingPt;
+  const resolvedFloorLabel = sourceTemplateCleanup ? "source-template" : dense ? "dense technical" : "standard";
   const measuredWidthPt = measuredObject.measuredGeometryPt.width;
   const measuredHeightPt = measuredObject.measuredGeometryPt.height;
   const widthPt = input.targetBoundsPt?.width ?? measuredWidthPt;
@@ -94,9 +101,8 @@ export function solveTableLayout(input: {
   const minimumRequiredHeightPt = rowMinimums.reduce((sum, value) => sum + value, 0);
   const reasons: string[] = [];
   const recommendations: string[] = [];
-  const minimumObservedFont = Math.min(...(inventory.cells ?? []).flatMap((cell) => cell.fontSizes).filter((value) => value > 0), Number.POSITIVE_INFINITY);
   if (minimumObservedFont < minimumFontPt) {
-    reasons.push(`The table already contains ${minimumObservedFont} pt text, below the ${minimumFontPt} pt ${dense ? "dense technical" : "standard"} floor.`);
+    reasons.push(`The table already contains ${minimumObservedFont} pt text, below the ${minimumFontPt} pt ${resolvedFloorLabel} floor.`);
     recommendations.push("Increase the table region, reduce surrounding content, or use a continuation slide instead of shrinking type further.");
   }
   if (minimumRequiredWidthPt > widthPt + 0.5) {
@@ -110,10 +116,16 @@ export function solveTableLayout(input: {
   const slideWidthPt = deck.audit.slideSize.width / EMU_PER_POINT;
   const slideHeightPt = deck.audit.slideSize.height / EMU_PER_POINT;
   const safeMarginPt = PRESENTATION_DESIGN_STANDARD.defaults.geometry.safeMarginPt;
-  const targetWidthPt = Math.max(widthPt, minimumRequiredWidthPt);
-  const targetHeightPt = Math.max(heightPt, minimumRequiredHeightPt);
+  const safeWidthPt = slideWidthPt - safeMarginPt * 2;
+  const safeHeightPt = slideHeightPt - safeMarginPt * 2;
+  // A growth plan may also trim an existing safe-margin violation when the
+  // measured content minimum still fits. Keeping the oversized current width
+  // previously suppressed an otherwise feasible height repair.
+  const targetWidthPt = Math.min(Math.max(widthPt, minimumRequiredWidthPt), safeWidthPt);
+  const targetHeightPt = Math.min(Math.max(heightPt, minimumRequiredHeightPt), safeHeightPt);
   const fontFloorFailure = minimumObservedFont < minimumFontPt;
-  const recommendedBoundsPt = !fontFloorFailure && targetWidthPt <= slideWidthPt - safeMarginPt * 2 && targetHeightPt <= slideHeightPt - safeMarginPt * 2
+  const sourceGrowthAllowed = !sourceTemplateCleanup || targetWidthPt <= widthPt + .1 && targetHeightPt <= heightPt + .1;
+  const recommendedBoundsPt = !fontFloorFailure && sourceGrowthAllowed && minimumRequiredWidthPt <= safeWidthPt && minimumRequiredHeightPt <= safeHeightPt
     ? {
       left: Math.max(safeMarginPt, Math.min(measuredObject.measuredGeometryPt.left, slideWidthPt - safeMarginPt - targetWidthPt)),
       top: Math.max(safeMarginPt, Math.min(measuredObject.measuredGeometryPt.top, slideHeightPt - safeMarginPt - targetHeightPt)),

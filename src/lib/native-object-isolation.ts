@@ -114,6 +114,32 @@ export interface NativeObjectIsolationReceipt {
   hiddenShapeIds: string[];
 }
 
+export interface NativeSlideIsolationReceipt {
+  slideNumber: number;
+}
+
+/**
+ * Produces a private one-slide view of an existing PowerPoint package without
+ * renumbering its native slide part or changing any slide relationships. This
+ * keeps PowerPoint-native inspection bounded for large decks while retaining
+ * the exact master, layout, theme, media, notes, hyperlink, and object graph
+ * required by the selected slide.
+ */
+export async function isolateNativePowerPointSlide(input: { sourceBytes: Uint8Array; slideNumber: number }): Promise<{ bytes: Uint8Array; receipt: NativeSlideIsolationReceipt }> {
+  if (!Number.isInteger(input.slideNumber) || input.slideNumber < 1) throw new Error("Native slide isolation requires a positive source slide number.");
+  const zip = await JSZip.loadAsync(input.sourceBytes, { checkCRC32: false });
+  const slidePart = `ppt/slides/slide${input.slideNumber}.xml`;
+  const presentationEntry = zip.file("ppt/presentation.xml");
+  const relationshipsEntry = zip.file("ppt/_rels/presentation.xml.rels");
+  if (!zip.file(slidePart) || !presentationEntry || !relationshipsEntry) throw new Error("The PowerPoint package is missing the requested slide or presentation metadata.");
+  const relationshipId = slideRelationshipId(await relationshipsEntry.async("text"), input.slideNumber);
+  zip.file("ppt/presentation.xml", keepOnlySlide(await presentationEntry.async("text"), relationshipId));
+  const application = zip.file("docProps/app.xml");
+  if (application) zip.file("docProps/app.xml", (await application.async("text")).replace(/<Slides>\d+<\/Slides>/i, "<Slides>1</Slides>"));
+  const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return { bytes, receipt: { slideNumber: input.slideNumber } };
+}
+
 /**
  * Produces a private, one-visible-slide PowerPoint render source in which only
  * the requested top-level source shapes remain visible. The original package

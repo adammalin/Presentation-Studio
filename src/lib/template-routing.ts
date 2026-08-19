@@ -6,32 +6,17 @@ export type DeckTemplateWorkflow = "ornl-studio" | "source-template-cleanup" | "
 export function deckTemplateWorkflow(deck: Pick<DeckJob, "templateClassification" | "targetTemplateId" | "targetTemplateDecisionSource">): DeckTemplateWorkflow {
   if (deck.targetTemplateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id) return "ornl-studio";
   if (deck.targetTemplateDecisionSource === "automatic-source-preservation" || ["sponsor-source", "custom-source"].includes(deck.targetTemplateId ?? "")) return "source-template-cleanup";
-  if (["sponsor", "custom"].includes(deck.templateClassification)) return "source-template-cleanup";
-  if (["current-ornl", "older-or-modified-ornl"].includes(deck.templateClassification)) return "ornl-studio";
+  if (["current-ornl", "older-or-modified-ornl", "sponsor", "custom", "mixed", "unknown"].includes(deck.templateClassification)) return "ornl-studio";
   return "template-decision-required";
 }
 
-function automaticTarget(classification: TemplateClassification, adoptedAt: string): Partial<DeckJob> {
-  if (["current-ornl", "older-or-modified-ornl"].includes(classification)) return {
+function automaticTarget(_classification: TemplateClassification, adoptedAt: string): Partial<DeckJob> {
+  return {
     targetTemplateId: PRESENTATION_DESIGN_STANDARD.defaults.template.id,
     targetTemplateConfirmedAt: adoptedAt,
     targetTemplateDecisionSource: "automatic-default",
     designProfile: createOrnlDesignProfile("automatic-default", adoptedAt),
     status: "ready-for-cleanup",
-  };
-  if (classification === "sponsor" || classification === "custom") return {
-    targetTemplateId: classification === "sponsor" ? "sponsor-source" : "custom-source",
-    targetTemplateConfirmedAt: adoptedAt,
-    targetTemplateDecisionSource: "automatic-source-preservation",
-    designProfile: undefined,
-    status: "audited",
-  };
-  return {
-    targetTemplateId: undefined,
-    targetTemplateConfirmedAt: undefined,
-    targetTemplateDecisionSource: undefined,
-    designProfile: undefined,
-    status: "needs-template-decision",
   };
 }
 

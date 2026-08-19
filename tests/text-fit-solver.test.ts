@@ -34,7 +34,7 @@ test("measured text-fit solver grows a frame without asking AI to invent geometr
   assert.equal(solved.diagnostics.nativeOverflow, true);
 });
 
-test("native overflow detection measures against the real text region inside frame margins", async () => {
+test("native overflow detection tolerates normal inset overhang but catches text outside the outer frame", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-text-bounds-"));
   const filePath = path.join(directory, "synthetic.pptx");
   await createSyntheticLegacyDeck(filePath);
@@ -47,5 +47,7 @@ test("native overflow detection measures against the real text region inside fra
   const box = measured.measuredGeometryPt!;
   const margins = measured.text!.marginsPt!;
   measured.text = { ...measured.text!, renderedBoundsPt: { left: box.left + margins.left - 1, top: box.top + margins.top, width: 20, height: 10 }, coordinateSpace: "slide" };
+  assert.deepEqual(nativeTextFrameOverflowEdges(measured), []);
+  measured.text = { ...measured.text!, renderedBoundsPt: { left: box.left - 3, top: box.top + margins.top, width: 20, height: 10 }, coordinateSpace: "slide" };
   assert.deepEqual(nativeTextFrameOverflowEdges(measured), ["left"]);
 });

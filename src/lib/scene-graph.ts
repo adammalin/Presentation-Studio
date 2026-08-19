@@ -186,7 +186,7 @@ export function compilePresentationScene(input: SceneCompileInput): Presentation
   const blockingFeatures: Array<"macros" | "ole-objects" | "external-relationships"> = [];
   if (input.audit.containsMacros) blockingFeatures.push("macros");
   if (input.audit.containsOleObjects) blockingFeatures.push("ole-objects");
-  if (input.audit.containsExternalRelationships) blockingFeatures.push("external-relationships");
+  if (input.audit.containsBlockingExternalRelationships) blockingFeatures.push("external-relationships");
   const templateBinding = {
     sourceClassification: input.templateClassification,
     targetTemplateId: input.targetTemplateId,

@@ -5,6 +5,7 @@ import { calculateSlideDesignMetrics } from "./design-metrics";
 import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import { rankLayoutCompatibility, type LayoutContentProfile, type TemplateLayoutIntent } from "./layout-semantics";
 import type { TemplateCatalog } from "./template-catalog";
+import { deckTemplateWorkflow } from "./template-routing";
 
 export const DESIGN_WORK_ORDER_SCHEMA = "presentation-studio/design-work-order" as const;
 export const DESIGN_WORK_ORDER_VERSION = 1 as const;
@@ -113,8 +114,10 @@ export function buildSlideDesignWorkOrder(input: {
   const slide = deck.audit.slides.find((item) => item.number === slideNumber);
   const sceneSlide = deck.scene.slides.find((item) => item.number === slideNumber);
   if (!slide || !sceneSlide) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
+  const templateWorkflow = deckTemplateWorkflow(deck);
+  const sourceTemplateCleanup = templateWorkflow === "source-template-cleanup";
   const profile = contentProfileForSlide(deck, slideNumber);
-  const ranked = rankLayoutCompatibility(templateCatalog.layouts, profile).slice(0, 6).map((result) => {
+  const ranked = sourceTemplateCleanup ? [] : rankLayoutCompatibility(templateCatalog.layouts, profile).slice(0, 6).map((result) => {
     const layout = templateCatalog.layouts.find((item) => item.id === result.layoutId)!;
     return { ...result, layout: { id: layout.id, name: layout.name, sourcePart: layout.sourcePart, category: layout.category, semantic: layout.semantic } };
   });
@@ -186,7 +189,9 @@ export function buildSlideDesignWorkOrder(input: {
       mustPreserve: ["exact visible wording", "technical meaning", "native tables/charts/equations", "source media identity", "notes/comments/relationships", "slide count and order"],
       forbidden: ["rewriting", "omitting approved content", "silent type shrink", "flattening supported objects", "fabricated icons/images/data/claims", "browser-only effects without PowerPoint representation"],
     },
-    communicationJob: `Improve slide ${slideNumber} as a restrained ORNL technical presentation slide while preserving every approved word and technical relationship.`,
+    communicationJob: sourceTemplateCleanup
+      ? `Improve slide ${slideNumber} within its detected sponsor/custom source design system. Preserve the source master, native layout, artwork, theme, type system, and every approved word and technical relationship.`
+      : `Improve slide ${slideNumber} as a restrained ORNL technical presentation slide while preserving every approved word and technical relationship.`,
     contentProfile: profile,
     objects,
     tables,
@@ -203,8 +208,24 @@ export function buildSlideDesignWorkOrder(input: {
     submittedThreads: submittedThreads.map((thread) => ({ id: thread.id, baseRevision: thread.baseRevision, anchor: thread.anchor, comment: thread.comment, status: thread.status })),
     layoutCandidates: ranked,
     currentVisualEvidence,
-    designRules: {
+    designRules: sourceTemplateCleanup ? {
+      expression: "source-template-restrained",
+      templateWorkflow,
+      sourceTemplatePolicy: PRESENTATION_DESIGN_STANDARD.importedTemplateRouting.sponsorAndCustomPolicy,
+      relationshipPolicy: PRESENTATION_DESIGN_STANDARD.importedTemplateRouting.relationshipPolicy,
+      precisionLayout: PRESENTATION_DESIGN_STANDARD.precisionLayout,
+      geometry: PRESENTATION_DESIGN_STANDARD.defaults.geometry,
+      semanticVisualPolicy: PRESENTATION_DESIGN_STANDARD.semanticVisualPolicy,
+      preservationRules: PRESENTATION_DESIGN_STANDARD.preservationRules,
+      collaborationRules: PRESENTATION_DESIGN_STANDARD.collaborationRules,
+      tableRules: PRESENTATION_DESIGN_STANDARD.tableRules,
+      everySlideChecklist: PRESENTATION_DESIGN_STANDARD.everySlideChecklist,
+      visualQaLoop: PRESENTATION_DESIGN_STANDARD.visualQaLoop,
+      reviewOutput: PRESENTATION_DESIGN_STANDARD.reviewOutput,
+      forbiddenCrossTemplateOperations: ["ORNL font cleanup", "ORNL table styling", "ORNL decoration", "Template Pack layout remap", "ORNL Studio recipe", "fresh ORNL composition"],
+    } : {
       expression: "restrained",
+      templateWorkflow,
       precisionLayout: PRESENTATION_DESIGN_STANDARD.precisionLayout,
       typography: PRESENTATION_DESIGN_STANDARD.defaults.typography,
       palette: PRESENTATION_DESIGN_STANDARD.defaults.palette,
@@ -221,7 +242,15 @@ export function buildSlideDesignWorkOrder(input: {
       visualQaLoop: PRESENTATION_DESIGN_STANDARD.visualQaLoop,
       reviewOutput: PRESENTATION_DESIGN_STANDARD.reviewOutput,
     },
-    requiredSequence: [
+    requiredSequence: sourceTemplateCleanup ? [
+      "Inspect the authoritative Current render and every structured object.",
+      "Treat the source theme, master, native layout, repeated components, and PowerPoint pixels as the governing design system.",
+      "Diagnose hierarchy, optical alignment, fit, balance, tables, figures, and source-template consistency using PowerPoint-native bounds; do not estimate point geometry from pixels.",
+      "Use only source-bound alignment, distribution, safe-region, measured text-fit, geometry, and table-layout operations; do not use ORNL Template Pack layouts, recipes, decoration, typography, or table styling.",
+      "Stage one bounded atomic transaction without rewriting content or changing the source template.",
+      "Materialize and render the Proposal through Microsoft PowerPoint.",
+      "Compare Current and Proposal, reject regressions, and revise until the proposal is materially better or record approved-as-is evidence.",
+    ] : [
       "Inspect the authoritative Current render and every structured object.",
       "Diagnose hierarchy, optical text alignment, fit, visual balance, table/figure treatment, and layout compatibility using PowerPoint-native bounds where available; do not estimate point geometry from pixels.",
       "Classify the slide into one shared layout recipe and compose it from the named components; do not invent a new spacing system for the slide.",
@@ -232,7 +261,9 @@ export function buildSlideDesignWorkOrder(input: {
       "Compare Current and Proposal, reject regressions, and revise until the proposal is materially better or record approved-as-is evidence.",
     ],
     pauseOnlyWhen: PRESENTATION_DESIGN_STANDARD.askOnlyWhen,
-    definitionOfDone: "The native Proposal render is visibly stronger than Current, every approved word and native technical object remains present, no fit/collision/safe-area regression is known, and the result stays editable in PowerPoint.",
+    definitionOfDone: sourceTemplateCleanup
+      ? "The native Proposal render is visibly stronger and more consistent within the detected source design system, every approved word and native technical object remains present, the source master/layout/theme remains intact, no fit/collision/safe-area regression is known, and the result stays editable in PowerPoint."
+      : "The native Proposal render is visibly stronger than Current, every approved word and native technical object remains present, no fit/collision/safe-area regression is known, and the result stays editable in PowerPoint.",
   };
 }
 

@@ -5,7 +5,7 @@ import { PresentationAppClient, PresentationAppUnavailableError } from "./presen
 import { DESIGN_CONTRACT, designContractMessage } from "./design-contract.mjs";
 import { stripImagePayloads } from "./image-payload.mjs";
 
-const server = new McpServer({ name: "presentation-studio-local", version: "0.3.0" });
+const server = new McpServer({ name: "presentation-studio-local", version: "0.3.1" });
 const client = new PresentationAppClient();
 
 function success(result, message) {
@@ -65,10 +65,21 @@ server.registerTool("get_app_status", {
 
 server.registerTool("list_decks", {
   title: "List presentation review jobs",
-  description: "List deck IDs, names, operation scopes, detected template classification, target template, decision source, resolved templateWorkflow, audit counts, status, and the exact updatedAt stale-write guard. Always obey templateWorkflow before choosing tools: source-template-cleanup preserves sponsor/custom masters through source-bound proposals; ornl-studio permits ORNL recipes/fresh composition; template-decision-required must be resolved first. Requires visible AI session access and returns no slide text or source files.",
+  description: "List deck IDs, names, operation scopes, detected source-template classification, target template, decision source, resolved templateWorkflow, audit counts, status, and the exact updatedAt stale-write guard. ORNL is the automatic target unless the user explicitly selected preserve-source. Always obey templateWorkflow before choosing tools: source-template-cleanup preserves sponsor/custom masters through source-bound proposals; ornl-studio requires ORNL recipes/fresh composition; template-decision-required must be resolved first. Requires visible AI session access and returns no slide text or source files.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => call("list_decks", {}, (result) => `Read ${result.decks.length} deck review job${result.decks.length === 1 ? "" : "s"}.`));
+
+server.registerTool("set_deck_template_target", {
+  title: "Set a deck's design target",
+  description: "Explicitly set the current deck to the default ORNL Studio workflow or preserve its detected source template. ORNL is the product default and should be selected without asking unless the user explicitly requests another brand or source-template preservation. Changing the target clears stale proposals and Studio compositions but never changes source bytes, saves, or exports.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    expectedUpdatedAt: z.string().datetime(),
+    target: z.enum(["ornl-default", "preserve-source"]),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+}, (input) => call("set_deck_template_target", input, (result) => `${result.deck.name} now targets ${result.deck.targetTemplateId}. Source PowerPoint bytes remain unchanged.`));
 
 server.registerTool("get_deck_scene_summary", {
   title: "Read a deck's hybrid scene summary",
@@ -160,7 +171,7 @@ server.registerTool("record_studio_visual_critique", {
 
 server.registerTool("build_studio_presentation", {
   title: "Build the central Studio presentation",
-  description: "Build every slide from the one persisted Studio Web Scene, including converted ORNL Template Pack artwork, into one editable PowerPoint candidate. The operation rejects source-only slides, incomplete exact-content mapping, missing media, unsupported native internals, changed text/table content, PowerPoint text overflow, or non-authoritative rendering. On success, the Slides tab, comments, and later export all point to this same scene revision. This prepares but does not save or export a file.",
+  description: "Build every slide from the one persisted Studio Web Scene, including converted ORNL Template Pack artwork, into one editable PowerPoint candidate. The operation rejects source-only slides, incomplete exact-content mapping, missing media, unsupported native internals, changed text/table content, PowerPoint text overflow, or non-authoritative rendering. On success, the Slides tab, comments, and later export all point to this same scene revision. The project revision is crash-checkpointed automatically; this does not save or export a user-named file.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -232,7 +243,7 @@ server.registerTool("get_resource_preview", {
 
 server.registerTool("create_studio_presentation", {
   title: "Create a source-grounded native Studio presentation",
-  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from source excerpts and image Resources automatically shared by the app's single AI access switch. The first slide must use an approved ORNL title layout; later slides use shared Studio recipes or named converted Template Pack layouts. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene and leaves it visible for review; it does not save a project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
+  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from source excerpts and image Resources automatically shared by the app's single AI access switch. The first slide must use an approved ORNL title layout; later slides use shared Studio recipes or named converted Template Pack layouts. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene, crash-checkpoints that project revision, and leaves it visible for review; it does not save a user-named project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
   inputSchema: {
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     name: z.string().min(1).max(240),
@@ -242,7 +253,7 @@ server.registerTool("create_studio_presentation", {
       title: z.string().min(1).max(300),
       subtitle: z.string().min(1).max(600).optional(),
       body: z.array(z.string().min(1).max(1_500)).max(12).default([]),
-      recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+      recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
       layoutId: z.string().min(1).max(180).optional(),
       imageResourceIds: z.array(z.string().min(1).max(180)).max(4).default([]),
       table: z.object({ headers: z.array(z.string().min(1).max(500)).min(1).max(12), rows: z.array(z.array(z.string().max(2_000)).min(1).max(12)).max(40) }).optional(),
@@ -325,7 +336,7 @@ server.registerTool("reconstruct_studio_concept", {
     expectedSceneRevision: z.string().min(1).max(500),
     slideNumber: z.number().int().min(1),
     referenceId: z.string().min(1).max(180),
-    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
+    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("reconstruct_studio_concept", input, (result) => `Reconstructed concept ${result.referenceId} into ${result.mappedNodeIds.length} editable source-bound element${result.mappedNodeIds.length === 1 ? "" : "s"} on Studio slide ${result.slideNumber}. Build and inspect the PowerPoint-native result before review; nothing was saved or exported.`));
@@ -498,12 +509,12 @@ server.registerTool("get_design_thread", {
 
 server.registerTool("stage_studio_web_design", {
   title: "Recompose a slide in Studio and stage editable PowerPoint",
-  description: "For an ornl-studio target only, update the one canonical Studio presentation by making a substantive layout decision with a shared HTML/CSS recipe or compatible converted ORNL Template Pack layout, then compile it through fresh-composition. Converted layouts remain vocabulary in the same scene, not alternate proposals. This tool rejects source-template-cleanup decks because sponsor/custom masters and layouts must instead use source-bound proposals unless the user explicitly selected ORNL cross-template conversion. HARD RULE: an existing populated ORNL title slide is sacred and may only use source. Preserve meaning-bearing UI, code, labels, values, arrows, sequence, and causality. Optional nodeFrames are final refinements, not a layout substitute. Judge the compiled result through PowerPoint-native visual QA. Nothing is saved, exported, or overwritten.",
+  description: "For an ornl-studio target only, update the one canonical Studio presentation by making a substantive layout decision with a shared HTML/CSS recipe or compatible converted ORNL Template Pack layout, then compile it through fresh-composition. Converted layouts remain vocabulary in the same scene, not alternate proposals. This tool rejects source-template-cleanup decks because sponsor/custom masters and layouts must instead use source-bound proposals unless the user explicitly selected ORNL cross-template conversion. HARD RULE: an existing populated ORNL title slide is sacred and may only use source. Preserve meaning-bearing UI, code, labels, values, arrows, sequence, and causality. Optional nodeFrames are final refinements, not a layout substitute. Judge the compiled result through PowerPoint-native visual QA. The project revision is crash-checkpointed automatically; no user-named project file or export is created or overwritten.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
     compilerMode: z.literal("fresh-composition").default("fresh-composition"),
     layoutId: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
@@ -580,7 +591,7 @@ server.registerTool("refine_studio_layout", {
 
 server.registerTool("refine_studio_table", {
   title: "Refine one source-bound Studio table",
-  description: "Edit one native Studio table component by stable node and cell IDs. Set complete column widths and row heights in inches, header-row count, global or per-cell/per-edge border treatment, default padding, and bounded cell styles while preserving every source cell's exact text, order, merged spans, source-significant semantic color role, and native editability. Use edge rules for deliberate header separators, totals, and semantic group boundaries instead of forcing a full grid. Use the table IDs and current dimensions from get_studio_web_scene; do not infer missing cells, overwrite a semantic fill, or alter technical meaning. Build the exact slide afterward and inspect PowerPoint-native cell measurements. Nothing is saved or exported.",
+  description: "Edit one native Studio table component by stable node and cell IDs. Set complete column widths and row heights in inches, header-row count, global or per-cell/per-edge border treatment, default padding, and bounded cell styles while preserving every source cell's exact text, order, merged spans, source-significant semantic color role, and native editability. Use edge rules for deliberate header separators, totals, and semantic group boundaries instead of forcing a full grid. Use the table IDs and current dimensions from get_studio_web_scene; do not infer missing cells, overwrite a semantic fill, or alter technical meaning. Build the exact slide afterward and inspect PowerPoint-native cell measurements. The project revision is crash-checkpointed automatically; no user-named project file or export is created.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -617,7 +628,7 @@ server.registerTool("refine_studio_table", {
 
 server.registerTool("publish_studio_table_exemplar", {
   title: "Publish one approved Studio table exemplar",
-  description: "Adopt the current source-bound table's approved visual treatment as a reusable deck definition and apply it to structurally compatible tables. Compatibility requires the same column count, header-row count, header merge pattern, and body merge pattern. The operation propagates column proportions, borders, padding, typography, alignment, and nonsemantic fills only; it never copies cell content, changes merged topology, or overwrites source-significant semantic colors. Build every affected slide and inspect native PowerPoint table measurements afterward. Nothing is saved or exported.",
+  description: "Adopt the current source-bound table's approved visual treatment as a reusable deck definition and apply it to structurally compatible tables. Compatibility requires the same column count, header-row count, header merge pattern, and body merge pattern. The operation propagates column proportions, borders, padding, typography, alignment, and nonsemantic fills only; it never copies cell content, changes merged topology, or overwrites source-significant semantic colors. Build every affected slide and inspect native PowerPoint table measurements afterward. The project revision is crash-checkpointed automatically; no user-named project file or export is created.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -648,7 +659,7 @@ server.registerTool("plan_studio_table_continuation", {
 
 server.registerTool("clear_studio_table_continuation", {
   title: "Clear one Studio table continuation plan",
-  description: "Remove a stored continuation plan from one table without changing the source-bound table, its content, or its visual design. Nothing is saved or exported.",
+  description: "Remove a stored continuation plan from one table without changing the source-bound table, its content, or its visual design. The project revision is crash-checkpointed automatically; no user-named project file or export is created.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),

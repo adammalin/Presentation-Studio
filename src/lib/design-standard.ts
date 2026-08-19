@@ -8,6 +8,13 @@ export interface PresentationDesignStandard {
   status: "product-default-draft";
   mission: string;
   defaultMode: { name: string; behavior: string; definitionOfDone: string };
+  importedTemplateRouting: {
+    identityAuthority: string;
+    sponsorAndCustomPolicy: string;
+    ornlPolicy: string;
+    contentIntegrity: string;
+    relationshipPolicy: string;
+  };
   defaults: {
     profileId: string;
     profileLabel: string;

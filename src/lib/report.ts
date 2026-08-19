@@ -36,6 +36,9 @@ export function buildAuditReport(project: PresentationStudioProject, deck: DeckJ
       containsMacros: audit.containsMacros,
       containsOleObjects: audit.containsOleObjects,
       containsExternalRelationships: audit.containsExternalRelationships,
+      externalHyperlinkCount: audit.externalHyperlinkCount,
+      blockingExternalRelationshipCount: audit.blockingExternalRelationshipCount,
+      containsBlockingExternalRelationships: audit.containsBlockingExternalRelationships,
     },
     fonts: audit.fonts.map((font) => ({
       family: font.family,

@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("presentationStudioDesktop", {
   openProject: () => ipcRenderer.invoke("file:open-project"),
   saveBinary: (payload) => ipcRenderer.invoke("file:save-binary", payload),
   autosaveProject: (payload) => ipcRenderer.invoke("project:autosave", payload),
+  checkpointProjectState: (payload) => ipcRenderer.invoke("project:checkpoint-state", payload),
+  getAutosaveRecovery: () => ipcRenderer.invoke("project:get-autosave-recovery"),
   getMcpStatus: () => ipcRenderer.invoke("mcp:get-status"),
   getPresentationFonts: () => ipcRenderer.invoke("fonts:get-presentation-fonts"),
   getNativeRenderCapabilities: () => ipcRenderer.invoke("render:get-capabilities"),

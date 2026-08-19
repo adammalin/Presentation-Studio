@@ -3,7 +3,7 @@ import test from "node:test";
 import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlClosingSlide, isSacredOrnlTitleSlide, unsupportedSourceSlideNumbers } from "../src/lib/template-guardrails";
 import type { DeckJob, StudioWebScene } from "../src/types";
 
-const ornlDeck = { targetTemplateId: "ornl-16x9-v1", templateClassification: "current-ornl" as const };
+const ornlDeck = { targetTemplateId: "ornl-16x9-v1", templateClassification: "current-ornl" as const, protectedSlideNumbers: [] as number[] };
 
 function scene(recipe: StudioWebScene["slides"][number]["recipe"]): StudioWebScene {
   return {
@@ -39,4 +39,14 @@ test("a final text-only ORNL Thank you slide remains approved source template co
   assert.equal(isProtectedOrnlTemplateSlide(deck, 13), true);
   assert.equal(isSacredOrnlClosingSlide(deck, 12), false);
   assert.equal(isSacredOrnlClosingSlide({ ...deck, audit: { ...audit!, slides: [...audit!.slides.slice(0, -1), { ...audit!.slides.at(-1)!, text: "Conclusions and next steps" }] } }, 13), false);
+});
+
+test("a converted non-ORNL title becomes sacred after its approved ORNL template layout is established", () => {
+  const deck = { targetTemplateId: "ornl-16x9-v1", templateClassification: "sponsor" as const, protectedSlideNumbers: [1] };
+  const converted = scene("template-layout");
+  converted.slides[0].targetLayoutId = "layout-1";
+  converted.slides[0].targetLayoutName = "Title | Standard";
+  assert.equal(isProtectedOrnlTemplateSlide(deck, 1), true);
+  assert.doesNotThrow(() => assertSacredOrnlTitleSlideIntegrity(deck, converted));
+  assert.throws(() => assertSacredOrnlTitleSlideIntegrity(deck, scene("ornl-title-content")), /template composition.*sacred/i);
 });

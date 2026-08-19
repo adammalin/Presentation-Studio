@@ -55,6 +55,9 @@ test("slide design work order closes content and binds evidence to scene, templa
   assert.equal(workOrder.closedContentInventory.lockedTextHash, deck.audit?.slides[0].textHash);
   assert.equal(workOrder.objects.length, deck.scene?.objects.filter((object) => object.slideNumber === 1).length);
   assert.equal(workOrder.layoutCandidates[0].layout.semantic?.intent, "cover");
+  assert.ok(workOrder.designRules.componentSystem);
+  assert.ok(workOrder.designRules.tableVariants);
+  assert.ok(workOrder.designRules.ornlRules);
   assert.ok(workOrder.designRules.componentSystem.layoutRecipes["title-table"]);
   assert.equal(workOrder.designRules.tableVariants.denseTechnical.bodyFontSizePt, 10);
   assert.equal(workOrder.designRules.semanticVisualPolicy.tableColorPolicy, "preserve-source");
@@ -64,6 +67,21 @@ test("slide design work order closes content and binds evidence to scene, templa
   assert.match(workOrder.requiredSequence.join(" "), /addressedThreadIds/);
   assert.match(workOrder.requiredSequence.join(" "), /PowerPoint/i);
   assert.match(workOrder.definitionOfDone, /visibly stronger/i);
+});
+
+test("source-template work order preserves the detected design system and withholds ORNL-only operations", async () => {
+  const deck = await fixtureDeck();
+  deck.targetTemplateId = "sponsor-source";
+  deck.targetTemplateDecisionSource = "user-selected";
+  deck.templateClassification = "sponsor";
+  const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber: 1, projectUpdatedAt: "2026-08-12T20:00:00.000Z", templateCatalog: catalog() });
+  assert.equal(workOrder.layoutCandidates.length, 0);
+  assert.match(workOrder.communicationJob, /sponsor\/custom source design system/i);
+  assert.match(workOrder.designRules.sourceTemplatePolicy ?? "", /preserve the source template only when the user explicitly selects/i);
+  assert.ok(workOrder.designRules.forbiddenCrossTemplateOperations?.includes("Template Pack layout remap"));
+  assert.match(workOrder.requiredSequence.join(" "), /do not use ORNL Template Pack layouts/i);
+  assert.doesNotMatch(workOrder.requiredSequence.join(" "), /shared layout recipe/i);
+  assert.match(workOrder.definitionOfDone, /source master\/layout\/theme remains intact/i);
 });
 
 test("slide design work order exposes optical text starts instead of only shape coordinates", async () => {

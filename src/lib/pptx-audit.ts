@@ -16,7 +16,7 @@ import type {
 } from "../types";
 import { normalizeCellFillToken, semanticColorRoleForToken } from "./semantic-visuals";
 
-export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 5;
+export const PPTX_AUDIT_SEMANTIC_VISUAL_VERSION = 6;
 import { sha256Text } from "./hash";
 
 const MAX_PACKAGE_FILES = 25_000;
@@ -116,6 +116,42 @@ function uniqueSorted(values: string[]): string[] {
 function attributeValue(attributes: string, name: string): string | undefined {
   const match = attributes.match(new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "i"));
   return match ? decodeXml(match[1] ?? match[2] ?? "") : undefined;
+}
+
+interface ExternalRelationshipInventory {
+  totalCount: number;
+  hyperlinkCount: number;
+  blockingCount: number;
+  blockingTypes: string[];
+}
+
+/**
+ * Hyperlinks are normal presentation content. They are stored as external
+ * relationships, but surgical slide edits do not dereference or rewrite them.
+ * Linked media, OLE/package links, external data, and every unknown external
+ * relationship remain blocking because their payload can change outside the
+ * project or require an adapter that Studio does not yet provide.
+ */
+function inventoryExternalRelationships(entries: Array<[string, string]>): ExternalRelationshipInventory {
+  let totalCount = 0;
+  let hyperlinkCount = 0;
+  const blockingTypes: string[] = [];
+  for (const [, xml] of entries) {
+    for (const match of xml.matchAll(/<Relationship\b([^>]*?)\/?\s*>/g)) {
+      const attributes = match[1] ?? "";
+      if (!/^external$/i.test(attributeValue(attributes, "TargetMode") ?? "")) continue;
+      totalCount += 1;
+      const type = attributeValue(attributes, "Type") ?? "unknown";
+      if (/\/hyperlink$/i.test(type)) hyperlinkCount += 1;
+      else blockingTypes.push(type);
+    }
+  }
+  return {
+    totalCount,
+    hyperlinkCount,
+    blockingCount: blockingTypes.length,
+    blockingTypes: uniqueSorted(blockingTypes),
+  };
 }
 
 /**
@@ -922,13 +958,13 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
   }
 
   const contentTypes = xmlByPath.get("[Content_Types].xml") ?? "";
-  const relationshipXml = [...xmlByPath.entries()]
-    .filter(([path]) => path.endsWith(".rels"))
-    .map(([, xml]) => xml)
-    .join("\n");
+  const relationshipEntries = [...xmlByPath.entries()].filter(([path]) => path.endsWith(".rels"));
+  const relationshipXml = relationshipEntries.map(([, xml]) => xml).join("\n");
   const containsMacros = /macroEnabled|vbaProject/i.test(contentTypes + relationshipXml) || paths.some((path) => /vbaProject\.bin$/i.test(path));
   const containsOleObjects = paths.some((path) => /^ppt\/embeddings\//i.test(path)) || /relationships\/oleObject/i.test(relationshipXml);
-  const containsExternalRelationships = /TargetMode=(?:"|')External(?:"|')/i.test(relationshipXml);
+  const externalRelationships = inventoryExternalRelationships(relationshipEntries);
+  const containsExternalRelationships = externalRelationships.totalCount > 0;
+  const containsBlockingExternalRelationships = externalRelationships.blockingCount > 0;
   const legacyCommentCount = paths.filter((path) => /^ppt\/comments\/comment\d+\.xml$/i.test(path)).length;
   const modernCommentCount = paths.filter((path) => /ppt\/(?:comments|people|authors).*\.xml$/i.test(path) && !/^ppt\/comments\/comment\d+\.xml$/i.test(path)).length;
   const findings: AuditFinding[] = [];
@@ -1028,14 +1064,25 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
       }));
     }
   }
-  if (containsMacros || containsOleObjects || containsExternalRelationships) {
+  if (externalRelationships.hyperlinkCount > 0) {
+    findings.push(finding({
+      ruleId: "production.external-hyperlinks",
+      category: "production",
+      severity: "info",
+      confidence: "high",
+      message: `${externalRelationships.hyperlinkCount} ordinary hyperlink relationship${externalRelationships.hyperlinkCount === 1 ? " is" : "s are"} preserved during editing.`,
+      evidence: "Hyperlink relationship parts remain byte-preserved unless the linked object itself is intentionally replaced.",
+      autoFixable: false,
+    }));
+  }
+  if (containsMacros || containsOleObjects || containsBlockingExternalRelationships) {
     findings.push(finding({
       ruleId: "production.advanced-content",
       category: "production",
       severity: "error",
       confidence: "high",
       message: "Advanced or externally linked content requires manual review before cleanup export.",
-      evidence: `Macros: ${containsMacros ? "yes" : "no"}; embedded OLE: ${containsOleObjects ? "yes" : "no"}; external relationships: ${containsExternalRelationships ? "yes" : "no"}.`,
+      evidence: `Macros: ${containsMacros ? "yes" : "no"}; embedded OLE: ${containsOleObjects ? "yes" : "no"}; blocking external relationships: ${externalRelationships.blockingCount}${externalRelationships.blockingTypes.length > 0 ? ` (${externalRelationships.blockingTypes.join(", ")})` : ""}.`,
       autoFixable: false,
     }));
   }
@@ -1070,6 +1117,9 @@ export async function auditPptx(bytes: Uint8Array): Promise<PptxAudit> {
     containsMacros,
     containsOleObjects,
     containsExternalRelationships,
+    externalHyperlinkCount: externalRelationships.hyperlinkCount,
+    blockingExternalRelationshipCount: externalRelationships.blockingCount,
+    containsBlockingExternalRelationships,
     packageFileCount: paths.length,
     expandedByteLength,
     slideSize: { width: slideWidth, height: slideHeight },

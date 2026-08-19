@@ -363,14 +363,14 @@ const studioWebSceneSchema = z.object({
   sourceSlideSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
   rhythm: z.object({ safeMarginPt: z.number().positive(), gridPt: z.number().positive(), compactGapPt: z.number().nonnegative(), normalGapPt: z.number().nonnegative(), primaryGapPt: z.number().nonnegative(), captionGapPt: z.number().nonnegative(), titleContentGapPt: z.number().nonnegative() }).optional(),
   designMemory: z.array(z.object({
-    contentSignature: z.string().min(1).max(300), recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]), targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(),
+    contentSignature: z.string().min(1).max(300), recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]), targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(),
     rhythm: z.object({ safeMarginPt: z.number().positive(), gridPt: z.number().positive(), compactGapPt: z.number().nonnegative(), normalGapPt: z.number().nonnegative(), primaryGapPt: z.number().nonnegative(), captionGapPt: z.number().nonnegative(), titleContentGapPt: z.number().nonnegative() }),
     adoptedFromSlideNumber: z.number().int().positive(), qualityRasterSha256: z.string().length(64), recordedAt: isoTimestamp,
   })).max(80).default([]),
   componentLibrary: z.array(z.object({
     id: z.string().min(1),
     name: z.string().min(1),
-    role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"]),
+    role: z.enum(["eyebrow", "card-kicker", "card-heading", "card-body", "metric-card", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"]),
     surface: z.enum(["light", "dark"]),
     sourceNodeId: z.string().min(1),
     adoptedFromSlideNumber: z.number().int().positive(),
@@ -414,7 +414,7 @@ const studioWebSceneSchema = z.object({
   slides: z.array(z.object({
     id: z.string().min(1), slideNumber: z.number().int().positive(), sourceSlideId: z.string().min(1), sourceTextHash: z.string().regex(/^[0-9a-f]{64}$/), sourceRevision: z.string().min(1),
     contentCoverage: z.object({ exactTextMapped: z.boolean(), sourceContentSignature: z.string().optional(), sourceCharacterCount: z.number().int().nonnegative(), mappedCharacterCount: z.number().int().nonnegative(), sourceTextBoxCount: z.number().int().nonnegative(), mappedTextNodeCount: z.number().int().nonnegative(), groupedOrUnsupportedTextPresent: z.boolean() }),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
     targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000), resourceBindings: z.array(studioResourceBindingSchema).max(40).optional(),
     figureTreatments: z.array(z.object({
       id: z.string().min(1).max(180),
@@ -586,6 +586,9 @@ const auditSchema = z.object({
   containsMacros: z.boolean(),
   containsOleObjects: z.boolean(),
   containsExternalRelationships: z.boolean(),
+  externalHyperlinkCount: z.number().int().nonnegative().optional(),
+  blockingExternalRelationshipCount: z.number().int().nonnegative().optional(),
+  containsBlockingExternalRelationships: z.boolean().optional(),
   packageFileCount: z.number().int().positive(),
   expandedByteLength: z.number().int().nonnegative(),
   slideSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).default({ width: 12_192_000, height: 6_858_000 }),
@@ -601,6 +604,14 @@ const auditSchema = z.object({
   alignmentRepairs: z.array(alignmentRepairSchema).default([]),
   findings: z.array(findingSchema),
   warnings: z.array(z.string()),
+}).transform((audit) => {
+  const containsBlockingExternalRelationships = audit.containsBlockingExternalRelationships ?? audit.containsExternalRelationships;
+  return {
+    ...audit,
+    externalHyperlinkCount: audit.externalHyperlinkCount ?? 0,
+    blockingExternalRelationshipCount: audit.blockingExternalRelationshipCount ?? (containsBlockingExternalRelationships ? 1 : 0),
+    containsBlockingExternalRelationships,
+  };
 });
 const changeSchema = z.object({
   id: z.string(),

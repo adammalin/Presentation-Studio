@@ -19,7 +19,7 @@ export async function createSyntheticLegacyDeck(filePath: string): Promise<strin
   first.background = { color: "FFFFFF" };
   first.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.14, h: 7.5, line: { color: "00662C", transparency: 100 }, fill: { color: "00662C" } });
   first.addText("Legacy typography should be auditable", { x: 0.65, y: 0.58, w: 7.4, h: 0.55, fontFace: "Century Gothic", fontSize: 24, bold: true, color: "00454D", margin: 0 });
-  first.addText("Every sentence in this file is fictional synthetic fixture copy.", { x: 0.68, y: 1.55, w: 6.6, h: 0.5, fontFace: "Arial", fontSize: 15, color: "373A36", margin: 0 });
+  first.addText([{ text: "Every sentence in this file is fictional synthetic fixture copy.", options: { hyperlink: { url: "https://example.invalid/presentation-studio-fixture" } } }], { x: 0.68, y: 1.55, w: 6.6, h: 0.5, fontFace: "Arial", fontSize: 15, color: "373A36", margin: 0 });
   first.addText("Visible text must remain byte-for-byte equivalent after font cleanup.", { x: 0.68, y: 2.18, w: 6.6, h: 0.5, fontFace: "Aptos", fontSize: 15, color: "373A36", margin: 0 });
   first.addText("Synthetic project support line for alignment testing", { x: 0.36, y: 5.55, w: 5.7, h: 0.28, fontFace: "Aptos", fontSize: 10.5, color: "373A36", margin: 0 });
 

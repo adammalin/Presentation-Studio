@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-18.32-template-routing-and-content-integrity",
+  "version": "2026-08-18.36-ornl-metric-grid",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -25,9 +25,10 @@
   },
   "importedTemplateRouting": {
     "identityAuthority": "Classify an imported deck from theme, master, and layout identity before ordinary slide copy. Organization names in slide content do not prove template ownership.",
-    "sponsorAndCustomPolicy": "When a sponsor or custom source template is detected, preserve its master, layouts, artwork, and type system. Use brand-neutral source-bound alignment, distribution, safe-region, measured text-fit, geometry, and table-layout operations with PowerPoint-native Current/Proposal QA. Treat the source theme, native pixels, and approved exemplars as style evidence. Do not apply ORNL font cleanup, table styling, decoration, Template Pack layouts, recipes, or fresh ORNL composition unless the user explicitly selects cross-template conversion.",
-    "ornlPolicy": "Use the installed ORNL Template Pack and Studio composition system only for structurally identified ORNL decks, new ORNL decks, or explicit user-selected conversion.",
-    "contentIntegrity": "Compare authored slide content independently from inherited slide numbers, dates, headers, and footers. Ignore OOXML run-boundary whitespace while preserving the exact character inventory for wording, punctuation, names, numbers, units, and qualifications."
+    "sponsorAndCustomPolicy": "Keep detected sponsor or custom theme, master, layout, and artwork identity as read-only source evidence, but target the current ORNL Template Pack and Studio composition system by default. Preserve the source template only when the user explicitly selects that override. A preserve-source override uses reversible brand-neutral source-bound alignment, distribution, safe-region, measured text-fit, geometry, and table-layout proposals with PowerPoint-native Current/Proposal QA; it does not apply ORNL styling until the user returns the target to ORNL.",
+    "ornlPolicy": "The current authorized ORNL Template Pack and Studio composition system are the default target for every imported or newly created deck unless the user explicitly selects preserve-source or another future installed brand target. Source classification remains evidence and never silently changes the ORNL default.",
+    "contentIntegrity": "Compare authored slide content independently from inherited slide numbers, dates, headers, and footers. Ignore OOXML run-boundary whitespace while preserving the exact character inventory for wording, punctuation, names, numbers, units, and qualifications.",
+    "relationshipPolicy": "Ordinary hyperlink relationships are normal presentation content: preserve their relationship parts and allow unrelated reversible edits. Continue to block macros, embedded OLE, linked images or media, external data, package links, and unknown external relationship types until a dedicated adapter or explicit human decision exists."
   },
   "defaults": {
     "profileId": "ornl-presentation-default",
@@ -47,7 +48,7 @@
     },
     "template": {
       "id": "ornl-16x9-v1",
-      "policy": "Use the current authorized local ORNL Template Pack when the deck is ORNL; preserve a detected sponsor or custom source template unless the user explicitly chooses cross-template conversion."
+      "policy": "Use the current authorized local ORNL Template Pack by default for every imported or new deck. Preserve a detected sponsor or custom source template only when the user explicitly selects that override."
     },
     "contentPolicy": "preserve-exact",
     "sourceProtection": "read-only-source-new-output",
@@ -222,6 +223,7 @@
       "ornl-title-content",
       "ornl-title-two-column",
       "ornl-title-card-grid",
+      "ornl-title-metric-grid",
       "ornl-title-objective-columns",
       "ornl-title-steps-evidence",
       "ornl-title-labeled-figure-grid",
@@ -310,6 +312,10 @@
       "title-two-column": {
         "useWhen": "Text and one figure, or two peer evidence groups, need balanced comparison.",
         "regions": "titleBar plus twoColumn; use the same gutter and optical top edge on every slide."
+      },
+      "title-metric-grid": {
+        "useWhen": "Eight to sixteen short peer metrics or outcomes appear inside repeated legacy or sponsor-native groups.",
+        "regions": "titleBar plus a two-column metric grid. Rebuild exact metric text as editable Aptos cards on square-cornered Polar fields with one restrained ORNL accent rail per source row; suppress obsolete decorative source boxes while preserving every word and value."
       },
       "title-diagram": {
         "useWhen": "A process, hierarchy, or relationship is the primary evidence.",
@@ -470,7 +476,8 @@
     "Before proposing a thread resolution, re-read the current slide revision, exact anchor, structured geometry, and revision-bound render. If the target cannot be mapped unambiguously, return needs-reanchor.",
     "Stage a bounded editable fix, highlight every affected object, render the proposal, and reply with the material design change. An AI response alone does not resolve the thread.",
     "Do not edit an object with an active human edit lock. Human direct edits and applied AI proposals must enter the same validated, reversible transaction history.",
-    "Handle routine layout feedback without additional questions. Ask only when the requested fix crosses a content, template, technical-meaning, unsupported-object, or save/publish boundary."
+    "Handle routine layout feedback without additional questions. Ask only when the requested fix crosses a content, template, technical-meaning, unsupported-object, or save/publish boundary.",
+    "Treat local recovery as part of every human or AI design transaction. A mutating MCP operation must return only after the current revision reaches the lightweight local recovery checkpoint, while the complete self-contained project package is coalesced in the background. Recovery does not imply that a user-named project file or PowerPoint export was created."
   ],
   "tableRules": [
     "Treat every supported table as a native structured table, never as a generic group or flattened image.",

@@ -67,6 +67,10 @@ button { color: inherit; }
 .project-title { align-items: center; justify-self: center; }
 .project-title span { font-size: 13px; font-weight: 700; }
 .top-actions { display: flex; gap: 7px; justify-self: end; }
+.autosave-status { display: flex; align-items: center; gap: 6px; min-width: 118px; padding: 0 8px; color: var(--muted); font-size: 9px; font-weight: 700; white-space: nowrap; -webkit-app-region: no-drag; }
+.autosave-status.saved { color: var(--ornl-green); }
+.autosave-status.error { color: #a83a2a; }
+.autosave-status.saving { color: var(--ornl-hale-navy); }
 
 .rail {
   grid-row: 2;

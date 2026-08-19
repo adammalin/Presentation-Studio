@@ -62,7 +62,7 @@ import type {
   StudioWebScene,
   TemplateClassification,
 } from "./types";
-import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createNativeLayoutProposal, createNativeLayoutRecompositionProposal, createTableLayoutProposal, createTableStyleProposal, createVisualDesignProposal } from "./lib/cleanup";
+import { applyCleanupToPptx, buildCleanupProposalPptx, createDesignerCleanupProposal, createFontCleanupProposal, createGeometryBatchProposal, createGeometryEditProposal, createNativeLayoutProposal, createNativeLayoutRecompositionProposal, createTableLayoutProposal, createTableStyleProposal, createVisualDesignProposal, withDesignerCleanupScope } from "./lib/cleanup";
 import type { LocalPresentationFont, NativeMeasurementResult, NativeRenderResult, NativeSlideRender, PickedBinaryFile } from "./lib/desktop";
 import { decryptProjectPackage, encryptProjectPackage, isEncryptedProject } from "./lib/encryption";
 import { auditPptx, PPTX_AUDIT_SEMANTIC_VISUAL_VERSION } from "./lib/pptx-audit";
@@ -72,6 +72,7 @@ import { compilePresentationScene, sceneNeedsRebuild } from "./lib/scene-graph";
 import { semanticRecompositionRequests, type SemanticSlotBinding } from "./lib/recomposition";
 import { compareNativeSlideRenders, type PixelComparisonMetrics } from "./lib/render-comparison";
 import { buildProjectPackage, openProjectPackage } from "./lib/project-package";
+import { applyProjectRecoveryCheckpoint, buildProjectRecoveryCheckpoint, createLatestOnlySaver, type AutosaveProgress, type LatestOnlySaver } from "./lib/project-durability";
 import { projectPackageFromDrop } from "./lib/project-drop";
 import { removeResourceFromProject, resourceRemovalImpact } from "./lib/resource-removal";
 import { resourceWithAiSessionAccess, resourcesWithAiSessionAccess } from "./lib/resource-ai-access";
@@ -89,8 +90,8 @@ import { buildSlideRenderCatalog, buildTemplateCatalog, type SlideRenderCatalog,
 import { rankLayoutCompatibility } from "./lib/layout-semantics";
 import { buildTemplatePreviewDeck } from "./lib/template-preview-deck";
 import { templateLayoutPartSha256 } from "./lib/native-layout-remap";
-import { isolateNativePowerPointObjects, nativeIsolationShapeIds } from "./lib/native-object-isolation";
-import { bindNativeMeasurement, compareNativeMeasurementPackets, type NativeMeasurementPacket } from "./lib/native-measurement";
+import { isolateNativePowerPointObjects, isolateNativePowerPointSlide, nativeIsolationShapeIds } from "./lib/native-object-isolation";
+import { bindNativeMeasurement, compareNativeMeasurementPackets, remapSingleSlideNativeMeasurement, type NativeMeasurementPacket } from "./lib/native-measurement";
 import { calculateDesignMetrics, metricsImproved } from "./lib/design-metrics";
 import { buildInspectionPacket, type InspectionCropRegion } from "./lib/inspection-packet";
 import { renderNativeContactSheet } from "./lib/contact-sheet";
@@ -116,7 +117,7 @@ import { applyStudioTableExemplar, clearStudioTableContinuation, compatibleStudi
 import { attachStudioConceptReference, removeStudioConceptReference } from "./lib/studio-concept-reference";
 import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
 import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
-import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
+import { assertSacredOrnlTitleSlideIntegrity, isProtectedOrnlTemplateSlide, isSacredOrnlTitleSlide, unsupportedSourceSlideNumbers } from "./lib/template-guardrails";
 import { deckTemplateWorkflow, deckWithAutomaticTemplateRouting } from "./lib/template-routing";
 import { preserveNativeSlide } from "./lib/native-slide-preservation";
 import { buildDeckQualificationReport, qualificationEvidenceSlideNumber, recordDeckQualificationReviews, type DeckQualificationReport } from "./lib/deck-qualification";
@@ -132,6 +133,16 @@ import { bindNewStudioSceneToGeneratedPowerPoint, createNewStudioPresentationSce
 type ViewId = "batch" | "decks" | "slides" | "studio" | "designs" | "rules" | "review" | "resources";
 type McpActivityPhase = "working" | "inspecting" | "found-issues" | "fixing" | "rechecking" | "ready" | "attention";
 type McpActivityState = { id: string; operation: string; state: "active" | "completed" | "failed"; phase: McpActivityPhase; issueCount?: number; autoFixableCount?: number };
+type AutosaveSnapshot = { project: PresentationStudioProject; password?: string };
+type AutosaveUiState = { checkpoint?: AutosaveProgress; package?: AutosaveProgress };
+
+function projectHasRecoverableWork(project: PresentationStudioProject): boolean {
+  return project.resources.length > 0 || project.decks.length > 0 || project.designThreads.length > 0 || project.activity.length > 0;
+}
+
+function projectResourceInventoryKey(project: PresentationStudioProject): string {
+  return `${project.project.id}:${project.resources.map((resource) => `${resource.id}:${resource.sha256}:${resource.byteLength}:${(resource.derivatives ?? []).map((derivative) => `${derivative.id}:${derivative.sha256}:${derivative.byteLength}`).join(",")}`).join("|")}`;
+}
 
 function mcpPhaseForOperation(operation: string, input: Record<string, unknown>): McpActivityPhase {
   if (operation === "run_deck_qualification" || operation === "get_deck_qualification" || operation === "get_qualification_slide" || operation === "get_qualification_contact_sheet") return "inspecting";
@@ -139,7 +150,7 @@ function mcpPhaseForOperation(operation: string, input: Record<string, unknown>)
   if (operation === "get_slide_inspection_packet") return input.representation === "proposal" ? "rechecking" : "inspecting";
   if (operation === "get_studio_slide_critique") return "inspecting";
   if (operation === "preview_studio_fresh_composition" || operation === "record_proposal_visual_critique" || operation === "record_studio_visual_critique" || operation === "get_slide_render_comparison") return "rechecking";
-  if (operation.startsWith("stage_") || operation.startsWith("solve_") || operation === "create_studio_presentation" || operation === "fit_scene_to_layout" || operation === "refine_studio_layout" || operation === "repair_studio_objective_issues" || operation === "reconstruct_studio_concept" || operation === "publish_studio_component_style" || operation === "publish_studio_table_exemplar" || operation === "plan_studio_table_continuation") return "fixing";
+  if (operation.startsWith("stage_") || operation.startsWith("solve_") || operation === "set_deck_template_target" || operation === "create_studio_presentation" || operation === "fit_scene_to_layout" || operation === "refine_studio_layout" || operation === "repair_studio_objective_issues" || operation === "reconstruct_studio_concept" || operation === "publish_studio_component_style" || operation === "publish_studio_table_exemplar" || operation === "plan_studio_table_continuation") return "fixing";
   return "working";
 }
 
@@ -331,6 +342,31 @@ function withCompiledScene(deck: DeckJob): DeckJob {
   return deck.audit ? { ...deck, scene: compilePresentationScene({ ...deck, audit: deck.audit }) } : deck;
 }
 
+function deckAuditNeedsUpgrade(deck: DeckJob): boolean {
+  return Boolean(deck.audit && (
+    sceneNeedsRebuild(deck)
+    || deck.audit.semanticVisualVersion !== PPTX_AUDIT_SEMANTIC_VISUAL_VERSION
+    || !deck.audit.slideSize
+    || !Array.isArray(deck.audit.editableObjects)
+    || (deck.audit.slideCount > 0 && deck.audit.editableObjects.length === 0)
+    || new Set(deck.audit.editableObjects.map((object) => object.id)).size !== deck.audit.editableObjects.length
+    || deck.audit.slides.some((slide) => !slide.sourcePartSha256)
+    || deck.audit.textBoxes.some((textBox) => typeof textBox.text !== "string" || (textBox.characterCount > 0 && textBox.text.length === 0) || (textBox.characterCount > 0 && textBox.estimatedOpticalLeftEmu <= 0))
+  ));
+}
+
+async function upgradeOpenedProjectAudits(opened: PresentationStudioProject): Promise<PresentationStudioProject> {
+  const decks: DeckJob[] = [];
+  for (const deck of opened.decks) {
+    if (!deckAuditNeedsUpgrade(deck)) { decks.push(deck); continue; }
+    const source = sourceForDeck(opened, deck);
+    if (!source?.bytes) throw new Error(`The embedded source for ${deck.name} is unavailable, so its saved audit cannot be upgraded safely.`);
+    const audit = await auditPptx(bytesFrom(source.bytes));
+    decks.push(withCompiledScene(deckWithAutomaticTemplateRouting({ deck, audit })));
+  }
+  return decks.some((deck, index) => deck !== opened.decks[index]) ? { ...opened, decks } : opened;
+}
+
 const fidelityLabels: Record<SceneFidelityState, string> = {
   "editable-native": "Editable native",
   "preserved-native": "Preserved native",
@@ -412,14 +448,14 @@ function DeckAuditView({ deck, onConfirm, onStage, onStartOrnlCleanup, onMarkExe
         <div className="classification-icon"><ShieldCheck size={26} /></div>
         <div><span className="field-label">Detected template family</span><h2>{classificationLabels[audit.classification]}</h2><p>{audit.classificationEvidence.join(" ")}</p></div>
         <div className="template-actions">
-          <label htmlFor="target-template">Human-confirmed target</label>
+          <label htmlFor="target-template">Design target · ORNL by default</label>
           <select id="target-template" value={deck.targetTemplateId ?? ""} onChange={(event) => event.target.value && onConfirm(event.target.value)}>
             <option value="">Choose target…</option>
             <option value="ornl-16x9-v1">ORNL 16:9 · Aptos</option>
             <option value="sponsor-source">Preserve sponsor template</option>
             <option value="custom-source">Preserve custom/source template</option>
           </select>
-          {deck.targetTemplateConfirmedAt && <span className="confirmation"><Check size={14} />{deck.targetTemplateDecisionSource === "automatic-default" ? "ORNL default adopted" : deck.targetTemplateDecisionSource === "automatic-source-preservation" ? "Source template preserved" : "Selected by user"}</span>}
+          {deck.targetTemplateConfirmedAt && <span className="confirmation"><Check size={14} />{deck.targetTemplateDecisionSource === "automatic-default" ? "ORNL default adopted" : ["sponsor-source", "custom-source"].includes(deck.targetTemplateId ?? "") ? "Source preservation selected by user" : "ORNL selected by user"}</span>}
         </div>
       </section>
       {deck.designProfile && <section className="adopted-profile-bar"><ShieldCheck size={20} /><div><span className="field-label">Resolved presentation standard</span><strong>{designStandardSummary()}</strong><small>Version {deck.designProfile.standardVersion} · routine design choices proceed without per-slide approvals · draft pending ORNL review</small></div><span>Active</span></section>}
@@ -443,7 +479,8 @@ function DeckAuditView({ deck, onConfirm, onStage, onStartOrnlCleanup, onMarkExe
           <div className="panel-heading"><div><h2>Production support</h2><p>Features that can affect cleanup safety.</p></div><span className={`support-badge ${audit.supportLevel}`}>{audit.supportLevel}</span></div>
           <dl className="check-list">
             <div><dt>Modern comments</dt><dd>{audit.modernCommentCount || "None"}</dd></div>
-            <div><dt>External relationships</dt><dd className={audit.containsExternalRelationships ? "bad" : "good"}>{audit.containsExternalRelationships ? "Review" : "None"}</dd></div>
+            <div><dt>Hyperlinks</dt><dd className="good">{audit.externalHyperlinkCount ? `${audit.externalHyperlinkCount} preserved` : "None"}</dd></div>
+            <div><dt>Other external links</dt><dd className={audit.containsBlockingExternalRelationships ? "bad" : "good"}>{audit.containsBlockingExternalRelationships ? `${audit.blockingExternalRelationshipCount} · Review` : "None"}</dd></div>
             <div><dt>Macros</dt><dd className={audit.containsMacros ? "bad" : "good"}>{audit.containsMacros ? "Review" : "None"}</dd></div>
             <div><dt>Embedded OLE</dt><dd className={audit.containsOleObjects ? "bad" : "good"}>{audit.containsOleObjects ? "Review" : "None"}</dd></div>
             <div><dt>Expanded package</dt><dd>{formatBytes(audit.expandedByteLength)}</dd></div>
@@ -1174,7 +1211,7 @@ function RulesView({ deck, exemplarCount }: { deck?: DeckJob; exemplarCount: num
   return <div className="view-stack"><header className="view-header compact"><div><p className="eyebrow">Presentation Design Standard</p><h1>Fast defaults, deterministic exceptions</h1><p>One versioned ruleset drives the app, preflight, cleanup engine, reports, tests, and MCP contract.</p></div><span className="standard-version">v{standard.version}</span></header>
     <section className="standard-summary panel"><div className="standard-summary-mark"><ShieldCheck size={25} /></div><div><span className="field-label">Adopted defaults</span><h2>{designStandardSummary()}</h2><p>Current authorized ORNL Template Pack · source remains read-only · editable native PowerPoint output · routine design choices proceed without per-slide approvals.</p></div><span className={ornlReady ? "ready" : "waiting"}>{ornlReady ? "Ready" : "Waiting for target"}</span></section>
     <section className="panel table-standard"><div className="panel-heading"><div><h2>Native table profile</h2><p>{table.id} · product fallback when the Template Pack or approved exemplar has no stronger rule.</p></div><span className="quiet-label">Native and editable</span></div><div className="table-token-grid"><div><span>Typography</span><strong>{table.fontFamily} · {table.header.fontSizePt} pt header · {table.body.fontSizePt} pt body</strong><small>No silent shrink below {table.body.minimumFontSizePt} pt</small></div><div><span>Header</span><strong>Hale Navy · Polar · bold</strong><small>Vertically centered with semantic alignment</small></div><div><span>Body</span><strong>Dark Matter · Polar / Graphite banding</strong><small>Meaning-bearing source color is preserved</small></div><div><span>Cell padding</span><strong>{table.cellPaddingPt.left} pt horizontal · {table.cellPaddingPt.top} pt vertical</strong><small>Measured again using export font metrics</small></div><div><span>Strokes</span><strong>No outer box · {table.strokes.horizontal.widthPt} pt Graphite rows</strong><small>Vertical rules only when comprehension requires them</small></div><div><span>Overflow</span><strong>Reflow, widen, or continue</strong><small>Never hide, drop, flatten, or silently miniaturize</small></div></div></section>
-    <div className="rule-grid"><RuleCard title="Legacy font normalization" scope="Font family only" status={ornlReady ? "Ready" : "Waiting for template"} detail="Maps direct Century Gothic and Arial slide markup to Aptos. Symbol fonts, theme tokens, text strings, object identity, and geometry remain untouched." /><RuleCard title="Exact-content guard" scope="Every exported slide" status="Always on" detail="Compares the visible-text hash and slide count before and after cleanup. The export is rejected if either changes." /><RuleCard title="Advanced content hold" scope="Deck safety" status="Always on" detail="Prevents automated cleanup when macros, embedded OLE objects, or external relationships require a human decision." /><RuleCard title="Approved table exemplar" scope="Tables only" status={exemplarCount > 0 ? `${exemplarCount} registered` : "Product fallback active"} detail="A registered exemplar overrides compatible table tokens without copying cell content. Otherwise the versioned minimal-rule profile is used." /></div></div>;
+    <div className="rule-grid"><RuleCard title="Legacy font normalization" scope="Font family only" status={ornlReady ? "Ready" : "Waiting for template"} detail="Maps direct Century Gothic and Arial slide markup to Aptos. Symbol fonts, theme tokens, text strings, object identity, and geometry remain untouched." /><RuleCard title="Exact-content guard" scope="Every exported slide" status="Always on" detail="Compares the visible-text hash and slide count before and after cleanup. The export is rejected if either changes." /><RuleCard title="Advanced content hold" scope="Deck safety" status="Always on" detail="Preserves ordinary hyperlinks while blocking macros, embedded OLE, linked media/data, and unknown external relationships for human review." /><RuleCard title="Approved table exemplar" scope="Tables only" status={exemplarCount > 0 ? `${exemplarCount} registered` : "Product fallback active"} detail="A registered exemplar overrides compatible table tokens without copying cell content. Otherwise the versioned minimal-rule profile is used." /></div></div>;
 }
 
 function RuleCard({ title, scope, status, detail }: { title: string; scope: string; status: string; detail: string }) {
@@ -1341,6 +1378,8 @@ export default function App() {
   const [mcpActivity, setMcpActivity] = useState<McpActivityState>();
   const [presentationFontCss, setPresentationFontCss] = useState("");
   const [secureAutosavePassword, setSecureAutosavePassword] = useState<string>();
+  const [autosaveUi, setAutosaveUi] = useState<AutosaveUiState>({});
+  const autosaveUiRef = useRef(autosaveUi);
   const [fileDragActive, setFileDragActive] = useState(false);
   const [templateCatalog, setTemplateCatalog] = useState<TemplateCatalog>();
   const [templateSourceBytes, setTemplateSourceBytes] = useState<Uint8Array>();
@@ -1378,6 +1417,10 @@ export default function App() {
   const studioDeckQualificationHistoryRef = useRef<Record<string, StudioDeckQualification[]>>({});
   const studioEditHistoryRef = useRef<Record<string, { undo: StudioWebScene[]; redo: StudioWebScene[] }>>({});
   const onboardingChecked = useRef(false);
+  const recoveryChecked = useRef(false);
+  const checkpointSaverRef = useRef<LatestOnlySaver<AutosaveSnapshot> | undefined>(undefined);
+  const packageSaverRef = useRef<LatestOnlySaver<AutosaveSnapshot> | undefined>(undefined);
+  const fullPackageInventoryRef = useRef<string | undefined>(undefined);
   const auditGeometryUpgradeAttempted = useRef(new Set<string>());
   const automaticStudioBuildAttempted = useRef(new Set<string>());
   const desktop = window.presentationStudioDesktop;
@@ -1415,7 +1458,77 @@ export default function App() {
   }
 
   useEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => { autosaveUiRef.current = autosaveUi; }, [autosaveUi]);
   useEffect(() => { studioEditHistoryRef.current = {}; setStudioHistoryVersion((value) => value + 1); }, [project.project.id]);
+  useEffect(() => {
+    if (!desktop) return;
+    const checkpointSaver = createLatestOnlySaver<AutosaveSnapshot>({
+      delayMs: 80,
+      revision: (snapshot) => snapshot.project.project.updatedAt,
+      save: async (snapshot) => {
+        let bytes = buildProjectRecoveryCheckpoint(snapshot.project);
+        if (snapshot.password) bytes = await encryptProjectPackage(bytes, snapshot.password);
+        await desktop.checkpointProjectState({ bytes, encrypted: Boolean(snapshot.password) });
+      },
+      onProgress: (checkpoint) => setAutosaveUi((current) => ({ ...current, checkpoint })),
+    });
+    const packageSaver = createLatestOnlySaver<AutosaveSnapshot>({
+      delayMs: 900,
+      revision: (snapshot) => snapshot.project.project.updatedAt,
+      save: async (snapshot) => {
+        let bytes = await buildProjectPackage(snapshot.project);
+        if (snapshot.password) bytes = await encryptProjectPackage(bytes, snapshot.password);
+        await desktop.autosaveProject({ bytes, encrypted: Boolean(snapshot.password) });
+      },
+      onProgress: (packageProgress) => setAutosaveUi((current) => ({ ...current, package: packageProgress })),
+    });
+    checkpointSaverRef.current = checkpointSaver;
+    packageSaverRef.current = packageSaver;
+    return () => {
+      checkpointSaverRef.current = undefined;
+      packageSaverRef.current = undefined;
+      void checkpointSaver.dispose().catch(() => undefined);
+      void packageSaver.dispose().catch(() => undefined);
+    };
+  }, [desktop]);
+
+  useEffect(() => {
+    if (!desktop || recoveryChecked.current) return;
+    recoveryChecked.current = true;
+    void desktop.getAutosaveRecovery().then(async ({ candidates }) => {
+      let lastError: Error | undefined;
+      for (const candidate of candidates) {
+        try {
+          let checkpointWarning: string | undefined;
+          let password: string | undefined;
+          let packageBytes = bytesFrom(candidate.package.bytes);
+          if (candidate.encrypted) {
+            password = window.prompt("Presentation Studio found encrypted autosaved work. Enter its password to recover it.") ?? undefined;
+            if (!password) continue;
+            packageBytes = await decryptProjectPackage(packageBytes, password);
+          }
+          let recovered = await openProjectPackage(packageBytes);
+          if (candidate.checkpoint?.bytes) {
+            try {
+              let checkpointBytes = bytesFrom(candidate.checkpoint.bytes);
+              if (candidate.encrypted && password) checkpointBytes = await decryptProjectPackage(checkpointBytes, password);
+              recovered = applyProjectRecoveryCheckpoint(recovered, checkpointBytes);
+            } catch (caught) {
+              checkpointWarning = caught instanceof Error ? caught.message : "The newest lightweight checkpoint was unavailable.";
+            }
+          }
+          adoptOpenedProject(await upgradeOpenedProjectAudits(recovered), password);
+          setNotice(checkpointWarning
+            ? `Recovered the latest complete snapshot of ${recovered.project.name}. The newer lightweight checkpoint could not be applied (${checkpointWarning}), so verify the last edit. AI and human Studio edits now checkpoint automatically.`
+            : `Recovered ${recovered.project.name} through ${new Date(recovered.project.updatedAt).toLocaleString()}. AI and human Studio edits now checkpoint automatically.`);
+          return;
+        } catch (caught) {
+          lastError = caught instanceof Error ? caught : new Error("The autosaved project could not be recovered.");
+        }
+      }
+      if (lastError) setError(`Autosave recovery needs attention: ${lastError.message}`);
+    }).catch((caught) => setError(caught instanceof Error ? caught.message : "Autosave recovery is unavailable."));
+  }, [desktop]);
   useEffect(() => {
     if (activeView !== "studio") return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1463,7 +1576,7 @@ export default function App() {
 
   useEffect(() => {
     const auditUpgradeKey = (deck: DeckJob) => `${deck.id}:semantic-${deck.audit?.semanticVisualVersion ?? 0}-to-${PPTX_AUDIT_SEMANTIC_VISUAL_VERSION}`;
-    const candidates = project.decks.filter((deck) => deck.audit && (sceneNeedsRebuild(deck) || deck.audit.semanticVisualVersion !== PPTX_AUDIT_SEMANTIC_VISUAL_VERSION || !deck.audit.slideSize || !Array.isArray(deck.audit.editableObjects) || (deck.audit.slideCount > 0 && deck.audit.editableObjects.length === 0) || new Set(deck.audit.editableObjects.map((object) => object.id)).size !== deck.audit.editableObjects.length || deck.audit.slides.some((slide) => !slide.sourcePartSha256) || deck.audit.textBoxes.some((textBox) => typeof textBox.text !== "string" || (textBox.characterCount > 0 && textBox.text.length === 0) || (textBox.characterCount > 0 && textBox.estimatedOpticalLeftEmu <= 0))) && !auditGeometryUpgradeAttempted.current.has(auditUpgradeKey(deck)));
+    const candidates = project.decks.filter((deck) => deckAuditNeedsUpgrade(deck) && !auditGeometryUpgradeAttempted.current.has(auditUpgradeKey(deck)));
     if (candidates.length === 0) return;
     let canceled = false;
     for (const deck of candidates) {
@@ -1473,7 +1586,9 @@ export default function App() {
       void auditPptx(source.bytes).then((audit) => {
         if (canceled) return;
         setProject((current) => ({ ...current, decks: current.decks.map((item) => item.id === deck.id ? withCompiledScene(deckWithAutomaticTemplateRouting({ deck: item, audit })) : item) }));
-      }).catch(() => undefined);
+      }).catch((caught) => {
+        if (!canceled) setError(caught instanceof Error ? `Presentation Studio could not upgrade the saved audit for ${deck.name}: ${caught.message}` : `Presentation Studio could not upgrade the saved audit for ${deck.name}.`);
+      });
     }
     return () => { canceled = true; };
   }, [project.decks, project.resources]);
@@ -1643,6 +1758,35 @@ export default function App() {
     return bindNativeMeasurement(deck, qualified);
   }, [desktop, templateSourceBytes]);
 
+  const getOrBuildNativeSlideMeasurement = useCallback(async (deck: DeckJob, slideNumber: number, representation: "current" | "proposal" = "current", current = projectRef.current): Promise<NativeMeasurementPacket> => {
+    if (!desktop) return bindNativeMeasurement(deck, undefined, { slideNumbers: [slideNumber] });
+    const proposalRepresentation = representation === "proposal";
+    const selectedSignature = proposalRepresentation && deck.proposal ? deck.proposal.changes.filter((change) => change.selected).map((change) => change.id).sort().join("|") : "source";
+    const cacheKey = `${deck.id}:${representation}:${deck.sourceSha256}:${deck.proposal?.id ?? "none"}:${selectedSignature}:slide-${slideNumber}`;
+    const cached = nativeMeasurementsRef.current.get(cacheKey);
+    if (cached) return bindNativeMeasurement(deck, cached, { slideNumbers: [slideNumber] });
+    const source = sourceForDeck(current, deck);
+    if (!source?.bytes) throw new Error("The embedded PowerPoint source is unavailable for native slide measurement.");
+    let bytes = bytesFrom(source.bytes);
+    let name = deck.name;
+    if (proposalRepresentation) {
+      if (!deck.proposal) throw new Error("Stage a proposal before requesting proposal measurements.");
+      const materialized = await buildCleanupProposalPptx(bytes, deck.proposal, { templateBytes: templateSourceBytes });
+      bytes = materialized.bytes;
+      name = `${cleanFileStem(deck.name)}_proposal.pptx`;
+    }
+    const isolated = await isolateNativePowerPointSlide({ sourceBytes: bytes, slideNumber });
+    const measured = await desktop.measurePowerPoint({ name: `${cleanFileStem(name)}_slide-${slideNumber}.pptx`, bytes: isolated.bytes });
+    const qualified = measured.status === "ready" && measured.slideCount !== 1
+      ? { ...measured, status: "failed" as const, authority: "unknown" as const, slides: [], warnings: [`PowerPoint returned measurements for ${measured.slideCount} slides from an isolated one-slide inspection package.`] }
+      : remapSingleSlideNativeMeasurement(measured, slideNumber);
+    if (qualified.status === "ready") {
+      nativeMeasurementsRef.current.set(cacheKey, qualified);
+      while (nativeMeasurementsRef.current.size > 24) nativeMeasurementsRef.current.delete(nativeMeasurementsRef.current.keys().next().value as string);
+    }
+    return bindNativeMeasurement(deck, qualified, { slideNumbers: [slideNumber] });
+  }, [desktop, templateSourceBytes]);
+
   const getOrBuildInspectionRender = useCallback(async (deck: DeckJob, representation: "current" | "proposal" = "current", current = projectRef.current) => {
     if (!desktop) throw new Error("PowerPoint-native inspection requires the desktop app.");
     const proposalRepresentation = representation === "proposal";
@@ -1665,6 +1809,32 @@ export default function App() {
     inspectionRendersRef.current.set(cacheKey, render);
     while (inspectionRendersRef.current.size > 4) inspectionRendersRef.current.delete(inspectionRendersRef.current.keys().next().value as string);
     return render;
+  }, [desktop, templateSourceBytes]);
+
+  const getOrBuildInspectionSlideRender = useCallback(async (deck: DeckJob, slideNumber: number, representation: "current" | "proposal" = "current", current = projectRef.current) => {
+    if (!desktop) throw new Error("PowerPoint-native inspection requires the desktop app.");
+    const proposalRepresentation = representation === "proposal";
+    const selectedSignature = proposalRepresentation && deck.proposal ? deck.proposal.changes.filter((change) => change.selected).map((change) => change.id).sort().join("|") : "source";
+    const cacheKey = `${deck.id}:${representation}:${deck.sourceSha256}:${deck.proposal?.id ?? "none"}:${selectedSignature}:slide-${slideNumber}:png-2200`;
+    const cached = inspectionRendersRef.current.get(cacheKey);
+    if (cached) return cached;
+    const source = sourceForDeck(current, deck);
+    if (!source?.bytes) throw new Error("The embedded PowerPoint source is unavailable for inspection rendering.");
+    let bytes = bytesFrom(source.bytes);
+    let name = deck.name;
+    if (proposalRepresentation) {
+      if (!deck.proposal) throw new Error("Stage a proposal before requesting proposal inspection evidence.");
+      const materialized = await buildCleanupProposalPptx(bytes, deck.proposal, { templateBytes: templateSourceBytes });
+      bytes = materialized.bytes;
+      name = `${cleanFileStem(deck.name)}_proposal.pptx`;
+    }
+    const isolated = await isolateNativePowerPointSlide({ sourceBytes: bytes, slideNumber });
+    const render = await desktop.renderPowerPoint({ name: `${cleanFileStem(name)}_slide-${slideNumber}.pptx`, bytes: isolated.bytes, width: 2200, format: "png" });
+    if (render.status !== "ready" || render.slideCount !== 1 || render.slides.length !== 1) throw new Error(render.warnings[0] ?? "PowerPoint-native one-slide inspection rendering failed qualification.");
+    const remapped = { ...render, slides: [{ ...render.slides[0], number: slideNumber }] };
+    inspectionRendersRef.current.set(cacheKey, remapped);
+    while (inspectionRendersRef.current.size > 24) inspectionRendersRef.current.delete(inspectionRendersRef.current.keys().next().value as string);
+    return remapped;
   }, [desktop, templateSourceBytes]);
 
   useEffect(() => {
@@ -1736,14 +1906,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!desktop || project.resources.length === 0) return;
-    const timer = window.setTimeout(() => {
-      void buildProjectPackage(project)
-        .then((bytes) => secureAutosavePassword ? encryptProjectPackage(bytes, secureAutosavePassword) : bytes)
-        .then((bytes) => desktop.autosaveProject({ bytes, encrypted: Boolean(secureAutosavePassword) }))
-        .catch(() => undefined);
-    }, 1400);
-    return () => window.clearTimeout(timer);
+    if (!desktop || !project.settings.autosave || !projectHasRecoverableWork(project)) return;
+    const snapshot = { project, password: secureAutosavePassword };
+    const inventoryKey = projectResourceInventoryKey(project);
+    const resourceInventoryChanged = fullPackageInventoryRef.current !== inventoryKey;
+    fullPackageInventoryRef.current = inventoryKey;
+    checkpointSaverRef.current?.request(snapshot);
+    packageSaverRef.current?.request(snapshot);
+    if (resourceInventoryChanged) void packageSaverRef.current?.flush().catch(() => undefined);
   }, [desktop, project, secureAutosavePassword]);
 
   useEffect(() => {
@@ -1751,13 +1921,15 @@ export default function App() {
     return desktop.onMcpCommand(async (request) => {
       const activityId = crypto.randomUUID();
       const startingPhase = mcpPhaseForOperation(request.operation, request.input);
+      const commandStartProject = projectRef.current;
+      const commandStartRevision = commandStartProject.project.updatedAt;
       setMcpActivity({ id: activityId, operation: request.operation, state: "active", phase: startingPhase });
       try {
       const result = await (async () => {
       const current = projectRef.current;
       if (request.operation === "get_app_status") {
         const [renderCapabilities, measurementCapabilities] = await Promise.all([desktop.getNativeRenderCapabilities(), desktop.getNativeMeasurementCapabilities()]);
-        return { app: "Presentation Studio", designStandardVersion: PRESENTATION_DESIGN_STANDARD.version, project: { name: current.project.name, type: current.project.type, resourceCount: current.resources.length, deckCount: current.decks.length, slideCount: current.decks.reduce((sum, deck) => sum + (deck.audit?.slideCount ?? 0), 0), submittedDesignThreadCount: current.designThreads.filter((thread) => thread.status === "submitted").length, updatedAt: current.project.updatedAt }, aiSessionAccess: mcpEnabled, nativePowerPoint: { ready: renderCapabilities.available && measurementCapabilities.available, sessionLocked: Boolean(renderCapabilities.sessionLocked || measurementCapabilities.sessionLocked), render: renderCapabilities, measurement: measurementCapabilities } };
+        return { app: "Presentation Studio", designStandardVersion: PRESENTATION_DESIGN_STANDARD.version, project: { name: current.project.name, type: current.project.type, resourceCount: current.resources.length, deckCount: current.decks.length, slideCount: current.decks.reduce((sum, deck) => sum + (deck.audit?.slideCount ?? 0), 0), submittedDesignThreadCount: current.designThreads.filter((thread) => thread.status === "submitted").length, updatedAt: current.project.updatedAt }, localRecovery: { enabled: current.settings.autosave, checkpoint: autosaveUiRef.current.checkpoint, completePackage: autosaveUiRef.current.package }, aiSessionAccess: mcpEnabled, nativePowerPoint: { ready: renderCapabilities.available && measurementCapabilities.available, sessionLocked: Boolean(renderCapabilities.sessionLocked || measurementCapabilities.sessionLocked), render: renderCapabilities, measurement: measurementCapabilities } };
       }
       if (!mcpEnabled) throw new Error("Enable AI session access in Presentation Studio before reading project metadata or staging work.");
       if (request.operation === "get_template_layout_catalog") {
@@ -1786,6 +1958,7 @@ export default function App() {
         if (!templateCatalog) throw new Error("Install an authorized PowerPoint Template Pack before requesting layout recommendations.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit) throw new Error("The requested deck is not open or audited.");
+        if (deckTemplateWorkflow(deck) === "source-template-cleanup") throw new Error("This deck is preserving a detected sponsor/custom template. ORNL Template Pack layout recommendations are unavailable unless the user explicitly chooses ORNL cross-template conversion.");
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
         const limit = Math.max(1, Math.min(12, Number(request.input.limit ?? 6)));
@@ -1801,7 +1974,7 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current audit and hybrid scene.");
         const slideNumber = Number(request.input.slideNumber);
-        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionRender(deck, "current", current), getOrBuildNativeMeasurement(deck, "current", current)]);
+        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionSlideRender(deck, slideNumber, "current", current), getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current)]);
         const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber, projectUpdatedAt: current.project.updatedAt, templateCatalog, currentRender: nativeRender, currentMeasurement: measurement, threads: current.designThreads });
         const image = nativeRender.slides.find((item) => item.number === slideNumber);
         if (!image) throw new Error("PowerPoint did not return the requested work-order image.");
@@ -1814,8 +1987,8 @@ export default function App() {
         const slideNumber = Number(request.input.slideNumber);
         const representation = request.input.representation === "proposal" ? "proposal" as const : "current" as const;
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionRender(deck, representation, current), getOrBuildNativeMeasurement(deck, representation, current)]);
-        const baselineMeasurement = representation === "proposal" ? await getOrBuildNativeMeasurement(deck, "current", current) : undefined;
+        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionSlideRender(deck, slideNumber, representation, current), getOrBuildNativeSlideMeasurement(deck, slideNumber, representation, current)]);
+        const baselineMeasurement = representation === "proposal" ? await getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current) : undefined;
         const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber, projectUpdatedAt: current.project.updatedAt, templateCatalog, currentRender: nativeRender, currentMeasurement: measurement, threads: current.designThreads });
         const metrics = calculateDesignMetrics(deck, measurement, baselineMeasurement);
         const packet = buildInspectionPacket({ deck, slideNumber, projectUpdatedAt: current.project.updatedAt, workOrder, render: nativeRender, measurement, metrics: metrics.slides.find((item) => item.slideNumber === slideNumber)! });
@@ -1829,7 +2002,14 @@ export default function App() {
         if (!templateCatalog) throw new Error("Install an authorized PowerPoint Template Pack before requesting a design work order.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current audit and hybrid scene.");
-        const [nativeRender, measurement] = await Promise.all([getOrBuildNativeRender(deck, "current", current), getOrBuildNativeMeasurement(deck, "current", current)]);
+        // A deck work order is a routing summary, not a reason to measure all
+        // 200 slides before the agent can begin. Large decks use the bounded
+        // OOXML packet here and acquire authoritative PowerPoint geometry one
+        // selected slide at a time through the inspection tools below.
+        const [nativeRender, measurement] = await Promise.all([
+          getOrBuildNativeRender(deck, "current", current),
+          deck.audit.slideCount > 20 ? Promise.resolve(bindNativeMeasurement(deck)) : getOrBuildNativeMeasurement(deck, "current", current),
+        ]);
         return buildDeckDesignWorkOrder({ deck, projectUpdatedAt: current.project.updatedAt, templateCatalog, currentRender: nativeRender, currentMeasurement: measurement, threads: current.designThreads });
       }
       if (request.operation === "get_deck_contact_sheet") {
@@ -1861,6 +2041,41 @@ export default function App() {
         };
       }
       if (request.operation === "list_decks") return { updatedAt: current.project.updatedAt, decks: current.decks.map((deck) => ({ id: deck.id, name: deck.name, status: deck.status, operationScope: deck.operationScope, templateClassification: deck.templateClassification, targetTemplateId: deck.targetTemplateId, targetTemplateDecisionSource: deck.targetTemplateDecisionSource, templateWorkflow: deckTemplateWorkflow(deck), slideCount: deck.audit?.slideCount ?? 0, findingCount: deck.audit?.findings.length ?? 0 })) };
+      if (request.operation === "set_deck_template_target") {
+        if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read list_decks again before changing the design target.");
+        const deck = current.decks.find((item) => item.id === request.input.deckId);
+        if (!deck?.audit) throw new Error("The requested deck is not open or audited.");
+        const now = new Date().toISOString();
+        const useOrnl = request.input.target === "ornl-default";
+        const targetTemplateId = useOrnl ? PRESENTATION_DESIGN_STANDARD.defaults.template.id : deck.templateClassification === "sponsor" ? "sponsor-source" : "custom-source";
+        const targeted = withCompiledScene({
+          ...deck,
+          operationScope: "reflow",
+          targetTemplateId,
+          targetTemplateConfirmedAt: now,
+          targetTemplateDecisionSource: "user-selected",
+          designProfile: useOrnl ? createOrnlDesignProfile("user-selected", now) : undefined,
+          status: useOrnl ? "ready-for-cleanup" : "audited",
+          studioScene: undefined,
+          proposal: undefined,
+        });
+        clearDeckRenderState(deck.id);
+        const next = touchProject({ ...current, decks: current.decks.map((item) => item.id === deck.id ? targeted : item) }, "mcp-template-target-set", `${useOrnl ? "Selected the current ORNL Template Pack and Studio design system" : "Explicitly preserved the detected source template"} for ${deck.name}; stale proposals and alternate Studio compositions were cleared.`);
+        projectRef.current = next;
+        setProject(next);
+        setSelectedDeckId(deck.id);
+        setActiveView(useOrnl ? "studio" : "slides");
+        return {
+          projectUpdatedAt: next.project.updatedAt,
+          deck: { id: targeted.id, name: targeted.name, sourceTemplateClassification: targeted.templateClassification, targetTemplateId: targeted.targetTemplateId, targetTemplateDecisionSource: targeted.targetTemplateDecisionSource, templateWorkflow: deckTemplateWorkflow(targeted) },
+          sourcePowerPointChanged: false,
+          staleProposalCleared: true,
+          staleStudioSceneCleared: true,
+          instruction: useOrnl
+            ? "Create the central Studio Web Scene, choose approved ORNL layouts or shared recipes for every non-title slide, use an approved sacred ORNL title layout for slide 1, then build and inspect PowerPoint-native results."
+            : "Preserve the source master, layouts, artwork, and type system. Use only source-bound cleanup operations and PowerPoint-native Current/Proposal QA until the user selects ORNL again.",
+        };
+      }
       if (request.operation === "get_deck_scene_summary") {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current hybrid scene. Reopen or re-audit the source deck.");
@@ -1949,7 +2164,9 @@ export default function App() {
             })),
           },
           instruction: isProtectedOrnlTemplateSlide(deck, slideNumber)
-            ? `HARD RULE: the approved ORNL template composition on slide ${slideNumber} is sacred. Keep recipe source and preserve its approved marks, artwork, photography, legal copy, geometry, master, and layout exactly. Do not send nodeFrames, nodeStyles, figure treatments, or another recipe for this slide.`
+            ? isSacredOrnlTitleSlide(deck, slideNumber)
+              ? `HARD RULE: the existing approved ORNL template composition on slide ${slideNumber} is sacred and source-preserved. Preserve its approved marks, artwork, photography, legal copy, geometry, master, and layout exactly. Do not send nodeFrames, nodeStyles, figure treatments, or another recipe for this slide.`
+              : `HARD RULE: the approved converted ORNL template composition on slide ${slideNumber} is now sacred. Keep its exact template-layout recipe, artwork, editable content bindings, typography, and geometry unchanged. Do not send nodeFrames, nodeStyles, figure treatments, or another recipe for this slide.`
             : deckTemplateWorkflow(deck) === "source-template-cleanup"
             ? "This is a sponsor/custom source-template deck. The semantic scene is available for inspection, but do not replace it with ORNL recipes or fresh composition. Preserve the source master/layout and use brand-neutral alignment, distribution, safe-region, measured text-fit, geometry, and table-layout proposals. Treat the source theme, native pixels, and approved exemplars as style evidence. Do not apply ORNL font, table-style, decoration, or Template Pack layout operations unless the user explicitly selects cross-template conversion."
             : slide.contentCoverage.exactTextMapped
@@ -2647,8 +2864,8 @@ export default function App() {
         const slideNumber = Number(request.input.slideNumber);
         const representation = request.input.representation === "proposal" ? "proposal" as const : "current" as const;
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-        const measurement = await getOrBuildNativeMeasurement(deck, representation, current);
-        const baseline = representation === "proposal" ? await getOrBuildNativeMeasurement(deck, "current", current) : undefined;
+        const measurement = await getOrBuildNativeSlideMeasurement(deck, slideNumber, representation, current);
+        const baseline = representation === "proposal" ? await getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current) : undefined;
         const metrics = calculateDesignMetrics(deck, measurement, baseline).slides.find((item) => item.slideNumber === slideNumber);
         return { updatedAt: current.project.updatedAt, deck: { id: deck.id, name: deck.name }, slideNumber, representation, measurement: { ...measurement, objects: measurement.objects.filter((object) => object.slideNumber === slideNumber) }, metrics, instruction: "Use these PowerPoint-native measurements for point geometry. Use an alignment, distribution, or table solver instead of guessing coordinates from pixels." };
       }
@@ -2798,10 +3015,10 @@ export default function App() {
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
         const [currentRender, proposalRender, currentMeasurement, proposalMeasurement] = await Promise.all([
-          getOrBuildInspectionRender(deck, "current", current),
-          getOrBuildInspectionRender(deck, "proposal", current),
-          getOrBuildNativeMeasurement(deck, "current", current),
-          getOrBuildNativeMeasurement(deck, "proposal", current),
+          getOrBuildInspectionSlideRender(deck, slideNumber, "current", current),
+          getOrBuildInspectionSlideRender(deck, slideNumber, "proposal", current),
+          getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current),
+          getOrBuildNativeSlideMeasurement(deck, slideNumber, "proposal", current),
         ]);
         const currentSlide = currentRender.slides.find((slide) => slide.number === slideNumber);
         const proposalSlide = proposalRender.slides.find((slide) => slide.number === slideNumber);
@@ -2880,11 +3097,10 @@ export default function App() {
         if (templateWorkflow === "template-decision-required") throw new Error("Choose or confirm the target template before staging Studio composition.");
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-        const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"];
+        const allowedRecipes: StudioLayoutRecipe[] = ["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"];
         const recipe = String(request.input.recipe ?? "") as StudioLayoutRecipe;
         if (!allowedRecipes.includes(recipe)) throw new Error("Choose a supported Studio web recipe.");
-        if (isProtectedOrnlTemplateSlide(deck, slideNumber) && recipe !== "source") throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred. Keep it on Source geometry; its approved marks, artwork, photography, legal copy, geometry, master, and layout cannot be recomposed or restyled.`);
-        if (isProtectedOrnlTemplateSlide(deck, slideNumber) && ([request.input.nodeFrames, request.input.nodeStyles, request.input.figureTreatments].some((value) => Array.isArray(value) && value.length > 0))) throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred. Source preservation cannot include node-frame, style, or figure-treatment overrides.`);
+        if (isProtectedOrnlTemplateSlide(deck, slideNumber)) throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and locked. Its source or converted-template design, artwork, content bindings, typography, and geometry cannot be recomposed or restyled.`);
         const layoutId = typeof request.input.layoutId === "string" ? request.input.layoutId : undefined;
         const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
         if (recipe === "template-layout" && !layout) throw new Error("Choose an installed Template Pack layout ID before staging template-layout.");
@@ -2955,7 +3171,13 @@ export default function App() {
         }
         const visualNeedIds = Array.isArray(request.input.visualNeedIds) ? request.input.visualNeedIds.map(String) : [];
         if (visualNeedIds.length) studioScene = markStudioVisualNeedsReconstructionReady(studioScene, slideNumber, visualNeedIds);
-        const adoptedDeck: DeckJob = { ...deck, operationScope: "reflow", studioScene };
+        const protectConvertedTitle = slideNumber === 1 && recipe === "template-layout" && layout?.category === "title";
+        const adoptedDeck: DeckJob = {
+          ...deck,
+          operationScope: "reflow",
+          studioScene,
+          protectedSlideNumbers: protectConvertedTitle ? [...new Set([...deck.protectedSlideNumbers, 1])] : deck.protectedSlideNumbers,
+        };
         if (request.input.compilerMode !== undefined && request.input.compilerMode !== "fresh-composition") throw new Error("Studio has one central composition path. Use compilerMode fresh-composition; source-bound proposals are separate legacy cleanup evidence and cannot become the Studio design authority.");
         const compilerMode = "fresh-composition" as const;
         {
@@ -3283,10 +3505,11 @@ export default function App() {
         if (request.input.designStandardVersion !== PRESENTATION_DESIGN_STANDARD.version) throw new Error("The Presentation Design Standard changed. Read get_design_contract and get_cleanup_rule_profile again before staging Designer Cleanup.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck) throw new Error("The requested deck is not open.");
-        const proposal = createDesignerCleanupProposal(deck, current.project.updatedAt);
+        const designerDeck = withDesignerCleanupScope(deck);
+        const proposal = createDesignerCleanupProposal(designerDeck, current.project.updatedAt);
         const next = touchProject({
           ...current,
-          decks: current.decks.map((item) => item.id === deck.id ? { ...item, proposal, status: "proposal-ready" as const } : item),
+          decks: current.decks.map((item) => item.id === deck.id ? { ...designerDeck, proposal, status: "proposal-ready" as const } : item),
         }, "mcp-designer-proposal-staged", `AI staged a deck-wide designer cleanup for ${deck.name}; no changes were applied.`);
         proposal.baseUpdatedAt = next.project.updatedAt;
         projectRef.current = next;
@@ -3353,6 +3576,7 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current audit and hybrid scene.");
         if (deck.operationScope !== "reflow" && deck.operationScope !== "compose") throw new Error("Semantic layout solving requires a Designer Cleanup or native composition scope.");
+        if (deckTemplateWorkflow(deck) === "source-template-cleanup" && ["solve_and_stage_group_layout", "fit_scene_to_layout"].includes(request.operation)) throw new Error("This sponsor/custom deck must preserve its native layout. Use source-bound alignment, distribution, safe-region, measured text-fit, geometry, or table-layout operations unless the user explicitly chooses ORNL cross-template conversion.");
         const slideNumber = Number(request.input.slideNumber);
         const groups = Array.isArray(request.input.groups) ? request.input.groups.map((group) => Array.isArray(group) ? group.map(String) : []) : undefined;
         const sceneRegionInputs = Array.isArray(request.input.regions) ? request.input.regions.filter((region): region is Record<string, unknown> => Boolean(region) && typeof region === "object") : [];
@@ -3360,7 +3584,7 @@ export default function App() {
         const objectIds = request.operation === "solve_and_stage_group_layout" ? [...new Set(groups?.flat() ?? [])] : request.operation === "fit_scene_to_layout" ? [...new Set(sceneRegionObjectIds)] : Array.isArray(request.input.objectIds) ? [...new Set(request.input.objectIds.map(String))] : [];
         const rationale = String(request.input.rationale ?? "").trim();
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
-        const measurement = await getOrBuildNativeMeasurement(deck, "current", current);
+        const measurement = await getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current);
         const result = request.operation === "solve_and_stage_alignment"
           ? solveAlignment({ deck, measurement, slideNumber, objectIds, mode: String(request.input.mode ?? "optical-left") as AlignmentMode, rationale, anchorObjectId: request.input.anchorObjectId ? String(request.input.anchorObjectId) : undefined })
           : request.operation === "solve_and_stage_distribution"
@@ -3417,7 +3641,7 @@ export default function App() {
         if (projectRef.current.project.updatedAt !== current.project.updatedAt) throw new Error("The project changed while PowerPoint was measuring. Read a fresh inspection packet and solve again.");
         const proposal = createGeometryBatchProposal(deck, current.project.updatedAt, result.commands.map((command) => ({ objectId: command.objectId, target: command.target, rationale: command.rationale, author: "ai" as const, constraints: command.constraints })));
         const proposedDeck = { ...deck, proposal };
-        const proposalMeasurement = await getOrBuildNativeMeasurement(proposedDeck, "proposal", current);
+        const proposalMeasurement = await getOrBuildNativeSlideMeasurement(proposedDeck, slideNumber, "proposal", current);
         const currentMetric = calculateDesignMetrics(deck, measurement).slides.find((item) => item.slideNumber === slideNumber)!;
         const proposalMetric = calculateDesignMetrics(deck, proposalMeasurement, measurement).slides.find((item) => item.slideNumber === slideNumber)!;
         const geometryMismatches = result.commands.filter((command) => {
@@ -3449,7 +3673,7 @@ export default function App() {
         const objectId = String(request.input.objectId ?? "");
         const object = deck.scene.objects.find((item) => item.id === objectId);
         if (!object) throw new Error("The requested text object is stale. Read a fresh inspection packet and select its current stable object ID.");
-        const measurement = await getOrBuildNativeMeasurement(deck, "current", current);
+        const measurement = await getOrBuildNativeSlideMeasurement(deck, object.slideNumber, "current", current);
         const result = solveTextFit({ deck, measurement, objectId, rationale: String(request.input.rationale ?? "") });
         if (result.status !== "solved") return { updatedAt: current.project.updatedAt, staged: false, result, instruction: result.status === "already-fit" ? "PowerPoint confirms that this frame already fits at the resolved readability floor. Diagnose another design issue instead of changing it." : "Do not shrink the text or guess geometry. Follow the measured recommendation or recompose the surrounding content." };
         if (projectRef.current.project.updatedAt !== current.project.updatedAt) throw new Error("The project changed while PowerPoint was measuring. Read a fresh inspection packet and fit again.");
@@ -3457,7 +3681,7 @@ export default function App() {
         if (result.textStyle) proposal = createVisualDesignProposal(proposal ? { ...deck, proposal } : deck, current.project.updatedAt, { slideNumber: object.slideNumber, textStyles: [result.textStyle], decorations: [] });
         if (!proposal) throw new Error("The text-fit solver produced no reversible proposal commands.");
         const proposedDeck = { ...deck, proposal };
-        const proposalMeasurement = await getOrBuildNativeMeasurement(proposedDeck, "proposal", current);
+        const proposalMeasurement = await getOrBuildNativeSlideMeasurement(proposedDeck, object.slideNumber, "proposal", current);
         const measured = proposalMeasurement.objects.find((item) => item.objectId === objectId);
         const geometryMismatch = result.geometry && (!measured?.measuredGeometryPt || Math.abs(measured.measuredGeometryPt.top - result.geometry.target.y / 12_700) > .2 || Math.abs(measured.measuredGeometryPt.height - result.geometry.target.height / 12_700) > .2);
         const currentMetric = calculateDesignMetrics(deck, measurement).slides.find((item) => item.slideNumber === object.slideNumber)!;
@@ -3477,7 +3701,7 @@ export default function App() {
           proposalMetric,
           instruction: "Presentation Studio withheld the draft after native remeasurement. Choose a more suitable region or semantic composition operation.",
         };
-        const nativeRender = await getOrBuildInspectionRender(proposedDeck, "proposal", current);
+        const nativeRender = await getOrBuildInspectionSlideRender(proposedDeck, object.slideNumber, "proposal", current);
         const proposalSlide = nativeRender.slides.find((slide) => slide.number === object.slideNumber);
         const next = touchProject({
           ...current,
@@ -3497,7 +3721,10 @@ export default function App() {
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current audit and cell-level table scene.");
         if (deck.operationScope !== "reflow" && deck.operationScope !== "compose") throw new Error("Native table solving requires a Designer Cleanup or native composition scope.");
         const tableId = String(request.input.tableId ?? "");
-        const measurement = await getOrBuildNativeMeasurement(deck, "current", current);
+        const tableInventory = deck.audit.tables.find((table) => table.id === tableId);
+        if (!tableInventory) throw new Error("The requested table is stale. Read a fresh inspection packet and select its current stable table ID.");
+        const tableSlideNumber = tableInventory.slideNumber;
+        const measurement = await getOrBuildNativeSlideMeasurement(deck, tableSlideNumber, "current", current);
         let workingMeasurement = measurement;
         let result = solveTableLayout({ deck, measurement: workingMeasurement, tableId, rationale: String(request.input.rationale ?? ""), variant: request.input.variant === "dense-technical" ? "dense-technical" : "standard" });
         if (result.status === "already-fit") return { updatedAt: current.project.updatedAt, staged: false, tableId, result, instruction: "PowerPoint confirms that the table already satisfies the resolved native type, padding, clearance, and wrap constraints. Preserve it as-is and inspect the surrounding composition." };
@@ -3515,7 +3742,7 @@ export default function App() {
             targetBoundsPt: { width: growthPlan.target.width / 12_700, height: growthPlan.target.height / 12_700 },
           });
         }
-        if (result.status === "infeasible" || !result.command) return { updatedAt: current.project.updatedAt, staged: false, tableId, result, growthPlan, instruction: growthPlan ? "The minimum safe-region growth was not enough after native PowerPoint remeasurement. Follow the updated space recommendation or use a continuation slide." : "The solver refused to shrink type or padding below the ORNL technical-slide floor. Follow a recommendation, enlarge the region, or continue the table before solving again." };
+        if (result.status === "infeasible" || !result.command) return { updatedAt: current.project.updatedAt, staged: false, tableId, result, growthPlan, instruction: growthPlan ? "The minimum safe-region growth was not enough after native PowerPoint remeasurement. Follow the updated space recommendation or use a continuation slide." : "The solver refused to shrink type or padding below the resolved deck-specific floor. Follow a recommendation, enlarge the region, or continue the table before solving again." };
         proposal = createTableLayoutProposal(proposal ? { ...deck, proposal } : deck, current.project.updatedAt, result.command);
         let proposalMeasurement: NativeMeasurementPacket | undefined;
         const iterations: Array<{ iteration: number; commandId: string; minimumHorizontalClearancePt?: number; minimumVerticalClearancePt?: number; violationCellIds: string[] }> = [];
@@ -3523,7 +3750,7 @@ export default function App() {
         for (let iteration = 1; iteration <= 3; iteration += 1) {
           const activeCommand = result.command;
           if (!activeCommand) throw new Error("The table solver lost its active command during bounded iteration.");
-          proposalMeasurement = await getOrBuildNativeMeasurement({ ...deck, proposal }, "proposal", current);
+          proposalMeasurement = await getOrBuildNativeSlideMeasurement({ ...deck, proposal }, tableSlideNumber, "proposal", current);
           const measuredTable = proposalMeasurement.objects.find((object) => object.tableId === tableId)?.table;
           const horizontal = measuredTable?.cells.flatMap((cell) => cell.clearancesPt ? [cell.clearancesPt.left, cell.clearancesPt.right] : []) ?? [];
           const vertical = measuredTable?.cells.flatMap((cell) => cell.clearancesPt ? [cell.clearancesPt.top, cell.clearancesPt.bottom] : []) ?? [];
@@ -3537,8 +3764,8 @@ export default function App() {
           proposal = createTableLayoutProposal({ ...deck, proposal }, current.project.updatedAt, refined.command);
         }
         if (!nativeVerified || !proposalMeasurement) return { updatedAt: current.project.updatedAt, staged: false, tableId, result: { ...result, status: "infeasible", diagnostics: { ...result.diagnostics, reasons: [...result.diagnostics.reasons, "Three bounded PowerPoint remeasurement rounds could not satisfy cell-clearance constraints."], recommendations: [...result.diagnostics.recommendations, "Enlarge the table region or use a continuation slide."] } }, growthPlan, iterations, instruction: "Presentation Studio withheld the draft after bounded native iteration. Do not force it through with smaller type or padding." };
-        const nativeRender = await getOrBuildInspectionRender({ ...deck, proposal }, "proposal", current);
-        const proposalSlideNumber = deck.audit.tables.find((table) => table.id === tableId)!.slideNumber;
+        const nativeRender = await getOrBuildInspectionSlideRender({ ...deck, proposal }, tableSlideNumber, "proposal", current);
+        const proposalSlideNumber = tableSlideNumber;
         const proposalSlide = nativeRender.slides.find((slide) => slide.number === proposalSlideNumber);
         const next = touchProject({
           ...current,
@@ -3601,6 +3828,7 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit) throw new Error("The requested deck is not open or audited.");
         if (deck.operationScope !== "reflow" && deck.operationScope !== "compose") throw new Error("Native visual polish requires a Designer Cleanup or native composition scope.");
+        if (deckTemplateWorkflow(deck) === "source-template-cleanup") throw new Error("ORNL visual styling and decoration are unavailable while this sponsor/custom source template is being preserved. Use source-bound geometry and fit operations instead.");
         const slideNumber = Number(request.input.slideNumber);
         const rawTextStyles = Array.isArray(request.input.textStyles) ? request.input.textStyles as Array<Record<string, unknown>> : [];
         const rawDecorations = Array.isArray(request.input.decorations) ? request.input.decorations as Array<Record<string, unknown>> : [];
@@ -3652,13 +3880,14 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current audit and hybrid scene.");
         if (deck.operationScope !== "reflow" && deck.operationScope !== "compose") throw new Error("Native layout remapping requires a Designer Cleanup or native composition scope; cleanup-only cannot change master/layout relationships.");
+        if (deckTemplateWorkflow(deck) === "source-template-cleanup") throw new Error("This sponsor/custom deck must preserve its current native layout. ORNL Template Pack remapping requires an explicit cross-template conversion decision.");
         const source = sourceForDeck(current, deck);
         if (!source?.bytes) throw new Error("The embedded source deck is unavailable.");
         const slideNumber = Number(request.input.slideNumber);
         const layoutId = String(request.input.layoutId ?? "");
         const layout = templateCatalog.layouts.find((item) => item.id === layoutId);
         if (!layout?.semantic) throw new Error("The requested approved layout is unavailable or has no semantic contract.");
-        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionRender(deck, "current", current), getOrBuildNativeMeasurement(deck, "current", current)]);
+        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionSlideRender(deck, slideNumber, "current", current), getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current)]);
         const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber, projectUpdatedAt: current.project.updatedAt, templateCatalog, currentRender: nativeRender, currentMeasurement: measurement, threads: current.designThreads });
         if (request.input.workOrderRevision !== workOrder.revision) throw new Error("The design work order is stale. Read get_slide_design_work_order again before staging a native layout.");
         const compatibility = rankLayoutCompatibility(templateCatalog.layouts, contentProfileForSlide(deck, slideNumber)).find((item) => item.layoutId === layout.id);
@@ -3714,11 +3943,12 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current audit and hybrid scene.");
         if (deck.operationScope !== "reflow" && deck.operationScope !== "compose") throw new Error("Semantic recomposition requires a Designer Cleanup or native composition scope; cleanup-only permits only bounded cleanup rules.");
+        if (deckTemplateWorkflow(deck) === "source-template-cleanup") throw new Error("This sponsor/custom deck must preserve its current native layout. ORNL semantic recomposition requires an explicit cross-template conversion decision.");
         const slideNumber = Number(request.input.slideNumber);
         const layoutId = String(request.input.layoutId ?? "");
         const layout = templateCatalog.layouts.find((item) => item.id === layoutId);
         if (!layout?.semantic) throw new Error("The requested approved layout is unavailable or has no semantic slot contract.");
-        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionRender(deck, "current", current), getOrBuildNativeMeasurement(deck, "current", current)]);
+        const [nativeRender, measurement] = await Promise.all([getOrBuildInspectionSlideRender(deck, slideNumber, "current", current), getOrBuildNativeSlideMeasurement(deck, slideNumber, "current", current)]);
         const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber, projectUpdatedAt: current.project.updatedAt, templateCatalog, currentRender: nativeRender, currentMeasurement: measurement, threads: current.designThreads });
         if (request.input.workOrderRevision !== workOrder.revision) throw new Error("The design work order is stale. Read get_slide_design_work_order again before staging recomposition.");
         const compatibility = rankLayoutCompatibility(templateCatalog.layouts, contentProfileForSlide(deck, slideNumber)).find((item) => item.layoutId === layout.id);
@@ -3780,18 +4010,33 @@ export default function App() {
       }
       throw new Error(`Unknown Presentation Studio MCP operation: ${request.operation}`);
       })();
+      const changedProject = projectRef.current;
+      let response: unknown = result;
+      if ((changedProject !== commandStartProject || changedProject.project.updatedAt !== commandStartRevision) && changedProject.settings.autosave && projectHasRecoverableWork(changedProject)) {
+        const snapshot = { project: changedProject, password: secureAutosavePassword };
+        const resourceInventoryChanged = projectResourceInventoryKey(changedProject) !== projectResourceInventoryKey(commandStartProject);
+        checkpointSaverRef.current?.request(snapshot);
+        packageSaverRef.current?.request(snapshot);
+        if (!checkpointSaverRef.current) throw new Error("The AI design changed the project, but the recovery checkpoint service is unavailable.");
+        await checkpointSaverRef.current.flush();
+        if (resourceInventoryChanged) {
+          if (!packageSaverRef.current) throw new Error("The AI design added or changed embedded Resources, but the complete recovery package service is unavailable.");
+          await packageSaverRef.current.flush();
+        }
+        if (typeof result === "object" && result) response = { ...result, recoverySaved: true, recoveryRevision: changedProject.project.updatedAt, recoveryLevel: resourceInventoryChanged ? "complete-self-contained-package" : "lightweight-project-checkpoint" };
+      }
       const issueLedger = typeof result === "object" && result && "issueLedger" in result ? (result as { issueLedger?: { issueCount?: number; autoFixableCount?: number; phase?: string } }).issueLedger : undefined;
       const completedPhase: McpActivityPhase = issueLedger?.phase === "found-issues" ? "found-issues" : startingPhase === "rechecking" ? "rechecking" : startingPhase === "fixing" ? "fixing" : "ready";
       setMcpActivity({ id: activityId, operation: request.operation, state: "completed", phase: completedPhase, issueCount: issueLedger?.issueCount, autoFixableCount: issueLedger?.autoFixableCount });
       window.setTimeout(() => setMcpActivity((current) => current?.id === activityId ? undefined : current), 8000);
-      return result;
+      return response;
       } catch (caught) {
         setMcpActivity({ id: activityId, operation: request.operation, state: "failed", phase: "attention" });
         window.setTimeout(() => setMcpActivity((current) => current?.id === activityId ? undefined : current), 10000);
         throw caught;
       }
     });
-  }, [desktop, getOrBuildNativeRender, getOrBuildProposalCatalog, getOrBuildSlideCatalog, getOrBuildTemplateNativeRender, mcpEnabled, presentationFontCss, templateCatalog, templateNativeLoading, templateNativeRender]);
+  }, [desktop, getOrBuildNativeRender, getOrBuildProposalCatalog, getOrBuildSlideCatalog, getOrBuildTemplateNativeRender, mcpEnabled, presentationFontCss, secureAutosavePassword, templateCatalog, templateNativeLoading, templateNativeRender]);
 
   function clearMessages() { setNotice(undefined); setError(undefined); }
 
@@ -3974,6 +4219,28 @@ export default function App() {
     automaticStudioBuildAttempted.current.clear();
   }
 
+  function clearDeckRenderState(deckId: string) {
+    for (const cache of [slideCatalogsRef.current, proposalCatalogsRef.current, nativeRenderCatalogsRef.current, nativeMeasurementsRef.current, inspectionRendersRef.current]) {
+      for (const key of [...cache.keys()]) if (key === deckId || key.startsWith(`${deckId}:`)) cache.delete(key);
+    }
+    const withoutDeck = <T,>(catalog: Record<string, T>) => Object.fromEntries(Object.entries(catalog).filter(([key]) => key !== deckId && !key.startsWith(`${deckId}:`))) as Record<string, T>;
+    setSlideCatalogs((catalog) => withoutDeck(catalog));
+    setProposalCatalogs((catalog) => withoutDeck(catalog));
+    setNativeRenderCatalogs((catalog) => withoutDeck(catalog));
+    studioFreshPreviewsRef.current = withoutDeck(studioFreshPreviewsRef.current);
+    studioDeckBuildsRef.current = withoutDeck(studioDeckBuildsRef.current);
+    studioDeckQualificationsRef.current = withoutDeck(studioDeckQualificationsRef.current);
+    studioDeckQualificationHistoryRef.current = withoutDeck(studioDeckQualificationHistoryRef.current);
+    setStudioFreshPreviews(studioFreshPreviewsRef.current);
+    setStudioDeckBuilds(studioDeckBuildsRef.current);
+    setStudioDeckQualifications(studioDeckQualificationsRef.current);
+    setSlideCatalogLoadingDeckId((id) => id === deckId ? undefined : id);
+    setProposalCatalogLoadingDeckId((id) => id === deckId ? undefined : id);
+    setNativeRenderLoadingKey((key) => key?.startsWith(`${deckId}:`) ? undefined : key);
+    setSlideWorkspaceRequest((request) => request?.deckId === deckId ? undefined : request);
+    for (const key of [...automaticStudioBuildAttempted.current]) if (key === deckId || key.startsWith(`${deckId}:`)) automaticStudioBuildAttempted.current.delete(key);
+  }
+
   function adoptOpenedProject(opened: PresentationStudioProject, password?: string) {
     resetProjectRenderState();
     const accessible = { ...opened, resources: resourcesWithAiSessionAccess(opened.resources, mcpEnabled) };
@@ -3997,7 +4264,9 @@ export default function App() {
         if (!password) return;
         bytes = await decryptProjectPackage(bytes, password);
       }
-      adoptOpenedProject(await openProjectPackage(bytes), password);
+      const opened = await openProjectPackage(bytes);
+      if (opened.decks.some(deckAuditNeedsUpgrade)) setBusy(`Updating saved PowerPoint audits in ${file.name}…`);
+      adoptOpenedProject(await upgradeOpenedProjectAudits(opened), password);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The project could not be opened.");
     } finally {
@@ -4084,8 +4353,13 @@ export default function App() {
   function confirmTemplate(templateId: string) {
     if (!selectedDeck) return;
     const now = new Date().toISOString();
-    setProject((current) => touchProject({ ...current, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? withCompiledScene({ ...deck, targetTemplateId: templateId, targetTemplateConfirmedAt: now, targetTemplateDecisionSource: "user-selected", designProfile: templateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id ? createOrnlDesignProfile("user-selected", now) : undefined, status: templateId === "ornl-16x9-v1" ? "ready-for-cleanup" : "audited", proposal: undefined }) : deck) }, "target-template-confirmed", `Confirmed ${templateId} for ${selectedDeck.name}.`));
-    setNotice("Target template confirmed. No slide content was changed.");
+    clearDeckRenderState(selectedDeck.id);
+    setProject((current) => {
+      const next = touchProject({ ...current, decks: current.decks.map((deck) => deck.id === selectedDeck.id ? withCompiledScene({ ...deck, operationScope: "reflow", targetTemplateId: templateId, targetTemplateConfirmedAt: now, targetTemplateDecisionSource: "user-selected", designProfile: templateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id ? createOrnlDesignProfile("user-selected", now) : undefined, status: templateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id ? "ready-for-cleanup" : "audited", studioScene: undefined, proposal: undefined }) : deck) }, "target-template-confirmed", `Confirmed ${templateId} for ${selectedDeck.name}; stale proposals and alternate Studio compositions were cleared.`);
+      projectRef.current = next;
+      return next;
+    });
+    setNotice(templateId === PRESENTATION_DESIGN_STANDARD.defaults.template.id ? "ORNL is now the design target. Create the central Studio scene and rebuild the deck with approved ORNL layouts; source bytes remain unchanged." : "Source-template preservation was explicitly selected. ORNL conversion is paused; source bytes remain unchanged.");
   }
 
   function startOrnlCleanup() {
@@ -4126,10 +4400,10 @@ export default function App() {
       const sourceTemplateMode = templateWorkflow === "source-template-cleanup";
       const adopted = {
         ...deck,
-        operationScope: sourceTemplateMode ? "cleanup-only" as const : "reflow" as const,
+        operationScope: "reflow" as const,
         targetTemplateId: sourceTemplateMode ? deck.targetTemplateId : deck.targetTemplateId ?? PRESENTATION_DESIGN_STANDARD.defaults.template.id,
         targetTemplateConfirmedAt: deck.targetTemplateConfirmedAt ?? now,
-        targetTemplateDecisionSource: sourceTemplateMode ? "automatic-source-preservation" as const : deck.targetTemplateDecisionSource ?? "automatic-default" as const,
+        targetTemplateDecisionSource: sourceTemplateMode ? "user-selected" as const : deck.targetTemplateDecisionSource ?? "automatic-default" as const,
         designProfile: sourceTemplateMode ? undefined : deck.designProfile ?? createOrnlDesignProfile("automatic-default", now),
         studioScene,
         proposal: undefined,
@@ -4154,7 +4428,7 @@ export default function App() {
     try {
       if (deckTemplateWorkflow(selectedDeck) === "source-template-cleanup" && recipe !== "source") throw new Error("This sponsor/custom deck is preserving its source template. Use source-bound design proposals, or explicitly choose ORNL cross-template conversion before applying ORNL Studio recipes.");
       const layout = layoutId ? templateCatalog?.layouts.find((item) => item.id === layoutId) : undefined;
-      if (isProtectedOrnlTemplateSlide(selectedDeck, slideNumber) && recipe !== "source") throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and remains source-preserved. Choose another slide to redesign.`);
+      if (isProtectedOrnlTemplateSlide(selectedDeck, slideNumber)) throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and locked. Choose another slide to redesign.`);
       const studioScene = recomposeStudioWebSlide(selectedDeck.studioScene, slideNumber, recipe, layout, recipe === "source" && isProtectedOrnlTemplateSlide(selectedDeck, slideNumber)
         ? `Preserve the approved ORNL template composition on slide ${slideNumber} exactly.`
         : `Recompose slide ${slideNumber} with the shared ${recipe} web layout while retaining exact source content and editable PowerPoint bindings.`);
@@ -4859,10 +5133,11 @@ export default function App() {
     if (!selectedDeck) return;
     clearMessages();
     try {
-      const proposal = createDesignerCleanupProposal(selectedDeck, project.project.updatedAt);
+      const designerDeck = withDesignerCleanupScope(selectedDeck);
+      const proposal = createDesignerCleanupProposal(designerDeck, project.project.updatedAt);
       setProject((current) => ({
         ...current,
-        decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...deck, proposal, status: "proposal-ready" } : deck),
+        decks: current.decks.map((deck) => deck.id === selectedDeck.id ? { ...designerDeck, proposal, status: "proposal-ready" } : deck),
         activity: [...current.activity, { id: crypto.randomUUID(), at: new Date().toISOString(), action: "designer-cleanup-proposal-staged", detail: `Reviewed every slide and staged supported designer cleanup for ${selectedDeck.name}; nothing was applied.` }],
       }));
       setActiveView("review");
@@ -5092,6 +5367,12 @@ export default function App() {
     return <ResourcesView project={project} aiSessionEnabled={mcpEnabled} onAdd={() => void addResources()} onRemove={removeResource} />;
   }, [activeView, currentStudioDeckBuild, currentStudioQualification, latestStudioNativeRender, mcpEnabled, nativeRenderCatalogs, nativeRenderLoadingKey, project, proposalCatalogLoadingDeckId, proposalCatalogs, selectedDeck, slideCatalogLoadingDeckId, slideCatalogs, slideWorkspaceRequest, studioDeckBuildLoadingId, studioFreshPreviews, studioOpenSlideNumber, templateCatalog, templateInstalledAt, templateLoading, templateNativeLoading, templateNativeRender]);
   const mcpActivityMessage = mcpActivity ? mcpActivityCopy(mcpActivity) : undefined;
+  const autosaveError = autosaveUi.checkpoint?.phase === "error" ? autosaveUi.checkpoint.error : autosaveUi.package?.phase === "error" ? autosaveUi.package.error : undefined;
+  const checkpointCurrent = autosaveUi.checkpoint?.phase === "saved" && autosaveUi.checkpoint.revision === project.project.updatedAt;
+  const packageCurrent = autosaveUi.package?.phase === "saved" && autosaveUi.package.revision === project.project.updatedAt;
+  const autosaveWorking = [autosaveUi.checkpoint?.phase, autosaveUi.package?.phase].some((phase) => phase === "pending" || phase === "saving");
+  const autosaveLabel = autosaveError ? "Autosave needs attention" : packageCurrent ? "All changes saved" : checkpointCurrent ? "Recovery saved · packaging" : autosaveWorking ? "Saving changes" : projectHasRecoverableWork(project) ? "Autosave ready" : "Not saved yet";
+  const autosavePhase = autosaveError ? "error" : packageCurrent || checkpointCurrent ? "saved" : autosaveWorking ? "saving" : "idle";
 
   return (
     <div className="app-shell" onDragEnter={handleDragEnter} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
@@ -5099,6 +5380,7 @@ export default function App() {
         <div className="brand" data-tour="brand"><span className="brand-mark">PS</span><div><strong>Presentation Studio</strong><small>Audit · Clean · Review</small></div></div>
         <div className="project-title"><span>{project.project.name}</span><small>{project.decks.length} decks · {project.settings.contentPolicy}</small></div>
         <div className="top-actions" data-tour="save">
+          <div className={`autosave-status ${autosavePhase}`} role="status" aria-live="polite" title={autosaveError}>{autosavePhase === "saving" ? <ArrowsClockwise className="spinner" size={15} /> : autosavePhase === "error" ? <Warning size={15} /> : <CheckCircle size={15} />}<span>{autosaveLabel}</span></div>
           <button className="button ghost small" data-tour="tour" aria-haspopup="dialog" onClick={openOnboardingTour}><Info size={17} />Tour</button>
           <button className="button ghost small" onClick={() => void openProject()}><FolderOpen size={17} />Open</button>
           <button className="button ghost small" onClick={() => void saveProject(false)}><FileArrowDown size={17} />Save</button>

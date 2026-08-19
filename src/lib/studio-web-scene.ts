@@ -378,7 +378,7 @@ export function compileStudioWebScene(deck: DeckJob, catalog?: SlideRenderCatalo
     tableLibrary: [],
     tableContinuationPlans: [],
     designSystem: {
-      id: deck.targetTemplateDecisionSource === "automatic-source-preservation" ? "source-template-preservation-web-v1" : "ornl-presentation-web-v1",
+      id: ["sponsor-source", "custom-source"].includes(deck.targetTemplateId ?? "") ? "source-template-preservation-web-v1" : "ornl-presentation-web-v1",
       standardVersion: PRESENTATION_DESIGN_STANDARD.version,
       unit: "emu",
       renderer: "html-css",
@@ -423,6 +423,7 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "card-kicker") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1, color: [palette.ornlGreen, palette.infinity, palette.hydro, palette.darkMatter][node.component.ordinal ?? 0] ?? palette.ornlGreen };
   if (node.component?.role === "card-heading") return { ...base, fontSizePt: 13.5, fontWeight: 400, lineHeight: 1.05, color: "#666B68" };
   if (node.component?.role === "card-body") return { ...base, fontSizePt: 15, fontWeight: 400, lineHeight: 1.13, color: palette.darkMatter };
+  if (node.component?.role === "metric-card") return { ...base, fontSizePt: 16.5, fontWeight: 600, lineHeight: 1.08, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "objective-body") return { ...base, fontSizePt: 18, fontWeight: 400, lineHeight: 1.16, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "step-heading") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen };
   if (node.component?.role === "step-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.14, color: palette.darkMatter };
@@ -655,15 +656,17 @@ export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutReci
   const nodes = activeNodes(slide);
   if (nodes.some((node) => node.kind === "table")) return "ornl-title-table";
   const nativeObject = slide.nodes.some((node) => node.visible && node.kind === "native-object" && !footerNode(node));
+  const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
+  const repeatedNativeGroupCount = slide.nodes.filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && !footerNode(node)).length;
   const directBodyParagraphs = nodes
     .filter((node) => node.kind === "text" && node.role === "body" && node.sourceBinding === "editable-object" && !footerNode(node))
     .flatMap((node) => node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? []);
   const questionCount = directBodyParagraphs.filter((paragraph) => paragraph.text.trim().endsWith("?")).length;
   if (nativeObject && questionCount >= 3 && questionCount <= 6) return "ornl-title-question-diagram";
+  if (bodyCount >= 8 && bodyCount <= 16 && repeatedNativeGroupCount >= 3) return "ornl-title-metric-grid";
   if (nativeObject) return "ornl-title-two-column";
   const eligibleParagraphs = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).reduce((sum, node) => sum + Math.max(1, node.sourceParagraphs?.length ?? 1), 0);
   const bodyCharacters = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).reduce((sum, node) => sum + (node.text?.length ?? 0), 0);
-  const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
   const labelCount = nodes.filter((node) => node.kind === "text" && node.role === "label" && !footerNode(node)).length;
   const structuredParagraphs = nodes
     .filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node))
@@ -737,6 +740,17 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
       const surface = { x: node.frame.x - padding, y: node.frame.y - padding, width: node.frame.width + padding * 2, height: node.frame.height + padding * 2, rotation: 0 };
       components.push({ id: `${node.component!.groupId}-surface`, kind: "rect", frame: surface, fillColor: "#F2F5F3", lineWidthPt: 0, behindContent: true });
       components.push({ id: `${node.component!.groupId}-accent`, kind: "rect", frame: { ...surface, height: points(3) }, fillColor: [palette.ornlGreen, palette.aqua, palette.forge, palette.infinity][ordinal] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
+    });
+    return components;
+  }
+  if (slide.recipe === "ornl-title-metric-grid") {
+    const cards = slide.nodes.filter((node) => node.component?.role === "metric-card");
+    const accents = [palette.ornlGreen, palette.aqua, palette.infinity, palette.forge, palette.plasma];
+    cards.forEach((node, ordinal) => {
+      const card = node.component?.frame;
+      if (!card) return;
+      components.push({ id: `${node.component!.groupId}-surface`, kind: "rect", frame: card, fillColor: "#F2F5F3", lineWidthPt: 0, behindContent: true });
+      components.push({ id: `${node.component!.groupId}-accent`, kind: "rect", frame: { ...card, width: points(4) }, fillColor: accents[Math.floor(ordinal / 2) % accents.length] ?? palette.ornlGreen, lineWidthPt: 0, behindContent: true });
     });
     return components;
   }
@@ -833,13 +847,18 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   const slide = workingScene.slides.find((item) => item.slideNumber === slideNumber)!;
   if (recipe === "template-layout" && !layout?.semantic) throw new Error("Choose an installed template layout with semantic regions before applying template-layout.");
   const nodes = activeNodes(slide);
-  const title = nodes.find((node) => node.role === "title");
+  const titleCandidates = nodes
+    .filter((node) => node.role === "title")
+    .sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x || left.zIndex - right.zIndex);
+  const title = titleCandidates[0];
+  const demotedTitleIds = new Set(titleCandidates.slice(1).map((node) => node.id));
   const footer = nodes.filter(footerNode);
   const eyebrow = nodes.find((node) => node.kind === "text" && node.role === "label" && !footerNode(node) && (!title || node.sourceFrame.y < title.sourceFrame.y));
   const content = nodes.filter((node) => node.id !== title?.id && node.id !== eyebrow?.id && !footerNode(node) && node.role !== "caption" && node.role !== "label");
   const captions = nodes.filter((node) => node.id !== eyebrow?.id && !footerNode(node) && (node.role === "caption" || node.role === "label"));
   const placements = new Map<string, StudioWebFrame>();
   const components = new Map<string, StudioWebNode["component"]>();
+  const hiddenNodeIds = new Set<string>();
   const generatedFigureTreatments: StudioFigureTreatment[] = [];
   const titleFrame = frame(.47, eyebrow ? .58 : .26, 12.39, eyebrow ? .68 : (title?.text?.length ?? 0) > 54 ? 1.14 : .95);
   const contentTop = emuInches(titleFrame.y + titleFrame.height) + .12;
@@ -1173,6 +1192,30 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       placements.set(outputVisual.id, contained(outputVisual, frame(6.53, 5.72, .42, .46)));
       components.set(outputVisual.id, { groupId: `studio-process-output-${slideNumber}`, role: "process-icon", ordinal: 0 });
     }
+  } else if (recipe === "ornl-title-metric-grid") {
+    const metrics = content
+      .filter((node) => node.kind === "text" && node.role === "body")
+      .sort((left, right) => {
+        const leftRow = Math.round(emuInches(left.sourceFrame.y) / .9);
+        const rightRow = Math.round(emuInches(right.sourceFrame.y) / .9);
+        return leftRow - rightRow || left.sourceFrame.x - right.sourceFrame.x || left.zIndex - right.zIndex;
+      });
+    const columns = metrics.length === 1 ? 1 : 2;
+    const rows = Math.ceil(metrics.length / columns);
+    const gapX = .30;
+    const gapY = .16;
+    const region = frame(.47, contentTop + .10, 12.39, Math.max(1, contentBottom - contentTop - .10));
+    const cardWidth = (emuInches(region.width) - gapX * (columns - 1)) / columns;
+    const cardHeight = (emuInches(region.height) - gapY * Math.max(0, rows - 1)) / Math.max(1, rows);
+    metrics.forEach((node, ordinal) => {
+      const row = Math.floor(ordinal / columns);
+      const column = ordinal % columns;
+      const card = frame(emuInches(region.x) + column * (cardWidth + gapX), emuInches(region.y) + row * (cardHeight + gapY), cardWidth, cardHeight);
+      placements.set(node.id, frame(emuInches(card.x) + .28, emuInches(card.y) + .10, emuInches(card.width) - .48, emuInches(card.height) - .20));
+      components.set(node.id, { groupId: `studio-metric-${slideNumber}-${ordinal + 1}`, role: "metric-card", ordinal, frame: card });
+    });
+    slide.nodes.filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && !footerNode(node)).forEach((node) => hiddenNodeIds.add(node.id));
+    for (const [id, value] of stack(captions, frame(.47, 6.72, 12.39, .18), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-steps-evidence") {
     const visual = content.find((node) => meaningfulImage(node) || node.kind === "table");
     const steps = content.filter((node) => node.id !== visual?.id && node.kind === "text").sort((left, right) => left.zIndex - right.zIndex);
@@ -1370,7 +1413,9 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       ...generatedFigureTreatments,
     ],
     constraints: [],
-    nodes: slide.nodes.map((node) => {
+    nodes: slide.nodes.map((sourceNode) => {
+      const node: StudioWebNode = demotedTitleIds.has(sourceNode.id) ? { ...sourceNode, role: "body" } : sourceNode;
+      if (hiddenNodeIds.has(node.id)) return { ...node, visible: false, component: undefined };
       const component = recipe === "source" || recipe === "template-layout" ? undefined : components.get(node.id);
       if (!placements.has(node.id)) return { ...node, component };
       const nextNode = { ...node, component };

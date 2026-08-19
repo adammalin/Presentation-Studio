@@ -82,9 +82,23 @@ function consolidatedChanges(changes: CleanupChange[]): CleanupChange[] {
 function assertDeckReady(deck: DeckJob) {
   if (!deck.audit) throw new Error("Audit the deck before staging cleanup.");
   if (!deck.targetTemplateConfirmedAt || !deck.targetTemplateId) throw new Error("Confirm the target template before staging cleanup.");
-  if (deck.audit.containsMacros || deck.audit.containsOleObjects || deck.audit.containsExternalRelationships) {
+  if (deck.audit.containsMacros || deck.audit.containsOleObjects || deck.audit.containsBlockingExternalRelationships) {
     throw new Error("Advanced or externally linked content requires manual review before automated cleanup.");
   }
+}
+
+/**
+ * Designer Cleanup is the reversible source-bound reflow workspace for every
+ * confirmed template target. For sponsor/custom decks this changes only the
+ * editing scope: the source master, layouts, artwork, theme, and relationships
+ * remain authoritative and ORNL-only operations stay blocked by template
+ * routing. Older projects may still carry cleanup-only from the former audit
+ * workflow, so entering Designer Cleanup upgrades that state automatically.
+ */
+export function withDesignerCleanupScope(deck: DeckJob): DeckJob {
+  return deck.operationScope === "compose" || deck.operationScope === "reflow"
+    ? deck
+    : { ...deck, operationScope: "reflow" };
 }
 
 function assertOrnlDesignTarget(deck: DeckJob, operation: string) {
@@ -807,10 +821,11 @@ function normalizeSelectedTables(xml: string, slideNumber: number, selectedIds: 
 
 function applyTableLayoutBlock(table: string, command: TableLayoutCommand): string {
   let columnIndex = 0;
-  let result = table.replace(/<a:gridCol\b([^>]*)\/?\s*>/g, (_tag, initial: string) => {
+  let result = table.replace(/<a:gridCol\b([^>]*)>/g, (_tag, initial: string) => {
     const width = command.columnWidthsEmu[columnIndex++];
+    const selfClosing = /\/\s*>$/.test(_tag);
     const attributes = (initial ?? "").replace(/\/\s*$/, "");
-    return width === undefined ? _tag : `<a:gridCol${setAttribute(attributes, "w", String(width))}/>`;
+    return width === undefined ? _tag : `<a:gridCol${setAttribute(attributes, "w", String(width))}${selfClosing ? "/>" : ">"}`;
   });
   let rowIndex = 0;
   result = result.replace(/<a:tr\b([^>]*)>/g, (_tag, initial: string) => {

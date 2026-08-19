@@ -27,3 +27,11 @@ test("deck consistency review identifies title, repeated-component, and related-
   assert.deepEqual(review.issues.find((issue) => issue.category === "component-type")?.slideNumbers, [3]);
   assert.deepEqual(review.issues.find((issue) => issue.category === "table-system")?.slideNumbers, [2]);
 });
+
+test("approved template-layout covers do not become false title-grid outliers", () => {
+  const coverTitle = node("cover-title", "title", 1.2);
+  const contentTitles = [node("title-1", "title"), node("title-2", "title"), node("title-3", "title")];
+  const slides = [coverTitle, ...contentTitles].map((title, index) => ({ id: `slide-${index + 1}`, slideNumber: index + 1, sourceSlideId: `source-${index + 1}`, sourceTextHash: "c".repeat(64), contentCoverage: { exactTextMapped: true, sourceCharacterCount: 1, mappedCharacterCount: 1, sourceTextBoxCount: 1, mappedTextNodeCount: 1, groupedOrUnsupportedTextPresent: false }, sourceRevision: "source", recipe: index === 0 ? "template-layout" as const : "ornl-title-content" as const, targetLayoutId: index === 0 ? "layout-1" : undefined, background: "#FFFFFF", status: "designed" as const, designRationale: "test", figureTreatments: [], nodes: [title], updatedAt: "2026-08-17T00:00:00.000Z" }));
+  const scene: StudioWebScene = { schema: STUDIO_WEB_SCENE_SCHEMA, version: STUDIO_WEB_SCENE_VERSION, revision: "cover-grid", deckId: "deck", sourceSha256: "b".repeat(64), slideSize: { width: emu(13.333), height: emu(7.5) }, sourceSlideSize: { width: emu(13.333), height: emu(7.5) }, designSystem: { id: "ornl-presentation-web-v1", standardVersion: "test", unit: "emu", renderer: "html-css", exportTarget: "editable-powerpoint", compilerModes: ["source-bound-overlay", "fresh-composition"] }, slides };
+  assert.equal(analyzeStudioDeckConsistency(scene).issues.some((issue) => issue.category === "title-grid"), false);
+});
