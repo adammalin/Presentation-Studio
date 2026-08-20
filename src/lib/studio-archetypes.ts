@@ -47,6 +47,7 @@ export function inferStudioDesignArchetype(profile: LayoutContentProfile, hints:
   if (profile.tableCount > 0) return { archetype: "table", confidence: "high", reasons: ["An editable table is the primary structured evidence."], preservationPolicy: "relationship-preserving" };
   if (profile.chartCount > 0) return { archetype: "data-visualization", confidence: "high", reasons: ["A chart or plotted data object is primary evidence."], preservationPolicy: "relationship-preserving" };
   if (hints.recommendedRecipe === "ornl-title-metric-grid") return { archetype: "comparison", confidence: "high", reasons: ["Repeated source metric rows form a comparison system; native grouping and connectors are row furniture rather than technical-diagram evidence."], preservationPolicy: "relationship-preserving" };
+  if (hints.recommendedRecipe === "ornl-title-card-grid" && profile.imageCount === 0 && (hints.connectorCount ?? 0) === 0 && profile.bodyBlockCount >= 7) return { archetype: "comparison", confidence: "high", reasons: ["Repeated exact editorial records form one dense peer grid; a legacy native group is record furniture rather than technical-diagram evidence."], preservationPolicy: "editable-composition" };
   if (hints.repeatedImageSeries || profile.imageCount >= 3 && profile.imageCount <= 6 && profile.bodyBlockCount + profile.captionBlockCount >= profile.imageCount) return { archetype: "image-series", confidence: hints.repeatedImageSeries ? "high" : "medium", reasons: [hints.repeatedImageSeries ? "Immutable source geometry exposes repeated image-heading-evidence groups." : "The slide contains a peer image set with enough supporting text to form repeated evidence groups."], preservationPolicy: "relationship-preserving" };
   if (profile.imageCount >= 8 && profile.captionBlockCount >= Math.floor(profile.imageCount * .7)) return { archetype: "portrait-series", confidence: "medium", reasons: ["A large image-label inventory is best treated as a portrait or people series."], preservationPolicy: "relationship-preserving" };
   if ((hints.connectorCount ?? 0) >= 2) return { archetype: "technical-diagram", confidence: "high", reasons: ["Multiple connectors encode a relationship-bearing technical diagram."], preservationPolicy: "relationship-preserving" };
@@ -134,6 +135,7 @@ export function planStudioComposition(profile: LayoutContentProfile, layouts: Te
     : inference.archetype === "image-series" && !hints.repeatedImageSeries
       ? (hints.connectorCount ?? 0) > 0 ? "ornl-title-figure-grid" : "ornl-title-labeled-figure-grid"
       : detailedRecipe ?? defaultRecipeForArchetype(inference.archetype);
+  const denseEditorialRecordGrid = recipe === "ornl-title-card-grid" && profile.bodyBlockCount >= 7 && profile.bodyCharacterCount >= 900;
   const standardCover = inference.archetype === "cover"
     ? layouts.find((candidate) => candidate.category === "title" && candidate.semantic?.contract.family === "cover" && candidate.semantic.contract.selectionPolicy === "sacred" && !candidate.placeholderTypes.includes("pic") && !/text[- ]only/i.test(candidate.name))
     : undefined;
@@ -166,7 +168,9 @@ export function planStudioComposition(profile: LayoutContentProfile, layouts: Te
     requiredChecks: [
       "Preserve exact source wording, numbers, units, qualifications, attribution, and semantic colors.",
       "Attach the real native ORNL master and layout; do not recreate protected marks or footer artwork.",
-      "Keep body type at or above 16 pt and captions or labels at or above 14 pt.",
+      denseEditorialRecordGrid
+        ? "This exact-content editorial record grid may use the bounded 10.5 pt record-grid exception only when PowerPoint-native measurement proves every record is readable and collision-free; do not misclassify a peer record as a footer or caption."
+        : "Keep body type at or above 16 pt and captions or labels at or above 14 pt.",
       "Preserve every image-caption, heading-evidence, table-cell, connector, and technical-figure relationship.",
       "Build, render, and measure the exact editable candidate in Microsoft PowerPoint before visual acceptance.",
     ],

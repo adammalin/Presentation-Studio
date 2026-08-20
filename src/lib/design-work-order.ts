@@ -26,7 +26,11 @@ export function contentProfileForSlide(deck: DeckJob, slideNumber: number): Layo
   const titleTextBox = textBoxes.filter((textBox) => textBox.role === "title" && textBox.characterCount > 0).sort((left, right) => left.geometry.y - right.geometry.y || right.fontSizes[0] - left.fontSizes[0])[0];
   const bodyTextBoxes = textBoxes.filter((textBox) => textBox.role !== "title" && textBox.characterCount > 0);
   const slideHeight = deck.audit?.slideSize.height ?? 6_858_000;
-  const captionTextBoxes = bodyTextBoxes.filter((textBox) => ["caption", "label"].includes(textBox.role) || textBox.geometry.height / slideHeight < 0.105);
+  const editorialRecordTextBoxes = bodyTextBoxes.filter((textBox) => {
+    const paragraphs = textBox.paragraphs.filter((paragraph) => paragraph.text.trim());
+    return paragraphs.length >= 2 && /^20\d{2}$/.test(paragraphs[0]?.text.trim() ?? "") && textBox.characterCount >= 40;
+  });
+  const captionTextBoxes = bodyTextBoxes.filter((textBox) => !editorialRecordTextBoxes.includes(textBox) && (["caption", "label"].includes(textBox.role) || textBox.geometry.height / slideHeight < 0.105));
   const primaryBodyTextBoxes = bodyTextBoxes.filter((textBox) => !captionTextBoxes.includes(textBox));
   const fallbackBodyCharacters = Math.max(0, slide.text.length - slide.title.length);
   const bodyCharacterCount = primaryBodyTextBoxes.length ? primaryBodyTextBoxes.reduce((sum, textBox) => sum + textBox.characterCount, 0) : bodyTextBoxes.length ? 0 : fallbackBodyCharacters;

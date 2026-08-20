@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-20.42-black-box-qualification",
+  "version": "2026-08-20.43-editorial-grid-qualification",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -334,6 +334,7 @@
       "technicalFigure": "Inventory the complete message first. Preserve a dense screenshot, code, schematic, or mixed composite as one source-locked evidence unit by default; optionally frame it with restrained ORNL geometry. A hybrid rebuild may replace only presentation annotations while retaining source screenshots and data. A full redraw remains a candidate until labels, values, sequence, grouping, causality, and source identity are verified.",
       "table": "Use the shared table component, keep the lower logo safe zone clear, and select standard or dense-technical typography from measured content density.",
       "figureGrid": "Use consistent visual fields and caption spacing; contain source images without distortion. When paired figures have different aspect ratios, place them inside equal neutral evidence fields rather than stretching or cropping them. Keep each source figure, its exact label, and its caption bound as one reusable component when the relationship is unambiguous.",
+      "editorialRecordGrid": "Treat seven to eighteen year-led peer records as one ordered semantic grid even when PowerPoint misclassifies a narrow peer as a caption or stores some peers inside a legacy group. Recover every exact record, suppress only the obsolete carrier furniture, and use the bounded 10.5 pt record-grid exception only after native PowerPoint proves zero overflow and collision.",
       "references": "Use the shared body-list component with consistent bullet indentation, hanging indent, line spacing, and paragraph spacing."
     },
     "paragraph": {
@@ -364,6 +365,7 @@
       "questionDiagram": "One short exact introduction plus three to six exact source questions in a restrained left rail, paired with one large source-locked technical diagram on the right. Preserve the diagram's complete internal glossary and relationships.",
       "challengeEvidence": "One exact assertion, one short orienting line, three peer challenge cards, and up to two source-locked evidence regions. Preserve dense technical diagrams as one verified unit when their internal meaning cannot be safely reconstructed.",
       "processFlow": "Four source-bound inputs in a consistent two-by-two card system, followed by ordered stage and output bands plus exact supporting copy. Pair icons and labels by source relationship and z-order rather than page position.",
+      "editorialRecordGrid": "Seven to eighteen exact year-led records arranged in source reading order on a four- or six-column square-cornered grid. Every peer uses one consistent outline, inset, type treatment, and measured baseline; no peer may fall into a generic caption rail.",
       "glossary": "A compact Aptos caption block below primary content with no decorative empty column.",
       "tableStandard": "The standard editable ORNL table variant with a Hale Navy header, Aptos type, measured padding, alternating neutral rows, and minimal horizontal rules.",
       "tableDenseTechnical": "The dense editable ORNL table variant using the same palette and structure with compact measured type and padding."
@@ -384,6 +386,10 @@
       "title-metric-grid": {
         "useWhen": "Eight to sixteen short peer metrics or outcomes appear inside repeated legacy or sponsor-native groups.",
         "regions": "titleBar plus a two-column metric grid. Rebuild exact metric text as editable Aptos cards on square-cornered Polar fields with one restrained ORNL accent rail per source row; suppress obsolete decorative source boxes while preserving every word and value."
+      },
+      "title-editorial-record-grid": {
+        "useWhen": "Seven to eighteen exact year-led awards, projects, milestones, or comparable records form one dense peer set.",
+        "regions": "titleBar plus a four- or six-column editorialRecordGrid. Use source reading order, equal peer gaps, source-proven relative column widths, consistent ORNL Green outlines, and the bounded 10.5 pt exception only when the native candidate has zero overflow or collision."
       },
       "title-diagram": {
         "useWhen": "A process, hierarchy, or relationship is the primary evidence.",
@@ -544,7 +550,7 @@
     "Keep dense technical slides readable without deleting content. If exact content cannot fit safely, stage a split-slide recommendation and request one focused approval.",
     "Use restrained, semantically meaningful icons or native vector diagrams only when they improve comprehension. Decoration alone is not a reason to add media.",
     "Treat the ORNL and DOE marks as protected artwork. Use only approved template or source assets, preserve their aspect ratio with contain behavior, and reject any crop, stretch, recolor, substitution, or reconstruction.",
-    "A slide is not done until its exact current central-deck revision has rendered and measured successfully in Microsoft PowerPoint, every ordinary body run is at least 16 pt, every ordinary label or caption is at least 14 pt, every title is clear and dominant, and there is zero text overflow, accidental text collision, table-cell overflow, off-slide content, or protected-mark distortion."
+    "A slide is not done until its exact current central-deck revision has rendered and measured successfully in Microsoft PowerPoint, every ordinary body run is at least 16 pt, every ordinary label or caption is at least 14 pt, a qualified dense editorial record-grid run is at least 10.5 pt, every title is clear and dominant, and there is zero text overflow, accidental text collision, table-cell overflow, off-slide content, or protected-mark distortion."
   ],
   "collaborationRules": [
     "Stage related object moves and resizes on one slide as one atomic layout transaction. Calculate the final arrangement together and reject new overlap, worsened text fit, unsafe-edge regression, or accidental picture distortion unless a deliberate exception and rationale are recorded.",

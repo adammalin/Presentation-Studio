@@ -373,6 +373,91 @@ test("comparison-card recipe ignores footer furniture and composes repeated sema
   assert.deepEqual(slide.nodes.map((node) => node.text).filter(Boolean).sort(), nodes.map((node) => node.text).filter(Boolean).sort());
 });
 
+test("dense year-led editorial records remain one collision-free grid even when PowerPoint misclassifies a peer as a caption", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const title: StudioWebNode = {
+    ...seed,
+    id: "award-title",
+    sourceObjectId: "award-title",
+    sourceShapeId: "award-title",
+    sourceBinding: "editable-object",
+    name: "Award title",
+    kind: "text",
+    role: "title",
+    text: "Excellence in buildings research: 24 R&D 100 Awards",
+    exactContent: true,
+    sourceFrame: { x: emu(.1), y: emu(.34), width: emu(13), height: emu(.7), rotation: 0 },
+    frame: { x: emu(.1), y: emu(.34), width: emu(13), height: emu(.7), rotation: 0 },
+    visible: true,
+    locked: false,
+  };
+  const records = Array.from({ length: 12 }, (_, index): StudioWebNode => {
+    const column = index % 6;
+    const row = Math.floor(index / 6);
+    const year = index < 4 ? "2026" : index < 10 ? "2025" : "2024";
+    const body = `Award record ${index + 1} preserves its complete title, researchers, collaborators, technical qualifier, and attribution without rewriting or omission.`;
+    return {
+      ...seed,
+      id: `award-${index + 1}`,
+      sourceObjectId: `award-${index + 1}`,
+      sourceShapeId: `award-${index + 1}`,
+      sourceBinding: index < 4 ? "catalog-derived" : "editable-object",
+      sourceTextOrder: index + 1,
+      zIndex: index + 1,
+      name: `Award record ${index + 1}`,
+      kind: "text",
+      role: index === 7 ? "caption" : "body",
+      text: `${year} ${body}`,
+      exactContent: true,
+      sourceParagraphs: [
+        { index: 1, text: year, textHash: `year-${index}`, characterCount: year.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [12] },
+        { index: 2, text: body, textHash: `body-${index}`, characterCount: body.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
+      ],
+      sourceFrame: { x: emu(.31 + column * 2.16), y: emu(1.26 + row * 2.45), width: emu(2.02), height: emu(2.04), rotation: 0 },
+      frame: { x: emu(.31 + column * 2.16), y: emu(1.26 + row * 2.45), width: emu(2.02), height: emu(2.04), rotation: 0 },
+      visible: true,
+      locked: false,
+    };
+  });
+  const legacyGroup: StudioWebNode = {
+    ...seed,
+    id: "legacy-award-group",
+    sourceObjectId: "legacy-award-group",
+    sourceShapeId: "legacy-award-group",
+    sourceBinding: "editable-object",
+    name: "Legacy award carrier",
+    kind: "native-object",
+    role: "group",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    exactContent: false,
+    sourceFrame: { x: emu(.25), y: emu(1.20), width: emu(8.85), height: emu(2.18), rotation: 0 },
+    frame: { x: emu(.25), y: emu(1.20), width: emu(8.85), height: emu(2.18), rotation: 0 },
+    visible: true,
+    locked: false,
+  };
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, legacyGroup, ...records] }] }, sourceSlide.slideNumber, "ornl-title-card-grid");
+  const slide = designed.slides[0];
+  const designedRecords = records.map((record) => slide.nodes.find((node) => node.id === record.id)!);
+  assert.equal(designedRecords.every((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-")), true);
+  assert.equal(slide.nodes.find((node) => node.id === "award-8")?.visible, true);
+  assert.equal(slide.nodes.find((node) => node.id === legacyGroup.id)?.visible, false);
+  assert.equal(new Set(designedRecords.map((node) => Math.round(node.frame.y))).size, 2);
+  assert.equal(designedRecords.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 11), true);
+  for (let left = 0; left < designedRecords.length; left += 1) for (let right = left + 1; right < designedRecords.length; right += 1) {
+    const a = designedRecords[left].frame;
+    const b = designedRecords[right].frame;
+    const overlaps = a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    assert.equal(overlaps, false, `${designedRecords[left].id} overlaps ${designedRecords[right].id}`);
+  }
+  assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("editorial-record-grid") && component.id.endsWith("-outline")).length, 12);
+});
+
 test("repeated sponsor metric groups become an editable ORNL metric grid instead of a preserved legacy figure", async () => {
   const { deck, catalog } = await fixture();
   const scene = compileStudioWebScene(deck, catalog);

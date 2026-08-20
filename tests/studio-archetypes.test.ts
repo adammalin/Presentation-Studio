@@ -123,3 +123,19 @@ test("uses detailed source structure to choose a compatible recipe inside the br
   assert.equal(figureComparison.recipe, "ornl-title-figure-grid");
   assert.match(figureComparison.reasons.join(" "), /source structure supports/i);
 });
+
+test("routes a dense editorial record grid around legacy native carrier furniture", () => {
+  const denseRecords = profile({
+    bodyBlockCount: 8,
+    bodyBlockCharacterCounts: Array.from({ length: 8 }, () => 180),
+    bodyCharacterCount: 1_440,
+    imageCount: 0,
+    desiredIntent: "comparison",
+  });
+  const plan = planStudioComposition(denseRecords, layouts, { nativeObjectCount: 1, connectorCount: 0, recommendedRecipe: "ornl-title-card-grid" });
+  assert.equal(plan.archetype, "comparison");
+  assert.equal(plan.strategy, "shared-archetype-on-native-base");
+  assert.equal(plan.recipe, "ornl-title-card-grid");
+  assert.match(plan.reasons.join(" "), /editorial records/i);
+  assert.match(plan.requiredChecks.join(" "), /10\.5 pt record-grid exception/i);
+});

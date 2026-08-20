@@ -430,6 +430,14 @@ function meaningfulImage(node: StudioWebNode): boolean {
   return node.kind === "image" && !footerNode(node) && !sourceClassificationBadge(node) && sourceFrameIntersectsSlide(node.sourceFrame) && node.sourceFrame.width * node.sourceFrame.height >= inches(.45) * inches(.35);
 }
 
+function editorialRecord(node: StudioWebNode): boolean {
+  if (node.kind !== "text" || footerNode(node) || node.role === "title" || !node.exactContent) return false;
+  const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? [];
+  return paragraphs.length >= 2
+    && /^20\d{2}$/.test(paragraphs[0]?.text.trim() ?? "")
+    && (node.text?.trim().length ?? 0) >= 40;
+}
+
 function protectedBrandMark(node: StudioWebNode): boolean {
   return node.component?.role === "footer-logo" || /(?:^|\b)(?:ornl|doe|department of energy|oak ridge|wordmark|logo)(?:\b|$)/i.test(node.name);
 }
@@ -464,6 +472,20 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "image-series-heading") return { ...base, fontSizePt: 14, fontWeight: 700, lineHeight: 1.02, color: palette.polar, textAlign: "center", verticalAlign: "middle", paddingPt: { top: 3, right: 2, bottom: 3, left: 2 } };
   if (node.component?.role === "image-series-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1, color: palette.darkMatter, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
   if (node.component?.role === "technical-annotation") {
+    if (node.component.groupId.startsWith("studio-editorial-record-grid-")) {
+      return {
+        ...node.style,
+        fontFamily: "Aptos",
+        fontSizePt: 11,
+        fontWeight: 400,
+        lineHeight: 1.02,
+        color: palette.ornlGreen,
+        borderColor: undefined,
+        borderWidthPt: 0,
+        verticalAlign: "top",
+        paddingPt: { top: 1, right: 2, bottom: 1, left: 2 },
+      };
+    }
     if (node.component.groupId.startsWith("studio-dense-source-grid-")) {
       // Some exact-content editorial grids cannot remain on one slide at the
       // ordinary 14–16 pt floor. Keep their authored geometry, border logic,
@@ -502,7 +524,8 @@ function fittedStyle(node: StudioWebNode, style: StudioWebNode["style"], target:
   const heightPt = target.height / EMU_PER_POINT - style.paddingPt.top - style.paddingPt.bottom;
   if (widthPt <= 0 || heightPt <= 0) return style;
   const denseEditorialGrid = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-");
-  const minimum = node.role === "title" ? 24 : node.component?.role === "footer-meta" || denseEditorialGrid ? 8.5 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading" ? 14 : 16;
+  const editorialRecordGrid = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-");
+  const minimum = node.role === "title" ? 24 : node.component?.role === "footer-meta" || denseEditorialGrid ? 8.5 : editorialRecordGrid ? 10.5 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading" ? 14 : 16;
   const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? [{ text: node.text }];
   const fits = (fontSizePt: number) => {
     const averageGlyphWidth = fontSizePt * .60;
@@ -805,6 +828,8 @@ export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutReci
   const nodes = activeNodes(slide);
   if (nodes.some((node) => node.kind === "table")) return "ornl-title-table";
   if (inferRepeatedImageSeries(slide)) return "ornl-title-image-series";
+  const editorialRecordCount = nodes.filter(editorialRecord).length;
+  if (editorialRecordCount >= 7 && editorialRecordCount <= 18) return "ornl-title-card-grid";
   const nativeObject = slide.nodes.some((node) => node.visible && node.kind === "native-object" && !footerNode(node));
   const bodyCount = nodes.filter((node) => node.kind === "text" && node.role === "body" && !footerNode(node)).length;
   const repeatedNativeGroupCount = slide.nodes.filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && !footerNode(node)).length;
@@ -902,6 +927,23 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
     components.push({ id: `${treatment.id}-accent`, kind: "rect", frame: { ...figureFrame, height: points(2) }, fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true });
   }
   if (slide.recipe === "source" || slide.recipe === "template-layout") return components;
+  const editorialRecordGrid = slide.nodes.filter((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-"));
+  if (editorialRecordGrid.length) {
+    editorialRecordGrid.forEach((node, ordinal) => {
+      const card = node.component?.frame;
+      if (!card) return;
+      components.push({
+        id: `${node.component!.groupId}-${ordinal + 1}-outline`,
+        kind: "rect",
+        frame: card,
+        fillColor: "#FFFFFF",
+        lineColor: palette.ornlGreen,
+        lineWidthPt: 1,
+        behindContent: true,
+      });
+    });
+    return components;
+  }
   const denseEditorialGrid = slide.nodes.filter((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-"));
   if (denseEditorialGrid.length) {
     // The legacy awards/editorial pattern encodes its grouping with thin
@@ -1703,14 +1745,55 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     }
   } else if (recipe === "ornl-title-card-grid") {
     const bodies = content.filter((node) => node.kind === "text" && node.role === "body").sort((left, right) => left.zIndex - right.zIndex);
+    // Dense editorial grids often mix directly editable text boxes with text
+    // recovered from a legacy PowerPoint group. PowerPoint may classify one
+    // peer record as a caption simply because its source box is narrower than
+    // its neighbors. Treat matching year-led, multi-paragraph records as one
+    // semantic set so no record falls into the generic full-width caption
+    // rail. This is a grid, not a comparison-card composition.
+    const editorialRecords = [...new Map([...bodies, ...captions.filter(editorialRecord)].filter(editorialRecord).map((node) => [node.id, node])).values()]
+      .sort((left, right) => {
+        const leftRow = Math.round(emuInches(left.sourceFrame.y) / .75);
+        const rightRow = Math.round(emuInches(right.sourceFrame.y) / .75);
+        return leftRow - rightRow || left.sourceFrame.x - right.sourceFrame.x || left.zIndex - right.zIndex;
+      });
     const groupNodeIds = new Set<string>();
+    const useEditorialRecordGrid = editorialRecords.length >= 7 && editorialRecords.length <= 18;
+    if (useEditorialRecordGrid) {
+      const columns = editorialRecords.length <= 8 ? 4 : 6;
+      const rows = Math.ceil(editorialRecords.length / columns);
+      const gapX = .10;
+      const gapY = .10;
+      const region = frame(.47, contentTop + .10, 12.39, Math.max(1, contentBottom - contentTop - .16));
+      const cardHeight = (emuInches(region.height) - gapY * Math.max(0, rows - 1)) / rows;
+      Array.from({ length: rows }, (_, row) => editorialRecords.slice(row * columns, (row + 1) * columns)).forEach((rowRecords, row) => {
+        const availableWidth = emuInches(region.width) - gapX * Math.max(0, rowRecords.length - 1);
+        const sourceWidthTotal = rowRecords.reduce((sum, node) => sum + Math.max(.75, emuInches(node.sourceFrame.width)), 0);
+        let cursorX = emuInches(region.x);
+        rowRecords.forEach((node, column) => {
+          const cardWidth = availableWidth * Math.max(.75, emuInches(node.sourceFrame.width)) / sourceWidthTotal;
+          const ordinal = row * columns + column;
+          const card = frame(cursorX, emuInches(region.y) + row * (cardHeight + gapY), cardWidth, cardHeight);
+          placements.set(node.id, frame(emuInches(card.x) + .07, emuInches(card.y) + .07, Math.max(.35, emuInches(card.width) - .14), Math.max(.35, emuInches(card.height) - .14)));
+          components.set(node.id, { groupId: `studio-editorial-record-grid-${slideNumber}`, role: "technical-annotation", ordinal, frame: card });
+          groupNodeIds.add(node.id);
+          cursorX += cardWidth + gapX;
+        });
+      });
+      // The parent group is only a legacy carrier for the first peer records;
+      // their exact editable text is already recovered as catalog-derived
+      // nodes above. Do not rasterize that group on top of the new grid.
+      slide.nodes
+        .filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && editorialRecords.some((record) => sourceFrameContains(node.sourceFrame, record.sourceFrame)))
+        .forEach((node) => hiddenNodeIds.add(node.id));
+    }
     const slideMiddle = inches(PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches / 2);
     const sourceColumns = [
       bodies.filter((node) => node.sourceFrame.x + node.sourceFrame.width / 2 < slideMiddle),
       bodies.filter((node) => node.sourceFrame.x + node.sourceFrame.width / 2 >= slideMiddle),
     ].filter((column) => column.length > 0);
     const useSourceColumns = sourceColumns.length === 2 && sourceColumns.every((column) => column.length >= 2);
-    if (useSourceColumns) {
+    if (!useEditorialRecordGrid && useSourceColumns) {
       sourceColumns.forEach((column, ordinal) => {
         const ordered = [...column].sort((left, right) => left.sourceTextOrder - right.sourceTextOrder || left.sourceFrame.y - right.sourceFrame.y || left.zIndex - right.zIndex);
         const heading = ordered.find((node) => node.sourceBinding !== "semantic-atom" && (node.text?.length ?? 0) <= 120) ?? ordered[0];
@@ -1738,7 +1821,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       if (paragraph && !paragraph.bullet && paragraph.level === 0) semanticSections.push({ heading: body, items: [] });
       else semanticSections.at(-1)?.items.push(body);
     }
-    const useSemanticSections = !useSourceColumns && semanticSections.length >= 2 && semanticSections.length <= 4 && semanticSections.every((section) => section.items.length > 0);
+    const useSemanticSections = !useEditorialRecordGrid && !useSourceColumns && semanticSections.length >= 2 && semanticSections.length <= 4 && semanticSections.every((section) => section.items.length > 0);
     if (useSemanticSections) {
       semanticSections.forEach((section, ordinal) => {
         const groupId = `studio-card-${slideNumber}-${ordinal + 1}`;
@@ -1755,7 +1838,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       });
     }
     let priorBodyZ = title?.zIndex ?? -Infinity;
-    if (!useSourceColumns && !useSemanticSections) bodies.forEach((body, ordinal) => {
+    if (!useEditorialRecordGrid && !useSourceColumns && !useSemanticSections) bodies.forEach((body, ordinal) => {
       const groupId = `studio-card-${slideNumber}-${ordinal + 1}`;
       const card = cardFrame(ordinal, bodies.length, contentTop + .05, contentBottom - .23);
       const labels = captions.filter((node) => node.kind === "text" && node.zIndex > priorBodyZ && node.zIndex < body.zIndex).sort((left, right) => left.zIndex - right.zIndex);
