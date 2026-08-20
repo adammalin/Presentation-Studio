@@ -10,6 +10,7 @@ import { compilePresentationScene } from "../src/lib/scene-graph";
 import { compileStudioWebScene, inferRepeatedImageSeries, recommendedStudioRecipe, recomposeStudioWebSlide } from "../src/lib/studio-web-scene";
 import { planStudioComposition, type StudioCompositionPlan } from "../src/lib/studio-archetypes";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
+import { validateStudioCompositionContent } from "../src/lib/studio-composition-validation";
 import { analyzeStudioDesignImpact } from "../src/lib/studio-design-impact";
 import { contentProfileForSlide } from "../src/lib/design-work-order";
 import { rankLayoutCompatibility } from "../src/lib/layout-semantics";
@@ -143,7 +144,7 @@ export async function qualifyStudioWebBenchmark(
   outputRoot: string,
   benchmarkPath?: string,
   expected?: { sourceSha256?: string; benchmarkSha256?: string },
-  options?: { templatePath?: string; designMode?: "shared" | "template" },
+  options?: { templatePath?: string; designMode?: "shared" | "template"; benchmarkSlideNumbers?: number[] },
 ) {
   await fs.mkdir(outputRoot, { recursive: true });
   const sourceBytes = new Uint8Array(await fs.readFile(sourcePath));
@@ -266,6 +267,7 @@ export async function qualifyStudioWebBenchmark(
   const candidatePath = path.join(outputRoot, "studio-web-benchmark.pptx");
   await fs.writeFile(candidatePath, candidateBytes);
   const candidateAudit = await auditPptx(candidateBytes);
+  const contentValidation = validateStudioCompositionContent({ scene, sourceAudit, candidateAudit, outputSlides: composition.outputSlides });
   const rebuiltDeck = await candidateDeck(candidateAudit, candidateBytes, path.basename(candidatePath));
   const nativeMeasurement = await measureNative({ bytes: candidateBytes, name: path.basename(candidatePath) });
   const measurement = bindNativeMeasurement(rebuiltDeck, nativeMeasurement);
@@ -282,7 +284,7 @@ export async function qualifyStudioWebBenchmark(
     if (expected?.benchmarkSha256 && expected.benchmarkSha256 !== benchmarkSha256) throw new Error(`The private visual-benchmark hash changed. Expected ${expected.benchmarkSha256}, received ${benchmarkSha256}.`);
     const benchmarkRender = await renderNative({ bytes: benchmarkBytes, name: path.basename(benchmarkPath), width: 2200, format: "png" });
     benchmarkRenderStatus = benchmarkRender.status;
-    benchmarkImages = await writeRender(benchmarkRender, outputRoot, "visual-benchmark");
+    benchmarkImages = await writeRender(benchmarkRender, outputRoot, "visual-benchmark", options?.benchmarkSlideNumbers);
   }
   const candidateProtectedSlideNumbers = new Set(sourceDeck.protectedSlideNumbers.map((slideNumber) => slideNumbers.indexOf(slideNumber) + 1).filter((slideNumber) => slideNumber > 0));
   const editableTextBoxes = candidateAudit.textBoxes.filter((textBox) => !candidateProtectedSlideNumbers.has(textBox.slideNumber));
@@ -298,8 +300,8 @@ export async function qualifyStudioWebBenchmark(
   }));
   const checks = {
     mappingCompleteBeforeDesign,
-    exactVisibleTextSequence: exactSelectedText(sourceAudit, candidateAudit, slideNumbers),
-    exactNativeTableGrid: exactSelectedTableGrid(sourceAudit, candidateAudit, slideNumbers),
+    exactVisibleTextSequence: contentValidation.exactSourceContent && contentValidation.exactCandidateContent,
+    exactNativeTableGrid: contentValidation.exactNativeTableContentAndStructure,
     allEditableTextUsesAptosOrSymbolFont: editableTextBoxes.every((textBox) => textBox.fontFamilies.every((family) => family === "Aptos" || ["Wingdings", "Symbol"].includes(family))) && editableTables.every((table) => table.cellFonts.every((family) => family === "Aptos")),
     nativePowerPointRenderReady: candidateRender.status === "ready" && candidateRender.renderer === "powerpoint-native" && candidateRender.authoritative,
     nativePowerPointMeasurementReady: nativeMeasurement.status === "ready" && nativeMeasurement.authority === "powerpoint-native",
@@ -323,6 +325,8 @@ export async function qualifyStudioWebBenchmark(
     benchmark: benchmarkPath ? { path: benchmarkPath, sha256: benchmarkSha256, renderStatus: benchmarkRenderStatus } : undefined,
     candidate: { path: candidatePath, sha256: await sha256(candidateBytes), compositionPlans, recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, archetype: slide.designArchetype, interventionLevel: slide.intervention?.level, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, warnings: candidateWarnings, textNodeCount: composition.textNodeCount, tableCount: composition.tableCount, imageCount: composition.imageCount, ignoredSourceFurnitureCount: composition.ignoredSourceFurnitureCount, generatedComponentCount: composition.generatedComponentCount },
     metrics,
+    contentValidation,
+    acceptanceMetrics: { nativeTextOverflowCount: overflowEvidence.length, offSlideObjectCount: metrics.totals.offSlideObjectCount, tableCellClearanceViolationCount: metrics.totals.tableCellClearanceViolationCount },
     nativeTextOverflowEvidence: overflowEvidence,
     protectedSlideHashes,
     designImpact,

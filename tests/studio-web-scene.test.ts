@@ -437,8 +437,10 @@ test("repeated sponsor metric groups become an editable ORNL metric grid instead
   assert.equal(slide.recipe, "ornl-title-metric-grid");
   assert.equal(metricCards.length, metricTexts.length);
   assert.deepEqual(metricCards.map((node) => node.text), metricTexts);
-  assert.equal(groups.every((group) => slide.nodes.find((node) => node.id === group.id)?.visible === false), true);
-  assert.equal(metricCards.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 16), true);
+  assert.equal(groups.every((group) => slide.nodes.find((node) => node.id === group.id)?.visible === true), true);
+  assert.equal(slide.figureTreatments.filter((treatment) => treatment.id.startsWith("studio-auto-metric-icon-")).length, metricTexts.length);
+  assert.equal(slide.figureTreatments.every((treatment) => treatment.crop && treatment.lockAspectRatio), true);
+  assert.equal(metricCards.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 15.5), true);
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("studio-metric-") && component.id.endsWith("-surface")).length, metricTexts.length);
   assert.equal(studioGeneratedComponents(slide).some((component) => component.id.includes("studio-auto") || component.lineWidthPt > 0), false);
 });

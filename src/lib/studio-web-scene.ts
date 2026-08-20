@@ -156,10 +156,9 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
   const sourceRowWeights = table && table.rows?.length === table.rowCount
     ? normalizedTableWeights([...table.rows].sort((left, right) => left.index - right.index).map((row) => row.heightEmu), table.rowCount)
     : undefined;
-  if (table) {
-    const dense = table.columnCount >= 6 || table.rowCount >= 9 || table.totalCellCharacterCount >= 900 || table.maximumCellCharacterCount >= 180;
-    style.fontSizePt = dense ? PRESENTATION_DESIGN_STANDARD.tableVariants.denseTechnical.bodyFontSizePt : PRESENTATION_DESIGN_STANDARD.tableVariants.standard.bodyFontSizePt;
-  }
+  const denseTable = Boolean(table && (table.columnCount >= 6 || table.rowCount >= 9 || table.totalCellCharacterCount >= 900 || table.maximumCellCharacterCount >= 180));
+  const extremeDenseTable = Boolean(table && (table.totalCellCharacterCount >= 2_200 || table.maximumCellCharacterCount >= 700));
+  if (table) style.fontSizePt = extremeDenseTable ? 8.5 : denseTable ? PRESENTATION_DESIGN_STANDARD.tableVariants.denseTechnical.bodyFontSizePt : PRESENTATION_DESIGN_STANDARD.tableVariants.standard.bodyFontSizePt;
   return {
     id: `studio-${object.id}`,
     sourceObjectId: object.id,
@@ -194,7 +193,7 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
         borderMode: "subtle",
         borderColor: "#DBDCDB",
         borderWidthPt: .75,
-        defaultPaddingPt: { top: 4, right: 7, bottom: 4, left: 7 },
+        defaultPaddingPt: extremeDenseTable ? { top: 2, right: 4, bottom: 2, left: 4 } : { top: 4, right: 7, bottom: 4, left: 7 },
         cellStyles: [],
       },
     } : undefined,
@@ -455,7 +454,7 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "card-kicker") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1, color: [palette.ornlGreen, palette.infinity, palette.hydro, palette.darkMatter][node.component.ordinal ?? 0] ?? palette.ornlGreen };
   if (node.component?.role === "card-heading") return { ...base, fontSizePt: 14, fontWeight: 400, lineHeight: 1.05, color: "#666B68" };
   if (node.component?.role === "card-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.08, color: palette.darkMatter };
-  if (node.component?.role === "metric-card") return { ...base, fontSizePt: 16.5, fontWeight: 600, lineHeight: 1.08, color: palette.darkMatter, verticalAlign: "middle" };
+  if (node.component?.role === "metric-card") return { ...base, fontSizePt: 15.5, fontWeight: 600, lineHeight: 1, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "objective-body") return { ...base, fontSizePt: 18, fontWeight: 400, lineHeight: 1.16, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "step-heading") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen };
   if (node.component?.role === "step-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.14, color: palette.darkMatter };
@@ -464,7 +463,26 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "image-series-media") return { ...base, paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: "contain" };
   if (node.component?.role === "image-series-heading") return { ...base, fontSizePt: 14, fontWeight: 700, lineHeight: 1.02, color: palette.polar, textAlign: "center", verticalAlign: "middle", paddingPt: { top: 3, right: 2, bottom: 3, left: 2 } };
   if (node.component?.role === "image-series-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1, color: palette.darkMatter, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
-  if (node.component?.role === "technical-annotation") return { ...base, fontSizePt: 14, fontWeight: node.style.fontWeight, lineHeight: 1.04, color: node.style.color, verticalAlign: "middle" };
+  if (node.component?.role === "technical-annotation") {
+    if (node.component.groupId.startsWith("studio-dense-source-grid-")) {
+      // Some exact-content editorial grids cannot remain on one slide at the
+      // ordinary 14–16 pt floor. Keep their authored geometry, border logic,
+      // and hierarchy together and use one explicit, reviewable exception
+      // instead of exploding the slide through a generic recipe.
+      return {
+        ...node.style,
+        fontFamily: "Aptos",
+        fontSizePt: 8.5,
+        fontWeight: node.style.fontWeight,
+        lineHeight: 1,
+        color: palette.ornlGreen,
+        borderColor: node.style.borderWidthPt > 0 ? palette.ornlGreen : node.style.borderColor,
+        verticalAlign: "top",
+        paddingPt: { top: 1, right: 2, bottom: 1, left: 2 },
+      };
+    }
+    return { ...base, fontSizePt: 14, fontWeight: node.style.fontWeight, lineHeight: 1.04, color: node.style.color, verticalAlign: "middle" };
+  }
   if (node.component?.role === "question-intro") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.12, color: "#666B68" };
   if (node.component?.role === "question-item") return { ...base, fontSizePt: 17, fontWeight: 600, lineHeight: 1.12, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "challenge-assertion") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.08, color: palette.ornlGreen };
@@ -483,7 +501,8 @@ function fittedStyle(node: StudioWebNode, style: StudioWebNode["style"], target:
   const widthPt = target.width / EMU_PER_POINT - style.paddingPt.left - style.paddingPt.right;
   const heightPt = target.height / EMU_PER_POINT - style.paddingPt.top - style.paddingPt.bottom;
   if (widthPt <= 0 || heightPt <= 0) return style;
-  const minimum = node.role === "title" ? 24 : node.component?.role === "footer-meta" ? 8.5 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading" ? 14 : 16;
+  const denseEditorialGrid = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-");
+  const minimum = node.role === "title" ? 24 : node.component?.role === "footer-meta" || denseEditorialGrid ? 8.5 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading" ? 14 : 16;
   const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? [{ text: node.text }];
   const fits = (fontSizePt: number) => {
     const averageGlyphWidth = fontSizePt * .60;
@@ -883,6 +902,36 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
     components.push({ id: `${treatment.id}-accent`, kind: "rect", frame: { ...figureFrame, height: points(2) }, fillColor: palette.ornlGreen, lineWidthPt: 0, behindContent: true });
   }
   if (slide.recipe === "source" || slide.recipe === "template-layout") return components;
+  const denseEditorialGrid = slide.nodes.filter((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-"));
+  if (denseEditorialGrid.length) {
+    // The legacy awards/editorial pattern encodes its grouping with thin
+    // source text-box outlines. Recreate only the confidently authored
+    // outlines (the 1.25 pt boxes), not the generic text-box strokes that
+    // caused earlier Studio outputs to look like wireframes.
+    const authoredOutlineShapes = slide.nodes.filter((node) => node.visible && node.kind === "shape" && node.role === "decoration" && node.style.borderWidthPt >= 1.2);
+    const consumedOutlineIds = new Set<string>();
+    denseEditorialGrid
+      .filter((node) => node.kind === "text" && node.style.borderWidthPt >= 1.2)
+      .forEach((node) => {
+        const center = (item: StudioWebNode) => ({ x: item.sourceFrame.x + item.sourceFrame.width / 2, y: item.sourceFrame.y + item.sourceFrame.height / 2 });
+        const nodeCenter = center(node);
+        const replacement = authoredOutlineShapes
+          .filter((candidate) => !consumedOutlineIds.has(candidate.id))
+          .map((candidate) => ({ candidate, distance: Math.hypot(center(candidate).x - nodeCenter.x, center(candidate).y - nodeCenter.y) }))
+          .filter((item) => item.distance <= inches(.45))
+          .sort((left, right) => left.distance - right.distance)[0]?.candidate;
+        if (replacement) consumedOutlineIds.add(replacement.id);
+        components.push({
+          id: `${node.component!.groupId}-${node.id}-outline`,
+          kind: "rect",
+          frame: replacement?.frame ?? node.frame,
+          lineColor: palette.ornlGreen,
+          lineWidthPt: 1,
+          behindContent: true,
+        });
+      });
+    return components;
+  }
   if (slide.recipe === "ornl-title-objective-columns") {
     const groups = slide.nodes.filter((node) => node.component?.role === "objective-body");
     groups.forEach((node, ordinal) => {
@@ -983,6 +1032,24 @@ export function studioGeneratedComponents(slide: StudioWebSlide): StudioGenerate
 function templatePlacements(nodes: StudioWebNode[], layout: TemplateLayoutPreview): Map<string, StudioWebFrame> {
   const placements = new Map<string, StudioWebFrame>();
   const slots = layout.semantic?.slots.filter((slot) => !["footer", "date", "slide-number"].includes(slot.role)) ?? [];
+  if (layout.semantic?.contract.family === "cover") {
+    const title = nodes.filter((node) => node.kind === "text" && node.role === "title").sort((left, right) => left.zIndex - right.zIndex)[0];
+    const support = nodes.filter((node) => node.kind === "text" && node.id !== title?.id && !footerNode(node)).sort((left, right) => left.sourceTextOrder - right.sourceTextOrder || left.zIndex - right.zIndex);
+    const titleSlot = slots.find((slot) => slot.role === "title");
+    const supportSlots = slots.filter((slot) => ["subtitle", "caption", "body"].includes(slot.role));
+    if (title && titleSlot) placements.set(title.id, { x: titleSlot.x, y: titleSlot.y - inches(.08), width: titleSlot.width, height: Math.max(titleSlot.height, inches(1.38)), rotation: 0 });
+    if (support.length && supportSlots.length) {
+      const left = Math.min(...supportSlots.map((slot) => slot.x));
+      const right = Math.max(...supportSlots.map((slot) => slot.x + slot.width));
+      const earliestY = Math.min(...supportSlots.map((slot) => slot.y));
+      const latestBottom = Math.max(...supportSlots.map((slot) => slot.y + slot.height));
+      const supportTop = Math.max(earliestY, (titleSlot?.y ?? earliestY) + Math.max(titleSlot?.height ?? 0, inches(1.38)) + inches(.34));
+      const supportRegion = { x: left, y: supportTop, width: right - left, height: Math.max(inches(.90), latestBottom - supportTop), rotation: 0 };
+      if (support.length === 1) placements.set(support[0].id, supportRegion);
+      else for (const [id, value] of stackNarrative(support, supportRegion, 8, 16)) placements.set(id, value);
+    }
+    return placements;
+  }
   const used = new Set<string>();
   const contentKind = (node: StudioWebNode) => node.kind === "image" ? "image" : node.kind === "table" ? "table" : node.role === "chart" ? "chart" : "text";
   const ordered = [...nodes].sort((left, right) => Number(right.role === "title") - Number(left.role === "title") || left.zIndex - right.zIndex);
@@ -1159,7 +1226,48 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && !footerNode(node) && nativeObjects.some((candidate) => sourceFrameContains(candidate.sourceFrame, node.sourceFrame)))
       : [];
     const relationshipBearingFigure = visual && (visual.kind === "native-object" || (visual.kind === "image" && connectors.length >= 1 && figureAnnotations.length >= 2));
-    if (compositeTechnicalOverview) {
+    const denseSourceGrid = !nativeObject && technicalVisuals.filter((node) => meaningfulImage(node)).length === 1 && editableNarrative.length >= 8;
+    if (denseSourceGrid) {
+      const preTitleMetadata = [...content, ...captions].filter((node) => node.kind === "text" && node.sourceFrame.y < (title?.sourceFrame.y ?? 0) + (title?.sourceFrame.height ?? 0));
+      const metadataIds = new Set(preTitleMetadata.map((node) => node.id));
+      const denseDecorations = slide.nodes.filter((node) => node.visible
+        && !footerNode(node)
+        && node.role !== "title"
+        && !metadataIds.has(node.id)
+        && (node.kind === "shape" || node.kind === "connector")
+        && !node.text?.trim());
+      const gridNodes = [...new Map([...content, ...captions, ...denseDecorations]
+        .filter((node) => !metadataIds.has(node.id))
+        .map((node) => [node.id, node])).values()];
+      const target = frame(.47, contentTop + .08, 12.39, contentHeight - .16);
+      for (const [id, value] of scaleSourceGroup(gridNodes, target)) placements.set(id, value);
+      const center = (node: StudioWebNode) => ({ x: node.sourceFrame.x + node.sourceFrame.width / 2, y: node.sourceFrame.y + node.sourceFrame.height / 2 });
+      const consumedDecorationIds = new Set<string>();
+      gridNodes.filter((node) => node.kind === "text" && node.style.borderWidthPt >= 1.2).forEach((node) => {
+        const nodeCenter = center(node);
+        const decoration = denseDecorations
+          .filter((candidate) => candidate.style.borderWidthPt >= 1.2 && !consumedDecorationIds.has(candidate.id))
+          .map((candidate) => ({ candidate, distance: Math.hypot(center(candidate).x - nodeCenter.x, center(candidate).y - nodeCenter.y) }))
+          .filter((item) => item.distance <= inches(.45))
+          .sort((left, right) => left.distance - right.distance)[0]?.candidate;
+        const replacement = decoration ? placements.get(decoration.id) : undefined;
+        if (!decoration || !replacement) return;
+        consumedDecorationIds.add(decoration.id);
+        const inset = points(2);
+        placements.set(node.id, {
+          ...replacement,
+          x: replacement.x + inset,
+          y: replacement.y + inset,
+          width: Math.max(inches(.1), replacement.width - inset * 2),
+          height: Math.max(inches(.1), replacement.height - inset * 2),
+        });
+      });
+      gridNodes.filter((node) => node.kind === "text").forEach((node, ordinal) => components.set(node.id, { groupId: `studio-dense-source-grid-${slideNumber}`, role: "technical-annotation", ordinal }));
+      preTitleMetadata.forEach((node, ordinal) => {
+        placements.set(node.id, frame(8.35, 6.98 + ordinal * .18, 4.42, .18));
+        components.set(node.id, { groupId: `studio-dense-source-grid-meta-${slideNumber}`, role: "footer-meta", ordinal });
+      });
+    } else if (compositeTechnicalOverview) {
       const groupNodes = slide.nodes.filter((node) => node.visible && node.role !== "title" && !footerNode(node));
       const target = frame(.47, contentTop + .06, 12.39, contentHeight - .12);
       for (const [id, value] of scaleSourceGroup(groupNodes, target)) placements.set(id, value);
@@ -1424,14 +1532,40 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const region = frame(.47, contentTop + .10, 12.39, Math.max(1, contentBottom - contentTop - .10));
     const cardWidth = (emuInches(region.width) - gapX * (columns - 1)) / columns;
     const cardHeight = (emuInches(region.height) - gapY * Math.max(0, rows - 1)) / Math.max(1, rows);
+    const rowGroups = slide.nodes
+      .filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && !footerNode(node))
+      .sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x);
     metrics.forEach((node, ordinal) => {
       const row = Math.floor(ordinal / columns);
       const column = ordinal % columns;
       const card = frame(emuInches(region.x) + column * (cardWidth + gapX), emuInches(region.y) + row * (cardHeight + gapY), cardWidth, cardHeight);
-      placements.set(node.id, frame(emuInches(card.x) + .28, emuInches(card.y) + .10, emuInches(card.width) - .48, emuInches(card.height) - .20));
+      const sourceCenterY = node.sourceFrame.y + node.sourceFrame.height / 2;
+      const sourceGroup = rowGroups.find((candidate) => sourceCenterY >= candidate.sourceFrame.y && sourceCenterY <= candidate.sourceFrame.y + candidate.sourceFrame.height);
+      if (sourceGroup) {
+        const groupLeft = sourceGroup.sourceFrame.x;
+        const groupRight = groupLeft + sourceGroup.sourceFrame.width;
+        const sideLeft = column === 0 ? groupLeft : groupLeft + sourceGroup.sourceFrame.width / 2;
+        const iconRight = Math.max(sideLeft + inches(.08), Math.min(groupRight, node.sourceFrame.x - inches(.06)));
+        const leftCrop = Math.max(0, Math.min(.99, (sideLeft - groupLeft) / sourceGroup.sourceFrame.width));
+        const rightCrop = Math.max(0, Math.min(.99, 1 - (iconRight - groupLeft) / sourceGroup.sourceFrame.width));
+        generatedFigureTreatments.push({
+          id: `studio-auto-metric-icon-${slideNumber}-${ordinal + 1}`,
+          nodeIds: [sourceGroup.id],
+          mode: "preserve-as-unit",
+          verificationStatus: "source-locked",
+          intentSummary: `Preserve the source metric icon for item ${ordinal + 1}.`,
+          informationInventory: ["The exact source icon or visual marker associated with this metric."],
+          invariants: ["Keep the icon paired with its original metric and do not redraw, relabel, stretch, or substitute it."],
+          rationale: "The legacy PowerPoint group contains a meaning-bearing icon that should remain visible while the metric copy becomes an aligned editable card.",
+          groupFrame: frame(emuInches(card.x) + .16, emuInches(card.y) + .14, .62, Math.max(.28, emuInches(card.height) - .28)),
+          crop: { left: leftCrop, top: .03, right: rightCrop, bottom: .03 },
+          lockAspectRatio: true,
+          relationshipPolicy: "preserve-internal",
+        });
+      }
+      placements.set(node.id, frame(emuInches(card.x) + (sourceGroup ? .92 : .28), emuInches(card.y) + .10, emuInches(card.width) - (sourceGroup ? 1.12 : .48), emuInches(card.height) - .20));
       components.set(node.id, { groupId: `studio-metric-${slideNumber}-${ordinal + 1}`, role: "metric-card", ordinal, frame: card });
     });
-    slide.nodes.filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && !footerNode(node)).forEach((node) => hiddenNodeIds.add(node.id));
     for (const [id, value] of stack(captions, frame(.47, 6.72, 12.39, .18), 4)) placements.set(id, value);
   } else if (recipe === "ornl-title-steps-evidence") {
     const visual = content.find((node) => meaningfulImage(node) || node.kind === "table");

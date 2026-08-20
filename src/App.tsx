@@ -2247,7 +2247,7 @@ export default function App() {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.studioScene) throw new Error("Create and persist the Studio Web Scene before reviewing deck consistency.");
         const review = analyzeStudioDeckConsistency(deck.studioScene);
-        return { updatedAt: current.project.updatedAt, deck: { id: deck.id, name: deck.name }, review, instruction: review.issueCount ? "Inspect each exact slide/node finding, apply only bounded source-preserving component or layout refinements, rebuild the affected slides, then rerun this review before PowerPoint-native whole-deck qualification." : "The supported repeated systems are internally consistent. Continue with PowerPoint-native whole-deck qualification; this deterministic review does not prove aesthetic quality." };
+        return { updatedAt: current.project.updatedAt, deck: { id: deck.id, name: deck.name }, review, instruction: review.issueCount ? "Inspect each exact slide/node finding, apply only bounded source-preserving component or layout refinements, rebuild the affected slides, then rerun this review before PowerPoint-native whole-deck qualification." : review.coverageStatus === "no-designed-slides" ? "No Studio-designed slides exist yet, so consistency is not evaluable. Qualify the representative archetype set before making deck-wide claims." : review.coverageStatus === "partial" ? "The currently designed slides have no detected repeated-system conflict, but coverage is partial. Finish and visually qualify the representative archetypes before propagation." : "The supported repeated systems are internally consistent. Continue with PowerPoint-native whole-deck qualification; this deterministic review does not prove aesthetic quality." };
       }
       if (request.operation === "preview_studio_fresh_composition") {
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read get_studio_web_scene again before building a fresh composition.");
@@ -2257,7 +2257,7 @@ export default function App() {
         const slideNumber = Number(request.input.slideNumber);
         if (!Number.isInteger(slideNumber) || slideNumber < 1 || slideNumber > deck.audit.slideCount) throw new Error(`Choose a slide from 1 to ${deck.audit.slideCount}.`);
         const studioSlide = deck.studioScene.slides.find((item) => item.slideNumber === slideNumber);
-        if (!studioSlide || studioSlide.status !== "designed") throw new Error("Recompose this slide in the Studio Web Scene before requesting a fresh-composition preview.");
+        if (!studioSlide || studioSlide.status !== "designed" && studioSlide.recipe !== "source") throw new Error("Choose an explicit Studio recipe or source-preserve intervention before requesting a PowerPoint-native preview.");
         const preview = await buildFreshStudioPreview(deck, slideNumber, deck.studioScene);
         if (preview.nativeRender?.status !== "ready" || !preview.nativeRender.authoritative) throw new Error(`Microsoft PowerPoint could not render the fresh composition authoritatively: ${preview.nativeRender?.reason ?? preview.nativeRender?.warnings.join(" ") ?? "native rendering is unavailable"}`);
         if (preview.nativeMeasurement?.status !== "ready" || preview.nativeMeasurement.authority !== "powerpoint-native") throw new Error(`Microsoft PowerPoint could not remeasure the fresh composition authoritatively: ${preview.nativeMeasurement?.reason ?? preview.nativeMeasurement?.warnings.join(" ") ?? "native measurement is unavailable"}`);
@@ -2287,7 +2287,7 @@ export default function App() {
           sourceSha256: preview.nativeRender.sourceSha256,
           authoritative: true,
           warnings: preview.warnings,
-          preservationTradeoff: studioSlide.recipe === "template-layout" ? "This is a newly composed editable slide with converted non-placeholder artwork from the selected Template Pack layout. It preserves exact source content, but not original master behavior, animations, transitions, or unsupported PowerPoint internals." : "This is a newly composed editable slide in the Studio ORNL system. It preserves exact visible source text and native table content/merged structure, but it does not preserve the imported source master, animations, transitions, or unsupported PowerPoint internals.",
+          preservationTradeoff: studioSlide.recipe === "source" ? "This output is the exact native source slide, including its editable objects, master, layout, theme, media, and current visual strengths. Source-preserve is a deliberate intervention and not an ORNL redesign." : studioSlide.recipe === "template-layout" ? "This is a newly composed editable slide with converted non-placeholder artwork from the selected Template Pack layout. It preserves exact source content, but not original master behavior, animations, transitions, or unsupported PowerPoint internals." : "This is a newly composed editable slide in the Studio ORNL system. It preserves exact visible source text and native table content/merged structure, but it does not preserve the imported source master, animations, transitions, or unsupported PowerPoint internals.",
           applied: false,
           saved: false,
           images: images.map((image, index) => ({
@@ -5043,7 +5043,8 @@ export default function App() {
     const studioSlide = studioScene.slides.find((item) => item.slideNumber === slideNumber);
     if (!sourceSlide || !studioSlide) throw new Error(`Slide ${slideNumber} is not present in the current Studio scene.`);
     const oneSlideScene: StudioWebScene = { ...studioScene, slides: [studioSlide] };
-    const preflight = preflightStudioScene(oneSlideScene, { protectedSlideNumbers: isProtectedOrnlTemplateSlide(deck, slideNumber) ? [slideNumber] : [] });
+    const sourcePreserved = studioSlide.recipe === "source";
+    const preflight = preflightStudioScene(oneSlideScene, { protectedSlideNumbers: isProtectedOrnlTemplateSlide(deck, slideNumber) || sourcePreserved ? [slideNumber] : [] });
     if (!preflight.ready) throw new Error(`Studio production preflight rejected slide ${slideNumber}: ${preflight.issues.slice(0, 5).map((item) => item.message).join(" ")}`);
     const sourceCatalog = await getOrBuildSlideCatalog(deck, projectRef.current);
     const catalog = catalogWithStudioResources(sourceCatalog, await studioResourceMedia(oneSlideScene, projectRef.current.resources), oneSlideScene);
@@ -5062,14 +5063,22 @@ export default function App() {
       title: `${cleanFileStem(deck.name)} · Studio slide ${slideNumber}`,
     });
     const nativeTemplate = await applyStudioNativeTemplateLayouts({ bytes: composition.bytes, scene: oneSlideScene, outputSlides: composition.outputSlides, templateBytes: templateSourceBytes, templateCatalog, defaultLayoutId: defaultNativeLayout.id });
-    const result = { ...composition, bytes: nativeTemplate.bytes, warnings: [...composition.warnings, ...nativeTemplate.warnings] };
+    let result = { ...composition, bytes: nativeTemplate.bytes, warnings: [...composition.warnings, ...nativeTemplate.warnings] };
+    if (sourcePreserved) {
+      const source = sourceForDeck(projectRef.current, deck);
+      if (!source?.bytes) throw new Error("The embedded source PowerPoint is required to preview a source-preserve intervention.");
+      const destinationSlideNumber = result.outputSlides.find((output) => output.sourceSlideNumber === slideNumber && !output.continuation)?.outputSlideNumber;
+      if (!destinationSlideNumber) throw new Error(`Source slide ${slideNumber} has no one-to-one output mapping.`);
+      const preserved = await preserveNativeSlide({ destinationBytes: result.bytes, sourceBytes: bytesFrom(source.bytes), sourceSlideNumber: slideNumber, destinationSlideNumber });
+      result = { ...result, bytes: preserved.bytes, warnings: [...result.warnings, `Source slide ${slideNumber}: exact native source composition, master, layout, theme, editable objects, and ${preserved.receipt.copiedMediaCount} related media part${preserved.receipt.copiedMediaCount === 1 ? "" : "s"} preserved for source-wins review.`] };
+    }
     const candidateAudit = await auditPptx(result.bytes);
     const contentValidation = validateStudioCompositionContent({ scene: oneSlideScene, sourceAudit: deck.audit, candidateAudit, outputSlides: result.outputSlides });
     if (!contentValidation.valid) throw new Error(`Fresh-composition validation rejected the candidate: ${contentValidation.errors.join(" ")}`);
     const artifactName = `${cleanFileStem(deck.name)}_slide-${slideNumber}${result.slideCount > 1 ? "_table-continuation" : ""}_studio-rebuild.pptx`;
     const nativeRender = desktop ? await desktop.renderPowerPoint({ name: artifactName, bytes: result.bytes, width: 1600, format: "png" }) : undefined;
     const nativeMeasurement = desktop ? await desktop.measurePowerPoint({ name: artifactName, bytes: result.bytes }) : undefined;
-    if (nativeMeasurement?.status === "ready") {
+    if (!sourcePreserved && nativeMeasurement?.status === "ready") {
       const productionIssues = nativeStudioProductionIssues(nativeMeasurement);
       if (productionIssues.length) throw new Error(`Fresh-composition validation rejected the candidate: ${productionIssues.slice(0, 5).map((item) => item.message).join(" ")}`);
     }

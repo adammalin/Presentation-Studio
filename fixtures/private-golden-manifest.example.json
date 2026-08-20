@@ -1,0 +1,27 @@
+{
+  "schema": "presentation-studio/private-golden-manifest",
+  "version": 2,
+  "id": "local-client-deck-archetypes",
+  "source": {
+    "path": "/absolute/private/path/source.pptx",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "benchmark": {
+    "path": "/absolute/private/path/human-cleaned-golden.pptx",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "template": {
+    "path": "/absolute/private/path/authorized-ornl-template.potx",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "designMode": "shared",
+  "cases": [
+    {
+      "id": "image-evidence-series",
+      "sourceSlide": 3,
+      "benchmarkSlides": [3],
+      "communicationJob": "Preserve five image-heading-evidence relationships while establishing one ORNL grid and readable hierarchy.",
+      "reviewFocus": ["hierarchy", "layout-balance", "template-fidelity", "figure-clarity", "editability", "source-intent"]
+    }
+  ]
+}

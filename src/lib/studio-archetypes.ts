@@ -46,6 +46,7 @@ export function inferStudioDesignArchetype(profile: LayoutContentProfile, hints:
   if ((profile.desiredIntent === "conclusion" || CONCLUSION_PATTERN.test(hints.title ?? "")) && profile.bodyCharacterCount <= 600) return { archetype: "conclusion", confidence: "high", reasons: ["The title and bounded closing message indicate a closing composition."], preservationPolicy: "editable-composition" };
   if (profile.tableCount > 0) return { archetype: "table", confidence: "high", reasons: ["An editable table is the primary structured evidence."], preservationPolicy: "relationship-preserving" };
   if (profile.chartCount > 0) return { archetype: "data-visualization", confidence: "high", reasons: ["A chart or plotted data object is primary evidence."], preservationPolicy: "relationship-preserving" };
+  if (hints.recommendedRecipe === "ornl-title-metric-grid") return { archetype: "comparison", confidence: "high", reasons: ["Repeated source metric rows form a comparison system; native grouping and connectors are row furniture rather than technical-diagram evidence."], preservationPolicy: "relationship-preserving" };
   if (hints.repeatedImageSeries || profile.imageCount >= 3 && profile.imageCount <= 6 && profile.bodyBlockCount + profile.captionBlockCount >= profile.imageCount) return { archetype: "image-series", confidence: hints.repeatedImageSeries ? "high" : "medium", reasons: [hints.repeatedImageSeries ? "Immutable source geometry exposes repeated image-heading-evidence groups." : "The slide contains a peer image set with enough supporting text to form repeated evidence groups."], preservationPolicy: "relationship-preserving" };
   if (profile.imageCount >= 8 && profile.captionBlockCount >= Math.floor(profile.imageCount * .7)) return { archetype: "portrait-series", confidence: "medium", reasons: ["A large image-label inventory is best treated as a portrait or people series."], preservationPolicy: "relationship-preserving" };
   if ((hints.connectorCount ?? 0) >= 2) return { archetype: "technical-diagram", confidence: "high", reasons: ["Multiple connectors encode a relationship-bearing technical diagram."], preservationPolicy: "relationship-preserving" };
@@ -133,7 +134,10 @@ export function planStudioComposition(profile: LayoutContentProfile, layouts: Te
     : inference.archetype === "image-series" && !hints.repeatedImageSeries
       ? (hints.connectorCount ?? 0) > 0 ? "ornl-title-figure-grid" : "ornl-title-labeled-figure-grid"
       : detailedRecipe ?? defaultRecipeForArchetype(inference.archetype);
-  const layout = exact?.layout ?? (forceTemplate ? layouts.find((candidate) => ranked[0]?.layoutId === candidate.id) : undefined);
+  const standardCover = inference.archetype === "cover"
+    ? layouts.find((candidate) => candidate.category === "title" && candidate.semantic?.contract.family === "cover" && candidate.semantic.contract.selectionPolicy === "sacred" && !candidate.placeholderTypes.includes("pic") && !/text[- ]only/i.test(candidate.name))
+    : undefined;
+  const layout = standardCover ?? exact?.layout ?? (forceTemplate ? layouts.find((candidate) => ranked[0]?.layoutId === candidate.id) : undefined);
   const layoutResult = layout ? ranked.find((result) => result.layoutId === layout.id) : undefined;
   const reasons = [...inference.reasons];
   if (strategy === "converted-template-layout" && layout) reasons.push(`${layout.name} supplies an exact compatible native ORNL slot system.`);

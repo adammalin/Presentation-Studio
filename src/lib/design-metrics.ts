@@ -98,28 +98,32 @@ function verticalGaps(objects: BoundObjectMeasurement[]) {
   return gaps;
 }
 
-function tableMetrics(objects: BoundObjectMeasurement[]) {
+function tableMetrics(deck: DeckJob, objects: BoundObjectMeasurement[]) {
   const cellClearances = objects.flatMap((object) => object.table?.cells.flatMap((cell) => cell.clearancesPt ? [{ horizontal: Math.min(cell.clearancesPt.left, cell.clearancesPt.right), vertical: Math.min(cell.clearancesPt.top, cell.clearancesPt.bottom) }] : []) ?? []);
   const clearances = cellClearances.flatMap((clearance) => [clearance.horizontal, clearance.vertical]);
-  const horizontalFloorPt = PRESENTATION_DESIGN_STANDARD.tableVariants.standard.horizontalPaddingPt;
-  const verticalFloorPt = PRESENTATION_DESIGN_STANDARD.tableVariants.standard.verticalPaddingPt;
   const tables = objects.filter((object) => object.table);
   const columnRatios = tables.map((object) => {
     const widths = object.table!.columnWidthsPt.filter((value) => value > 0);
     return widths.length ? Math.max(...widths) / Math.max(0.001, Math.min(...widths)) : undefined;
   }).filter((value): value is number => value !== undefined);
   const rowVariances = tables.map((object) => variance(object.table!.rowHeightsPt.filter((value) => value > 0))).filter((value): value is number => value !== undefined);
-  const findings = tables.flatMap((object) => object.table!.cells.flatMap((cell) => {
+  const findings = tables.flatMap((object) => {
+    const auditedTable = deck.audit?.tables.find((table) => table.id === object.tableId);
+    const extremeDense = Boolean(auditedTable && (auditedTable.totalCellCharacterCount >= 2_200 || auditedTable.maximumCellCharacterCount >= 700));
+    const horizontalFloorPt = extremeDense ? 4 : PRESENTATION_DESIGN_STANDARD.tableVariants.standard.horizontalPaddingPt;
+    const verticalFloorPt = extremeDense ? 2 : PRESENTATION_DESIGN_STANDARD.tableVariants.standard.verticalPaddingPt;
+    return object.table!.cells.flatMap((cell) => {
     const result: SlideDesignMetrics["tableCellFindings"] = [];
     if (cell.clearancesPt) {
       const horizontal = Math.min(cell.clearancesPt.left, cell.clearancesPt.right);
       const vertical = Math.min(cell.clearancesPt.top, cell.clearancesPt.bottom);
       if (horizontal < horizontalFloorPt - .5 || vertical < verticalFloorPt - .5) result.push({ tableId: object.tableId ?? object.objectId, cellId: cell.cellId, row: cell.row, column: cell.column, rule: "insufficient-clearance", severity: horizontal < 1 || vertical < 1 ? "error" : "warning", evidence: `PowerPoint-native clearance is ${horizontal.toFixed(2)} pt horizontal and ${vertical.toFixed(2)} pt vertical; the resolved floors are ${horizontalFloorPt} pt and ${verticalFloorPt} pt.` });
     }
-    if (cell.lineCount > 2) result.push({ tableId: object.tableId ?? object.objectId, cellId: cell.cellId, row: cell.row, column: cell.column, rule: "wrap-pressure", severity: cell.lineCount > 4 ? "error" : "warning", evidence: `PowerPoint rendered ${cell.lineCount} lines in this cell.` });
+    if (cell.lineCount > 2) result.push({ tableId: object.tableId ?? object.objectId, cellId: cell.cellId, row: cell.row, column: cell.column, rule: "wrap-pressure", severity: !extremeDense && cell.lineCount > 4 ? "error" : "warning", evidence: `PowerPoint rendered ${cell.lineCount} lines in this cell${extremeDense ? "; this is an explicitly compact exact-content table" : ""}.` });
     if (cell.boundsPt && cell.renderedTextBoundsPt && cell.marginsPt && (cell.renderedTextBoundsPt.width > cell.boundsPt.width - cell.marginsPt.left - cell.marginsPt.right + .5 || cell.renderedTextBoundsPt.height > cell.boundsPt.height - cell.marginsPt.top - cell.marginsPt.bottom + .5)) result.push({ tableId: object.tableId ?? object.objectId, cellId: cell.cellId, row: cell.row, column: cell.column, rule: "native-overflow", severity: "error", evidence: "PowerPoint-native rendered text exceeds the measured inner cell frame." });
     return result;
-  }));
+    });
+  });
   const clearanceViolations = findings.filter((finding) => finding.rule === "insufficient-clearance").length;
   return {
     minimumClearance: clearances.length ? Math.min(...clearances) : undefined,
@@ -188,7 +192,7 @@ export function calculateSlideDesignMetrics(deck: DeckJob, packet: NativeMeasure
     const box = object.measuredGeometryPt;
     return box && !isIntentionalEdgeDecoration(deck, object, slideWidthPt, slideHeightPt) && (box.left < -GEOMETRY_TOLERANCE_PT || box.top < -GEOMETRY_TOLERANCE_PT || box.left + box.width > slideWidthPt + GEOMETRY_TOLERANCE_PT || box.top + box.height > slideHeightPt + GEOMETRY_TOLERANCE_PT);
   });
-  const tables = tableMetrics(objects);
+  const tables = tableMetrics(deck, objects);
   const overflowingText = textObjects.filter((object) => textOverflows(deck, object));
   const move = movement(objects, baseline);
   const warnings: string[] = [];

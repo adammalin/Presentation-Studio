@@ -136,8 +136,10 @@ npm run benchmark:studio-web -- --source /absolute/path/source.pptx --slides 2,6
 # The authorized template, source deck, candidates, and renders remain outside Git.
 npm run benchmark:studio-web -- --source /absolute/path/source.pptx --slides 2,6,21 --template /absolute/path/authorized-template.potx --design-mode template --output /tmp/presentation-studio-template-benchmark
 
-# Private hash-pinned visual regression; the manifest, source deck, benchmark
-# deck, renders, and acceptance ledger remain outside Git.
+# Private hash-pinned visual regression; version 2 can also pin the authorized
+# ORNL template. It writes selected source/candidate/golden PNGs, an editable
+# candidate PPTX, a JSON ledger, an HTML triptych review, and a context-isolated
+# agent prompt. All private inputs and evidence remain outside Git.
 npm run benchmark:private-golden -- --manifest /absolute/path/private-golden-manifest.json --output /tmp/presentation-studio-private-golden
 
 # Full source/candidate deck qualification. The output folder must be new and

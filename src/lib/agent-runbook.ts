@@ -32,7 +32,16 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
   const activeThreads = (input.threads ?? []).filter((thread) => thread.deckId === deck.id && ["submitted", "needs-reanchor"].includes(thread.status));
   const buildCurrent = Boolean(scene && input.buildSceneRevision === scene.revision);
   const qualificationCurrent = Boolean(scene && input.qualification?.sceneRevision === scene.revision);
-  const undesigned = interventions.filter((item) => !item.protected && (item.status !== "designed" || item.recipe === "source" && item.level !== "preserve"));
+  const representativeNumbers = new Set(representatives.map((item) => item.slideNumber));
+  const prepared = (item: typeof interventions[number]) => item.protected || item.status === "designed" || item.recipe === "source" && item.level === "preserve";
+  const representativeInterventions = interventions.filter((item) => representativeNumbers.has(item.slideNumber));
+  const unpreparedRepresentatives = representativeInterventions.filter((item) => !prepared(item));
+  const unreviewedRepresentatives = representativeInterventions.filter((item) => {
+    if (item.protected) return false;
+    const studioSlide = scene?.slides.find((slide) => slide.slideNumber === item.slideNumber);
+    return !studioSlide || studioSlide.qualityReview?.recordedVerdict !== "ready" || studioSlide.qualityReview.slideUpdatedAt !== studioSlide.updatedAt;
+  });
+  const undesigned = interventions.filter((item) => !prepared(item));
 
   let nextAction: { tool: string; reason: string; input: Record<string, unknown> };
   if (!input.templateInstalled && deckTemplateWorkflow(deck) === "ornl-studio") nextAction = { tool: "get_app_status", reason: "Install or restore the authorized ORNL Template Pack before selecting layouts or building ORNL results.", input: {} };
@@ -40,9 +49,15 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
   else if (deckTemplateWorkflow(deck) === "source-template-cleanup") {
     const slideNumber = representatives[0]?.slideNumber ?? 1;
     nextAction = { tool: "get_slide_design_work_order", reason: "This user-selected source-template workflow uses bounded source-native cleanup and Current/Proposal review rather than ORNL Studio recomposition.", input: { deckId: deck.id, slideNumber } };
-  } else if (!scene || undesigned.length) {
-    const slideNumber = undesigned[0]?.slideNumber ?? representatives[0]?.slideNumber ?? 1;
-    nextAction = { tool: "get_studio_composition_plan", reason: `Slide ${slideNumber} is the next unqualified ${undesigned[0]?.archetype ?? "representative"} communication archetype.`, input: { deckId: deck.id, slideNumber } };
+  } else if (!scene || unpreparedRepresentatives.length) {
+    const slideNumber = unpreparedRepresentatives[0]?.slideNumber ?? representatives[0]?.slideNumber ?? 1;
+    nextAction = { tool: "get_studio_composition_plan", reason: `Prove the design system on representative slide ${slideNumber} (${unpreparedRepresentatives[0]?.archetype ?? "representative"}) before propagating it deck-wide.`, input: { deckId: deck.id, slideNumber } };
+  } else if (unreviewedRepresentatives.length) {
+    const slideNumber = unreviewedRepresentatives[0].slideNumber;
+    nextAction = { tool: "preview_studio_fresh_composition", reason: `Build representative slide ${slideNumber} from its exact current scene, compare the native candidate with the source, and record a source-wins visual verdict before designing the rest of the deck.`, input: { deckId: deck.id, slideNumber, expectedUpdatedAt: input.projectUpdatedAt } };
+  } else if (undesigned.length) {
+    const slideNumber = undesigned[0].slideNumber;
+    nextAction = { tool: "get_studio_composition_plan", reason: `The representative archetype set is visually qualified. Propagate its shared system to the next unprepared slide ${slideNumber} (${undesigned[0].archetype}).`, input: { deckId: deck.id, slideNumber } };
   } else if (consistency?.issues.some((issue) => issue.severity === "major")) nextAction = { tool: "get_studio_deck_consistency", reason: "Resolve major shared-grid, component, table, or archetype-pattern inconsistency before building the final deck.", input: { deckId: deck.id } };
   else if (!buildCurrent) nextAction = { tool: "build_studio_presentation", reason: "The canonical Studio scene has not been compiled into an exact current editable PowerPoint candidate.", input: { deckId: deck.id, expectedUpdatedAt: input.projectUpdatedAt } };
   else if (!qualificationCurrent) nextAction = { tool: "run_deck_qualification", reason: "The exact current candidate needs PowerPoint-native whole-deck evidence and source comparison.", input: { deckId: deck.id, expectedUpdatedAt: input.projectUpdatedAt } };
@@ -67,6 +82,13 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
     representativeQualification: {
       slides: representatives,
       required: "Qualify at least one representative of every communication archetype present before propagating that pattern deck-wide.",
+      preparedSlideNumbers: representativeInterventions.filter(prepared).map((item) => item.slideNumber),
+      visuallyQualifiedSlideNumbers: representativeInterventions.filter((item) => {
+        if (item.protected) return true;
+        const studioSlide = scene?.slides.find((slide) => slide.slideNumber === item.slideNumber);
+        return studioSlide?.qualityReview?.recordedVerdict === "ready" && studioSlide.qualityReview.slideUpdatedAt === studioSlide.updatedAt;
+      }).map((item) => item.slideNumber),
+      gatePassed: unpreparedRepresentatives.length === 0 && unreviewedRepresentatives.length === 0,
     },
     interventions,
     consistency,

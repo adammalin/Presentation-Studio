@@ -29,6 +29,17 @@ Representative client-like decks may be used only as ignored local evidence. A p
 
 Image generation may provide a layout concept only from a sanitized structural brief. Do not send source slide bytes, wording, logos, figures, screenshots, data, or technical details. Treat the concept as untrusted visual influence and reconstruct the accepted hierarchy, spacing, and grouping with source-bound editable Studio objects. A source-locked PowerPoint group should be rendered through the object-isolation path so neighboring slide objects cannot leak into the fresh composition.
 
+The hash-pinned private-golden runner makes this repeatable without adding client files to Git:
+
+1. Copy `fixtures/private-golden-manifest.example.json` to an ignored local path.
+2. Point it at the immutable source deck, a human-cleaned golden deck, and the installed authorized ORNL template. Record each SHA-256 and select 1–12 communication-archetype cases.
+3. Run `npm run benchmark:private-golden -- --manifest /absolute/private/manifest.json --output /absolute/private/new-run-folder`.
+4. Inspect `private-golden-review.html`. It contains only the selected PowerPoint-native source, Studio candidate, and golden slide pixels—not all slides in the benchmark deck.
+5. Give a context-isolated model the generated `fresh-agent-prompt.txt` while the same source deck is open in Presentation Studio. Product or engine failures become regression work; the model must not use hidden developer context or silently work around them.
+6. Treat `objectiveReady` as permission to perform visual review, never as an aesthetic pass. Source wins whenever the Studio candidate is weaker, and the human-cleaned deck is a quality reference rather than authority to change the immutable source copy.
+
+Every run writes an editable candidate PPTX, a JSON ledger, an HTML triptych review, selected native PNGs, and a fresh-agent prompt to a new ignored output folder. The source, benchmark, template, and previous runs remain unchanged.
+
 ## Deck design loop
 
 For an actual presentation, the required loop is:

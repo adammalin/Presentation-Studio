@@ -583,7 +583,7 @@ server.registerTool("stage_studio_web_design", {
     })).max(30).default([]),
     figureTreatments: z.array(z.object({
       id: z.string().min(1).max(180).optional(),
-      nodeIds: z.array(z.string().min(1).max(180)).min(1).max(30),
+      nodeIds: z.array(z.string().min(1).max(180)).min(1).max(200),
       mode: z.enum(["preserve-as-unit", "preserve-and-frame", "hybrid-rebuild", "redraw-candidate"]),
       verificationStatus: z.enum(["source-locked", "needs-content-review", "verified"]),
       intentSummary: z.string().min(1).max(1_000),

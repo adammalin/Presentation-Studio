@@ -15,7 +15,11 @@ export interface StudioDeckConsistencyIssue {
 
 export interface StudioDeckConsistencyReview {
   sceneRevision: string;
+  totalSlideCount: number;
   designedSlideCount: number;
+  sourcePreservedSlideCount: number;
+  coverageStatus: "no-designed-slides" | "partial" | "complete";
+  readyForWholeDeckBuild: boolean;
   repeatedComponentCount: number;
   tableCount: number;
   issueCount: number;
@@ -109,5 +113,7 @@ export function analyzeStudioDeckConsistency(scene: StudioWebScene): StudioDeckC
       recommendation: "Reuse the qualified archetype pattern unless the slide has a documented content or relationship exception, then rebuild the deck contact sheet and compare rhythm.",
     });
   }
-  return { sceneRevision: scene.revision, designedSlideCount: designed.length, repeatedComponentCount: [...roleGroups.values()].filter((entries) => entries.length >= 2).reduce((sum, entries) => sum + entries.length, 0), tableCount: designed.flatMap((slide) => slide.nodes).filter((node) => node.visible && node.kind === "table").length, issueCount: issues.length, issues };
+  const sourcePreservedSlideCount = scene.slides.filter((slide) => slide.recipe === "source").length;
+  const coverageStatus = designed.length === 0 ? "no-designed-slides" as const : designed.length + sourcePreservedSlideCount === scene.slides.length ? "complete" as const : "partial" as const;
+  return { sceneRevision: scene.revision, totalSlideCount: scene.slides.length, designedSlideCount: designed.length, sourcePreservedSlideCount, coverageStatus, readyForWholeDeckBuild: coverageStatus === "complete", repeatedComponentCount: [...roleGroups.values()].filter((entries) => entries.length >= 2).reduce((sum, entries) => sum + entries.length, 0), tableCount: designed.flatMap((slide) => slide.nodes).filter((node) => node.visible && node.kind === "table").length, issueCount: issues.length, issues };
 }

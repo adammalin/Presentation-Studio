@@ -41,6 +41,7 @@ test("infers communication archetypes from source structure before choosing geom
   assert.equal(inferStudioDesignArchetype(profile({ tableCount: 1 })).archetype, "table");
   assert.equal(inferStudioDesignArchetype(profile({ imageCount: 1 })).archetype, "hero-figure");
   assert.equal(inferStudioDesignArchetype(profile(), { connectorCount: 3 }).archetype, "technical-diagram");
+  assert.equal(inferStudioDesignArchetype(profile({ bodyBlockCount: 10 }), { connectorCount: 5, nativeObjectCount: 5, recommendedRecipe: "ornl-title-metric-grid" }).archetype, "comparison");
   assert.equal(inferStudioDesignArchetype(profile({ imageCount: 5, bodyBlockCount: 5, captionBlockCount: 5 }), { repeatedImageSeries: true }).archetype, "image-series");
   assert.equal(inferStudioDesignArchetype(profile({ bodyCharacterCount: 949, bodyBlockCharacterCounts: [949], desiredIntent: "conclusion" }), { title: "Self-Assessment Summary" }).archetype, "text-led");
   assert.equal(inferStudioDesignArchetype(profile(), { protectedSourceComposition: true }).archetype, "source-preserve");
