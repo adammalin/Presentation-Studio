@@ -454,7 +454,7 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "card-kicker") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1, color: [palette.ornlGreen, palette.infinity, palette.hydro, palette.darkMatter][node.component.ordinal ?? 0] ?? palette.ornlGreen };
   if (node.component?.role === "card-heading") return { ...base, fontSizePt: 14, fontWeight: 400, lineHeight: 1.05, color: "#666B68" };
   if (node.component?.role === "card-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.08, color: palette.darkMatter };
-  if (node.component?.role === "metric-card") return { ...base, fontSizePt: 15.5, fontWeight: 600, lineHeight: 1, color: palette.darkMatter, verticalAlign: "middle" };
+  if (node.component?.role === "metric-card") return { ...base, fontSizePt: 16, fontWeight: 600, lineHeight: 1, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "objective-body") return { ...base, fontSizePt: 18, fontWeight: 400, lineHeight: 1.16, color: palette.darkMatter, verticalAlign: "middle" };
   if (node.component?.role === "step-heading") return { ...base, fontSizePt: 18, fontWeight: 700, lineHeight: 1.05, color: palette.ornlGreen };
   if (node.component?.role === "step-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1.14, color: palette.darkMatter };
@@ -1545,8 +1545,19 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
         const groupLeft = sourceGroup.sourceFrame.x;
         const groupRight = groupLeft + sourceGroup.sourceFrame.width;
         const sideLeft = column === 0 ? groupLeft : groupLeft + sourceGroup.sourceFrame.width / 2;
-        const iconRight = Math.max(sideLeft + inches(.08), Math.min(groupRight, node.sourceFrame.x - inches(.06)));
-        const leftCrop = Math.max(0, Math.min(.99, (sideLeft - groupLeft) / sourceGroup.sourceFrame.width));
+        // Each legacy row group contains two peer square icon + metric systems.
+        // Use the row height as the icon-tile authority and the paired metric's
+        // own text start as the right crop edge. The peer groups are not always
+        // centered exactly inside the parent, so a half-width crop can include
+        // old text and cut off the icon.
+        const iconWidth = Math.max(inches(.40), Math.min(sourceGroup.sourceFrame.width / 2, sourceGroup.sourceFrame.height * 1.10));
+        // The right peer icon may straddle the mathematical midpoint of a
+        // PowerPoint row group. Include a small height-relative lead so no
+        // edge of the preserved picture is clipped. Visual-only isolation
+        // removes the row's old text and rectangles before this crop.
+        const iconLeft = column === 0 ? groupLeft : Math.max(groupLeft, sideLeft - sourceGroup.sourceFrame.height * .25);
+        const iconRight = Math.min(groupRight, iconLeft + iconWidth);
+        const leftCrop = Math.max(0, Math.min(.99, (iconLeft - groupLeft) / sourceGroup.sourceFrame.width));
         const rightCrop = Math.max(0, Math.min(.99, 1 - (iconRight - groupLeft) / sourceGroup.sourceFrame.width));
         generatedFigureTreatments.push({
           id: `studio-auto-metric-icon-${slideNumber}-${ordinal + 1}`,
@@ -1557,13 +1568,14 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
           informationInventory: ["The exact source icon or visual marker associated with this metric."],
           invariants: ["Keep the icon paired with its original metric and do not redraw, relabel, stretch, or substitute it."],
           rationale: "The legacy PowerPoint group contains a meaning-bearing icon that should remain visible while the metric copy becomes an aligned editable card.",
+          relationships: [{ fromNodeId: sourceGroup.id, toNodeId: node.id, kind: "label-for" }],
           groupFrame: frame(emuInches(card.x) + .16, emuInches(card.y) + .14, .62, Math.max(.28, emuInches(card.height) - .28)),
           crop: { left: leftCrop, top: .03, right: rightCrop, bottom: .03 },
           lockAspectRatio: true,
           relationshipPolicy: "preserve-internal",
         });
       }
-      placements.set(node.id, frame(emuInches(card.x) + (sourceGroup ? .92 : .28), emuInches(card.y) + .10, emuInches(card.width) - (sourceGroup ? 1.12 : .48), emuInches(card.height) - .20));
+      placements.set(node.id, frame(emuInches(card.x) + (sourceGroup ? .92 : .28), emuInches(card.y) + .04, emuInches(card.width) - (sourceGroup ? 1.12 : .48), emuInches(card.height) - .08));
       components.set(node.id, { groupId: `studio-metric-${slideNumber}-${ordinal + 1}`, role: "metric-card", ordinal, frame: card });
     });
     for (const [id, value] of stack(captions, frame(.47, 6.72, 12.39, .18), 4)) placements.set(id, value);
@@ -1791,7 +1803,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     status: recipe === "source" ? "imported" : "designed",
     designRationale: (rationale ?? `Recompose exact source content with the shared ${recipe} ORNL web component recipe.`).trim().slice(0, 1_000),
     figureTreatments: [
-      ...(slide.figureTreatments ?? []).filter((treatment) => !treatment.id.startsWith("studio-auto-")),
+      ...(slide.recipe === recipe ? (slide.figureTreatments ?? []).filter((treatment) => !treatment.id.startsWith("studio-auto-")) : []),
       ...generatedFigureTreatments,
     ],
     constraints: [],
@@ -2039,7 +2051,7 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
   const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
   if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
   const nodeIds = [...new Set(treatment.nodeIds)];
-  if (!treatment.id.trim() || nodeIds.length === 0 || nodeIds.length > 30) throw new Error("A figure treatment requires an ID and 1–30 unique Studio node IDs.");
+  if (!treatment.id.trim() || nodeIds.length === 0 || nodeIds.length > 200) throw new Error("A figure treatment requires an ID and 1–200 unique Studio node IDs.");
   if (!["preserve-as-unit", "preserve-and-frame", "hybrid-rebuild", "redraw-candidate"].includes(treatment.mode)) throw new Error("Choose a supported figure-treatment mode.");
   if (!["source-locked", "needs-content-review", "verified"].includes(treatment.verificationStatus)) throw new Error("Choose a supported figure verification status.");
   const nodes = nodeIds.map((id) => slide.nodes.find((node) => node.id === id));
@@ -2057,7 +2069,10 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
   if (nodes.some((node) => node && protectedBrandMark(node)) && treatment.lockAspectRatio === false) throw new Error("ORNL and DOE marks are protected artwork. Any figure group containing a mark must keep its aspect ratio locked.");
   const relationshipKeys = new Set<string>();
   const relationships = (treatment.relationships ?? []).map((relationship) => {
-    if (!nodeIds.includes(relationship.fromNodeId) || !nodeIds.includes(relationship.toNodeId)) throw new Error("Figure relationships must connect nodes inside the same treatment.");
+    const from = slide.nodes.find((node) => node.id === relationship.fromNodeId);
+    const to = slide.nodes.find((node) => node.id === relationship.toNodeId);
+    if (!from || !to) throw new Error("Figure relationships must reference nodes on the current Studio slide.");
+    if (!nodeIds.includes(relationship.fromNodeId) && !nodeIds.includes(relationship.toNodeId)) throw new Error("A figure relationship must connect at least one node inside the treatment.");
     if (relationship.fromNodeId === relationship.toNodeId) throw new Error("A figure node cannot relate to itself.");
     const key = `${relationship.fromNodeId}:${relationship.toNodeId}:${relationship.kind}`;
     if (relationshipKeys.has(key)) throw new Error("Duplicate figure relationships are not allowed.");
@@ -2082,7 +2097,6 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
     relationshipPolicy: treatment.relationshipPolicy ?? defaultRelationshipPolicy,
     lockAspectRatio: treatment.lockAspectRatio ?? ["preserve-as-unit", "preserve-and-frame"].includes(treatment.mode),
   };
-  const affected = new Set(nodeIds);
   const now = new Date().toISOString();
   return {
     ...scene,
@@ -2092,7 +2106,11 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
       status: "designed",
       updatedAt: now,
       designRationale: `${item.designRationale} Figure treatment: ${normalized.mode}.`.trim().slice(0, 1_000),
-      figureTreatments: [...(item.figureTreatments ?? []).filter((candidate) => candidate.id !== normalized.id && !candidate.nodeIds.some((id) => affected.has(id))), normalized],
+      // A source object may supply more than one independently cropped visual
+      // instance (for example, the left and right icons inside one legacy row
+      // group). Treatment identity, not shared source-node membership, is the
+      // replacement key. Recipe changes clear stale treatments upstream.
+      figureTreatments: [...(item.figureTreatments ?? []).filter((candidate) => candidate.id !== normalized.id), normalized],
     }),
   };
 }

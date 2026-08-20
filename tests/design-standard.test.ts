@@ -55,6 +55,7 @@ test("one versioned design standard drives project defaults and MCP", () => {
   assert.deepEqual(packagedStandard.precisionLayout.deckQualification.reviewStates, ["visual-review-required", "review-complete", "revision-required", "held"]);
   assert.match(packagedStandard.studioWebDesign.requiredLoop.join(" "), /do not qualify unchanged bytes.*three automatic attempts/i);
   assert.match(packagedStandard.ornlRules.join(" "), /existing populated ORNL title slide as sacred.*Do not recompose, restyle, move, resize, add to, remove from, or replace it/i);
+  assert.match(packagedStandard.importedTemplateRouting.contentIntegrity, /authored slide objects.*inherited source-master branding.*approved target template layer/i);
 });
 
 test("older project metadata adopts design defaults without inventing review threads", () => {

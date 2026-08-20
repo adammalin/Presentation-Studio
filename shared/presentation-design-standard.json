@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-20.41-intervention-source-wins",
+  "version": "2026-08-20.42-black-box-qualification",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -27,7 +27,7 @@
     "identityAuthority": "Classify an imported deck from theme, master, and layout identity before ordinary slide copy. Organization names in slide content do not prove template ownership.",
     "sponsorAndCustomPolicy": "Keep detected sponsor or custom theme, master, layout, and artwork identity as read-only source evidence, but target the current ORNL Template Pack and Studio composition system by default. Preserve the source template only when the user explicitly selects that override. A preserve-source override uses reversible brand-neutral source-bound alignment, distribution, safe-region, measured text-fit, geometry, and table-layout proposals with PowerPoint-native Current/Proposal QA; it does not apply ORNL styling until the user returns the target to ORNL.",
     "ornlPolicy": "The current authorized ORNL Template Pack and Studio composition system are the default target for every imported or newly created deck unless the user explicitly selects preserve-source or another future installed brand target. Source classification remains evidence and never silently changes the ORNL default.",
-    "contentIntegrity": "Compare authored slide content independently from inherited slide numbers, dates, headers, and footers. Ignore OOXML run-boundary whitespace while preserving the exact character inventory for wording, punctuation, names, numbers, units, and qualifications.",
+    "contentIntegrity": "Protect authored slide objects, table cells, data, names, numbers, units, qualifications, attribution, and meaning-bearing relationships. During an explicit cross-template conversion, inherited source-master branding, logos, mastheads, slide numbers, dates, headers, footers, and decorative furniture are evidence rather than authored slide content and must be replaced by the approved target template layer. Do not report that replacement as content loss unless the same wording is also authored on the slide. Ignore OOXML run-boundary whitespace while preserving the exact character inventory of authored copy.",
     "relationshipPolicy": "Ordinary hyperlink relationships are normal presentation content: preserve their relationship parts and allow unrelated reversible edits. Continue to block macros, embedded OLE, linked images or media, external data, package links, and unknown external relationship types until a dedicated adapter or explicit human decision exists."
   },
   "interventionPolicy": {

@@ -260,6 +260,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeFrames/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /nodeStyles/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /figureTreatments/);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /"figureTreatments".*"maxItems":40/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /visualNeedIds/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /preserve-and-frame/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /redraw-candidate/);

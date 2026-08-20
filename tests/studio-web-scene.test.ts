@@ -438,11 +438,27 @@ test("repeated sponsor metric groups become an editable ORNL metric grid instead
   assert.equal(metricCards.length, metricTexts.length);
   assert.deepEqual(metricCards.map((node) => node.text), metricTexts);
   assert.equal(groups.every((group) => slide.nodes.find((node) => node.id === group.id)?.visible === true), true);
-  assert.equal(slide.figureTreatments.filter((treatment) => treatment.id.startsWith("studio-auto-metric-icon-")).length, metricTexts.length);
+  const iconTreatments = slide.figureTreatments.filter((treatment) => treatment.id.startsWith("studio-auto-metric-icon-"));
+  assert.equal(iconTreatments.length, metricTexts.length);
   assert.equal(slide.figureTreatments.every((treatment) => treatment.crop && treatment.lockAspectRatio), true);
-  assert.equal(metricCards.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 15.5), true);
+  assert.equal(metricCards.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 16), true);
+  for (const group of groups) {
+    const peers = iconTreatments.filter((treatment) => treatment.nodeIds.includes(group.id));
+    assert.equal(peers.length, 2);
+    const retainedWidths = peers.map((treatment) => 1 - treatment.crop!.left - treatment.crop!.right);
+    assert.ok(Math.abs(retainedWidths[0] - retainedWidths[1]) < .0001);
+    assert.equal(peers.every((treatment) => treatment.relationships?.some((relationship) => relationship.fromNodeId === group.id && metricCards.some((node) => node.id === relationship.toNodeId))), true);
+  }
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("studio-metric-") && component.id.endsWith("-surface")).length, metricTexts.length);
   assert.equal(studioGeneratedComponents(slide).some((component) => component.id.includes("studio-auto") || component.lineWidthPt > 0), false);
+
+  const first = iconTreatments[0];
+  const second = iconTreatments[1];
+  let withIndependentCrops = updateStudioFigureTreatment({ ...source, slides: [slide] }, slide.slideNumber, { ...first, id: "manual-icon-left" });
+  withIndependentCrops = updateStudioFigureTreatment(withIndependentCrops, slide.slideNumber, { ...second, id: "manual-icon-right", nodeIds: first.nodeIds });
+  assert.deepEqual(withIndependentCrops.slides[0].figureTreatments.filter((treatment) => treatment.id.startsWith("manual-icon-")).map((treatment) => treatment.id).sort(), ["manual-icon-left", "manual-icon-right"]);
+  const changedRecipe = recomposeStudioWebSlide(withIndependentCrops, slide.slideNumber, "ornl-title-two-column").slides[0];
+  assert.equal(changedRecipe.figureTreatments.some((treatment) => treatment.id.startsWith("manual-icon-")), false);
 });
 
 test("process-flow recipe keeps low technical inputs out of the footer and pairs the true output by source order", async () => {

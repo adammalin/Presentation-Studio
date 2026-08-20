@@ -42,10 +42,18 @@ function attribute(attributes: string, name: string): string | undefined {
 function setHidden(attributes: string, hidden: boolean): string {
   const pattern = /(\bhidden=)(?:"[^"]*"|'[^']*')/i;
   if (!hidden) return attributes.replace(pattern, "").replace(/\s{2,}/g, " ");
-  return pattern.test(attributes) ? attributes.replace(pattern, '$1"1"') : `${attributes.trimEnd()} hidden="1"`;
+  if (pattern.test(attributes)) return attributes.replace(pattern, '$1"1"');
+  const trimmed = attributes.trimEnd();
+  const selfClosing = trimmed.endsWith("/");
+  const core = selfClosing ? trimmed.slice(0, -1).trimEnd() : trimmed;
+  return `${core} hidden="1"${selfClosing ? "/" : ""}`;
 }
 
-function isolateTopLevelShapes(slideXml: string, allowedShapeIds: Set<string>): { xml: string; hiddenShapeIds: string[]; preservedShapeIds: string[] } {
+export function hideNonPictureDescendantsForIsolation(shapeXml: string): string {
+  return shapeXml.replace(/<p:(?:sp|cxnSp|graphicFrame)\b[\s\S]*?<\/p:(?:sp|cxnSp|graphicFrame)>/gi, (shape) => shape.replace(/<p:cNvPr\b([^>]*)>/i, (_tag, attributes: string) => `<p:cNvPr${setHidden(attributes, true)}>`));
+}
+
+function isolateTopLevelShapes(slideXml: string, allowedShapeIds: Set<string>, visualDescendantsOnly = false): { xml: string; hiddenShapeIds: string[]; preservedShapeIds: string[] } {
   const shapeTreeStart = slideXml.search(/<p:spTree\b/i);
   if (shapeTreeStart < 0) throw new Error("The source slide does not contain a PowerPoint shape tree.");
   const tokenPattern = /<(\/)?([A-Za-z_][\w.-]*(?::[\w.-]+)?)(\s[^<>]*?)?(\/?)>/g;
@@ -73,10 +81,12 @@ function isolateTopLevelShapes(slideXml: string, allowedShapeIds: Set<string>): 
   let xml = slideXml;
   for (const range of [...ranges].sort((left, right) => right.start - left.start)) {
     const shape = xml.slice(range.start, range.end);
-    const next = shape.replace(/<p:cNvPr\b([^>]*)>/i, (tag, attributes: string) => {
+    const sourceId = attribute(shape.match(/<p:cNvPr\b([^>]*)>/i)?.[1] ?? "", "id");
+    const keep = Boolean(sourceId && allowedShapeIds.has(sourceId));
+    const prepared = keep && visualDescendantsOnly && /^<p:grpSp\b/i.test(shape) ? hideNonPictureDescendantsForIsolation(shape) : shape;
+    const next = prepared.replace(/<p:cNvPr\b([^>]*)>/i, (tag, attributes: string) => {
       const id = attribute(attributes, "id");
       if (!id) throw new Error("A top-level PowerPoint shape is missing its nonvisual ID.");
-      const keep = allowedShapeIds.has(id);
       (keep ? preservedShapeIds : hiddenShapeIds).push(id);
       return `<p:cNvPr${setHidden(attributes, !keep)}>`;
     });
@@ -145,7 +155,7 @@ export async function isolateNativePowerPointSlide(input: { sourceBytes: Uint8Ar
  * the requested top-level source shapes remain visible. The original package
  * and every meaning-bearing child inside a preserved group remain untouched.
  */
-export async function isolateNativePowerPointObjects(input: { sourceBytes: Uint8Array; slideNumber: number; shapeIds: string[] }): Promise<{ bytes: Uint8Array; receipt: NativeObjectIsolationReceipt }> {
+export async function isolateNativePowerPointObjects(input: { sourceBytes: Uint8Array; slideNumber: number; shapeIds: string[]; visualDescendantsOnly?: boolean }): Promise<{ bytes: Uint8Array; receipt: NativeObjectIsolationReceipt }> {
   const shapeIds = [...new Set(input.shapeIds.map(String).filter(Boolean))];
   if (!Number.isInteger(input.slideNumber) || input.slideNumber < 1) throw new Error("Native object isolation requires a positive source slide number.");
   if (!shapeIds.length) throw new Error("Native object isolation requires at least one top-level source shape ID.");
@@ -155,7 +165,7 @@ export async function isolateNativePowerPointObjects(input: { sourceBytes: Uint8
   const presentationEntry = zip.file("ppt/presentation.xml");
   const relationshipsEntry = zip.file("ppt/_rels/presentation.xml.rels");
   if (!slideEntry || !presentationEntry || !relationshipsEntry) throw new Error("The PowerPoint package is missing the requested slide or presentation metadata.");
-  const isolated = isolateTopLevelShapes(await slideEntry.async("text"), new Set(shapeIds));
+  const isolated = isolateTopLevelShapes(await slideEntry.async("text"), new Set(shapeIds), input.visualDescendantsOnly === true);
   const relationshipId = slideRelationshipId(await relationshipsEntry.async("text"), input.slideNumber);
   zip.file(slidePart, isolated.xml);
   zip.file("ppt/presentation.xml", keepOnlySlide(await presentationEntry.async("text"), relationshipId));

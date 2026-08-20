@@ -411,7 +411,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
       && ["source-locked", "verified"].includes(treatment.verificationStatus));
     const sourceLockedNodeIds = new Set(sourceLockedTreatments.flatMap((treatment) => treatment.nodeIds));
     const unsupported = sourceSlide.nodes.filter((node) => unsupportedContentNode(node) && !sourceLockedNodeIds.has(node.id));
-    if (unsupported.length > 0 && strict) throw new Error(`Slide ${sourceSlide.slideNumber} contains ${unsupported.length} preserved native object${unsupported.length === 1 ? "" : "s"} that the fresh-composition compiler cannot recreate without a disclosed conversion.`);
+    if (unsupported.length > 0 && strict) throw new Error(`Slide ${sourceSlide.slideNumber} contains ${unsupported.length} preserved native object${unsupported.length === 1 ? "" : "s"} that the fresh-composition compiler cannot recreate without a disclosed conversion: ${unsupported.slice(0, 8).map((node) => `${node.name} (${node.id})`).join(", ")}${unsupported.length > 8 ? ", …" : ""}.`);
     if (unsupported.length > 0) warnings.push(`Slide ${sourceSlide.slideNumber}: omitted ${unsupported.length} preserved native object${unsupported.length === 1 ? "" : "s"}.`);
     const slide = pptx.addSlide();
     slide.background = { color: hex(sourceSlide.background, "#FFFFFF") };

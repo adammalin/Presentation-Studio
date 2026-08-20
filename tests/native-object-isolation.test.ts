@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createSyntheticLegacyDeck } from "../scripts/create-synthetic-fixture";
-import { isolateNativePowerPointObjects, isolateNativePowerPointSlide } from "../src/lib/native-object-isolation";
+import { hideNonPictureDescendantsForIsolation, isolateNativePowerPointObjects, isolateNativePowerPointSlide } from "../src/lib/native-object-isolation";
 import { auditPptx } from "../src/lib/pptx-audit";
 
 test("native object isolation keeps one requested top-level shape without flattening its package", async () => {
@@ -27,6 +27,14 @@ test("native object isolation keeps one requested top-level shape without flatte
   for (const hiddenId of isolated.receipt.hiddenShapeIds) assert.match(slide, new RegExp(`<p:cNvPr\\b(?=[^>]*\\bid=(?:"${hiddenId}"|'${hiddenId}'))(?=[^>]*\\bhidden=(?:"1"|'1'))[^>]*>`, "i"));
   assert.ok(zip.file("ppt/slides/slide1.xml"));
   assert.ok(zip.file("ppt/slides/slide2.xml"));
+});
+
+test("visual-only group isolation hides legacy text and box descendants while retaining embedded pictures", () => {
+  const group = '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10" name="Metric row"/></p:nvGrpSpPr><p:sp><p:nvSpPr><p:cNvPr id="11" name="Legacy text"/></p:nvSpPr><p:txBody><a:p><a:r><a:t>110 staff</a:t></a:r></a:p></p:txBody></p:sp><p:pic><p:nvPicPr><p:cNvPr id="12" name="Metric icon"/></p:nvPicPr></p:pic></p:grpSp>';
+  const isolated = hideNonPictureDescendantsForIsolation(group);
+  assert.match(isolated, /<p:cNvPr id="11" name="Legacy text" hidden="1"\/>/);
+  assert.match(isolated, /<p:cNvPr id="12" name="Metric icon"\/>/);
+  assert.doesNotMatch(isolated, /<p:cNvPr id="12" name="Metric icon" hidden="1"\/>/);
 });
 
 test("native slide isolation keeps the selected slide relationship graph byte-identical", async () => {

@@ -5019,10 +5019,11 @@ export default function App() {
       for (const treatment of slide.figureTreatments.filter((item) => ["preserve-as-unit", "preserve-and-frame"].includes(item.mode) && ["source-locked", "verified"].includes(item.verificationStatus))) {
         const shapeIds = nativeIsolationShapeIds(slide, treatment);
         if (!shapeIds.length) continue;
-        const cacheKey = `${deck.sourceSha256}:${slide.slideNumber}:${[...shapeIds].sort().join(",")}`;
+        const visualDescendantsOnly = treatment.id.startsWith("studio-auto-metric-icon-");
+        const cacheKey = `${deck.sourceSha256}:${slide.slideNumber}:${visualDescendantsOnly ? "visual-only:" : ""}${[...shapeIds].sort().join(",")}`;
         let raster = sourceFigureRastersRef.current.get(cacheKey);
         if (!raster) {
-          const isolated = await isolateNativePowerPointObjects({ sourceBytes: bytesFrom(source.bytes), slideNumber: slide.slideNumber, shapeIds });
+          const isolated = await isolateNativePowerPointObjects({ sourceBytes: bytesFrom(source.bytes), slideNumber: slide.slideNumber, shapeIds, visualDescendantsOnly });
           const rendered = await desktop.renderPowerPoint({ name: `${cleanFileStem(deck.name)}_slide-${slide.slideNumber}_isolated-figure.pptx`, bytes: isolated.bytes, width: 1600, format: "png" });
           const nativeSlide = rendered.status === "ready" && rendered.authoritative && rendered.slides.length === 1 ? rendered.slides[0] : undefined;
           if (!nativeSlide) throw new Error(rendered.reason ?? `Microsoft PowerPoint could not isolate the technical figure on slide ${slide.slideNumber}.`);

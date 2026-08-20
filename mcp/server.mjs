@@ -606,7 +606,7 @@ server.registerTool("stage_studio_web_design", {
       crop: z.object({ left: z.number().min(0).max(.99), top: z.number().min(0).max(.99), right: z.number().min(0).max(.99), bottom: z.number().min(0).max(.99) }).optional(),
       relationshipPolicy: z.enum(["preserve-internal", "reflow-annotations", "editable-diagram"]).optional(),
       lockAspectRatio: z.boolean().optional(),
-    })).max(8).default([]),
+    })).max(40).default([]),
     visualNeedIds: z.array(z.string().min(1).max(180)).max(8).default([]),
     addressedThreadIds: z.array(z.string().min(1).max(120)).max(40).default([]),
   },

@@ -226,9 +226,12 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
 
   for (const treatment of slide.figureTreatments) {
     const frame = treatment.groupFrame;
+    const supportingIcon = treatment.id.startsWith("studio-auto-metric-icon-") || /(?:source )?metric icon/i.test(treatment.intentSummary);
+    const minimumWidth = supportingIcon ? 28 * PT : 108 * PT;
+    const minimumHeight = supportingIcon ? 28 * PT : 72 * PT;
     if (treatment.mode === "redraw-candidate" && treatment.verificationStatus !== "verified") add({ category: "figure", severity: "blocker", source: "scene", nodeIds: treatment.nodeIds, message: `${treatment.intentSummary} is marked for redraw but its information and relationships are not verified.`, recommendation: "Keep the original technical object source-locked until a content owner verifies the complete inventory and relationship map.", autoFixable: false });
-    if (frame && (frame.width < 108 * PT || frame.height < 72 * PT)) add({ category: "figure", severity: "major", source: "scene", nodeIds: treatment.nodeIds, message: `${treatment.intentSummary} is framed too small for reliable review.`, recommendation: "Assign the figure a larger evidence region or crop only after its meaning-bearing area is verified.", autoFixable: false });
-    if (treatment.crop && (1 - treatment.crop.left - treatment.crop.right) * (1 - treatment.crop.top - treatment.crop.bottom) < .25) add({ category: "figure", severity: "major", source: "scene", nodeIds: treatment.nodeIds, message: `${treatment.intentSummary} retains less than 25% of the source figure area.`, recommendation: "Verify that no labels, values, arrows, or context were removed before accepting the crop.", autoFixable: false });
+    if (frame && (frame.width < minimumWidth || frame.height < minimumHeight)) add({ category: "figure", severity: "major", source: "scene", nodeIds: treatment.nodeIds, message: `${treatment.intentSummary} is framed too small for reliable review.`, recommendation: supportingIcon ? "Keep the complete source icon at least 28 points in both dimensions and paired with its metric." : "Assign the figure a larger evidence region or crop only after its meaning-bearing area is verified.", autoFixable: false });
+    if (!supportingIcon && treatment.crop && (1 - treatment.crop.left - treatment.crop.right) * (1 - treatment.crop.top - treatment.crop.bottom) < .25) add({ category: "figure", severity: "major", source: "scene", nodeIds: treatment.nodeIds, message: `${treatment.intentSummary} retains less than 25% of the source figure area.`, recommendation: "Verify that no labels, values, arrows, or context were removed before accepting the crop.", autoFixable: false });
   }
 
   const designImpact = analyzeStudioDesignImpact(slide);

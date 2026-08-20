@@ -224,7 +224,7 @@ export async function qualifyStudioWebBenchmark(
     for (const treatment of slide.figureTreatments.filter((item) => ["source-locked", "verified"].includes(item.verificationStatus))) {
       const shapeIds = nativeIsolationShapeIds(slide, treatment);
       if (!shapeIds.length) continue;
-      const isolated = await isolateNativePowerPointObjects({ sourceBytes, slideNumber: slide.slideNumber, shapeIds });
+      const isolated = await isolateNativePowerPointObjects({ sourceBytes, slideNumber: slide.slideNumber, shapeIds, visualDescendantsOnly: treatment.id.startsWith("studio-auto-metric-icon-") });
       const rendered = await renderNative({ bytes: isolated.bytes, name: `source-slide-${slide.slideNumber}-${treatment.id}.pptx`, width: 2200, format: "png" });
       const raster = rendered.status === "ready" ? rendered.slides[0] : undefined;
       if (!raster || rendered.slides.length !== 1) throw new Error(`The private benchmark could not create an object-isolated PowerPoint render for ${treatment.id}.`);

@@ -61,6 +61,30 @@ test("Studio production preflight preserves approved sacred-template typography"
   assert.equal(result.issues.some((issue) => issue.category === "legibility"), false);
 });
 
+test("Studio critic accepts complete supporting metric-icon crops while retaining the strict technical-figure crop gate", () => {
+  const supporting = scene();
+  supporting.slides[0].figureTreatments = [{
+    id: "studio-auto-metric-icon-1",
+    nodeIds: ["body"],
+    mode: "preserve-and-frame",
+    verificationStatus: "source-locked",
+    intentSummary: "Source metric icon",
+    informationInventory: ["Complete source icon"],
+    invariants: ["Keep paired with its metric"],
+    rationale: "Use the small source icon as supporting evidence.",
+    groupFrame: { x: 40 * PT, y: 220 * PT, width: 32 * PT, height: 32 * PT, rotation: 0 },
+    crop: { left: 0, top: 0, right: .8, bottom: 0 },
+    lockAspectRatio: true,
+  }];
+  const supportingResult = critiqueStudioSlide(supporting, 1, measurement());
+  assert.equal(supportingResult.issues.some((issue) => issue.category === "figure"), false);
+
+  const technical = structuredClone(supporting);
+  technical.slides[0].figureTreatments[0] = { ...technical.slides[0].figureTreatments[0], id: "technical-figure", intentSummary: "Technical evidence figure" };
+  const technicalResult = critiqueStudioSlide(technical, 1, measurement());
+  assert.equal(technicalResult.issues.some((issue) => issue.category === "figure" && /less than 25%/.test(issue.message)), true);
+});
+
 test("native production QA treats editable table-cell overflow as a hard issue", () => {
   const native = measurement();
   native.slides[0].shapes.push({ slideNumber: 1, shapeIndex: 3, name: "Results table", zOrder: 3, boundsPt: { left: 30, top: 210, width: 300, height: 100 }, rotation: 0, hasTextFrame: false, hasTable: true, table: { rowCount: 1, columnCount: 1, rowHeightsPt: [100], columnWidthsPt: [300], cells: [{ row: 1, column: 1, boundsPt: { left: 0, top: 0, width: 300, height: 100 }, marginsPt: { left: 6, right: 6, top: 4, bottom: 4 }, renderedTextBoundsPt: { left: 6, top: 4, width: 290, height: 96 }, textCoordinateSpace: "cell-relative", textLength: 20, lineCount: 5, verticalAnchor: "top" }] } });
