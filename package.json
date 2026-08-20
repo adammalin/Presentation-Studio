@@ -20,6 +20,7 @@
     "test:canary:native": "tsx scripts/run-design-canary.ts",
     "benchmark:studio-web": "tsx scripts/qualify-studio-web-benchmark.ts",
     "benchmark:private-golden": "tsx scripts/qualify-private-golden.ts",
+    "acceptance:black-box": "tsx scripts/black-box-agent-acceptance.ts",
     "qualify:ornl-layouts": "tsx scripts/qualify-ornl-layout-contracts.ts",
     "qualify:deck": "tsx scripts/qualify-deck.ts",
     "quality": "node scripts/run-quality-pipeline.mjs",

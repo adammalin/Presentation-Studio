@@ -836,6 +836,10 @@ export function recommendedStudioRecipe(slide: StudioWebSlide): StudioLayoutReci
   const nodes = activeNodes(slide);
   if (nodes.some((node) => node.kind === "table")) return "ornl-title-table";
   if (inferRepeatedImageSeries(slide)) return "ornl-title-image-series";
+  const densePeerImageField = nodes.filter(meaningfulImage).length >= 12
+    && !slide.nodes.some((node) => node.visible && node.kind === "connector" && !footerNode(node))
+    && nodes.filter((node) => node.kind === "text" && node.role !== "title" && !footerNode(node)).length <= 1;
+  if (densePeerImageField) return "ornl-title-two-column";
   const editorialRecordCount = nodes.filter(editorialRecord).length;
   if (editorialRecordCount >= 7 && editorialRecordCount <= 18) return "ornl-title-card-grid";
   const nativeObject = slide.nodes.some((node) => node.visible && node.kind === "native-object" && !footerNode(node));
@@ -2200,6 +2204,12 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
     && ["preserve-as-unit", "preserve-and-frame"].includes(treatment.mode)) {
     throw new Error("A dense peer-logo field must remain independent editable contained images. Do not flatten the logo grid into one source-locked figure; preserve every authentic mark and suppress only its duplicate legacy carrier.");
   }
+  const selectedImageSeriesText = nodes.filter((node) => node?.component?.role === "image-series-heading" || node?.component?.role === "image-series-body");
+  if (slide.recipe === "ornl-title-image-series"
+    && selectedImageSeriesText.length > 0
+    && ["preserve-as-unit", "preserve-and-frame"].includes(treatment.mode)) {
+    throw new Error("An ORNL image-series column already compiles its image, editable heading, and editable body as separate coordinated components. Do not flatten its editable text into a source-locked figure; adjust the shared image-series recipe or its component frames instead.");
+  }
   const relationshipKeys = new Set<string>();
   const relationships = (treatment.relationships ?? []).map((relationship) => {
     const from = slide.nodes.find((node) => node.id === relationship.fromNodeId);
@@ -2250,6 +2260,31 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
           && !(candidate.id.startsWith("studio-auto-") && candidate.nodeIds.some((id) => nodeIds.includes(id)))),
         normalized,
       ],
+    }),
+  };
+}
+
+/**
+ * MCP staging treats an explicitly supplied figureTreatments array as the
+ * complete manual treatment set for the requested slide. Generated recipe
+ * treatments remain intact, while an explicit empty array genuinely removes
+ * stale manual crops or composites from the canonical scene.
+ */
+export function clearStudioManualFigureTreatments(scene: StudioWebScene, slideNumber: number): StudioWebScene {
+  const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
+  if (!slide) throw new Error(`Slide ${slideNumber} is not present in the Studio Web Scene.`);
+  const retained = slide.figureTreatments.filter((treatment) => treatment.id.startsWith("studio-auto-"));
+  if (retained.length === slide.figureTreatments.length) return scene;
+  const now = new Date().toISOString();
+  return {
+    ...scene,
+    revision: `${scene.sourceSha256}:web-v${STUDIO_WEB_SCENE_VERSION}:${now}`,
+    slides: scene.slides.map((item) => item.slideNumber !== slideNumber ? item : {
+      ...item,
+      updatedAt: now,
+      qualityReview: undefined,
+      figureTreatments: retained,
+      designRationale: `${item.designRationale} Replaced the explicit manual figure-treatment set.`.trim().slice(0, 1_000),
     }),
   };
 }

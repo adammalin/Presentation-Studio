@@ -454,12 +454,18 @@ function materializedTableNode(node: StudioWebNode, plan: StudioTableContinuatio
 export function materializeStudioTableContinuationSlides(scene: StudioWebScene, sourceSlide: StudioWebSlide): MaterializedStudioTableSlide[] {
   const plans = (scene.tableContinuationPlans ?? []).filter((plan) => plan.sourceSlideNumber === sourceSlide.slideNumber);
   if (!plans.length) return [{ slide: sourceSlide }];
-  if (plans.some((plan) => plan.status === "blocked")) throw new Error(`Slide ${sourceSlide.slideNumber} has a blocked table continuation plan. Resolve or clear it before building PowerPoint.`);
   if (plans.length !== 1) throw new Error(`Slide ${sourceSlide.slideNumber} has ${plans.length} continuation plans. Materialize one primary table per source slide.`);
-  const plan = plans[0];
-  const table = sourceSlide.nodes.find((node) => node.id === plan.tableNodeId && node.kind === "table" && node.table);
+  const storedPlan = plans[0];
+  const table = sourceSlide.nodes.find((node) => node.id === storedPlan.tableNodeId && node.kind === "table" && node.table);
   if (!table?.table) throw new Error(`Slide ${sourceSlide.slideNumber}'s continuation plan no longer maps to its source-bound table.`);
-  if (resolvedStudioTableDesign(table).headerRows !== plan.headerRows) throw new Error(`Slide ${sourceSlide.slideNumber}'s header-row definition changed after continuation planning. Replan the table before building PowerPoint.`);
+  if (resolvedStudioTableDesign(table).headerRows !== storedPlan.headerRows) throw new Error(`Slide ${sourceSlide.slideNumber}'s header-row definition changed after continuation planning. Replan the table before building PowerPoint.`);
+  // Persisted projects can carry a plan created by an older continuation
+  // algorithm. Recompute its merge-safe cell inventory from the exact current
+  // table before every build so a newly supported repeatable context cell is
+  // not silently omitted and the remaining columns are not shifted.
+  const refreshed = planFor(table, sourceSlide.slideNumber, storedPlan.maximumBodyRowsPerSlide, storedPlan.rationale, storedPlan.createdAt);
+  const plan: StudioTableContinuationPlan = { ...refreshed, id: storedPlan.id, createdAt: storedPlan.createdAt };
+  if (plan.status === "blocked") throw new Error(`Slide ${sourceSlide.slideNumber} has a blocked table continuation plan. ${plan.blockers.join(" ")}`);
   return plan.segments.map((segment, index) => {
     const repeatedRoles = new Set(["eyebrow", "footer-logo", "footer-meta"]);
     const nodes = sourceSlide.nodes

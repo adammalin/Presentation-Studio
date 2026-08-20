@@ -58,6 +58,19 @@ test("builds current slide previews with inherited title geometry and native tab
   assert.match(catalog.media["ppt/media/image2.svg"], /^data:image\/svg\+xml;base64,/);
 });
 
+test("slide catalog preserves ordered inline PowerPoint breaks as semantic text boundaries", async () => {
+  const zip = await JSZip.loadAsync(await syntheticTemplate());
+  const slide = await zip.file("ppt/slides/slide1.xml")!.async("text");
+  zip.file("ppt/slides/slide1.xml", slide.replace(
+    "<a:t>Current slide title</a:t></a:r>",
+    "<a:t>Current slide title</a:t></a:r><a:br/><a:r><a:rPr b=\"0\"/><a:t>Supporting attribution</a:t></a:r>",
+  ));
+  const catalog = await buildSlideRenderCatalog(await zip.generateAsync({ type: "uint8array" }), "inline-break.pptx");
+  const title = catalog.slides[0].elements.find((element) => element.origin === "slide" && element.kind === "text" && element.sourceShapeId === "2");
+  assert.equal(title?.text, "Current slide title\nSupporting attribution");
+  assert.deepEqual(title?.sourceParagraphs?.map((paragraph) => paragraph.text), ["Current slide title", "Supporting attribution"]);
+});
+
 test("rejects files without a PowerPoint layout catalog", async () => {
   const zip = new JSZip();
   zip.file("readme.txt", "not a template");

@@ -107,7 +107,7 @@ import { buildDesignRepairLedger } from "./lib/design-repair-loop";
 import { sha256 } from "./lib/hash";
 import { singleFlight } from "./lib/single-flight";
 import { cleanFileStem, projectSaveDefaultName } from "./lib/file-names";
-import { compileStudioWebScene, inferRepeatedImageSeries, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioConnectorAttachmentPoint, studioGeneratedComponents, studioSlideContentSignature, translateStudioFigureTreatment, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
+import { clearStudioManualFigureTreatments, compileStudioWebScene, inferRepeatedImageSeries, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioConnectorAttachmentPoint, studioGeneratedComponents, studioSlideContentSignature, translateStudioFigureTreatment, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "./lib/studio-web-scene";
 import { planStudioComposition, STUDIO_DESIGN_ARCHETYPES } from "./lib/studio-archetypes";
 import { resolveStudioIntervention, STUDIO_INTERVENTION_LEVELS, withStudioIntervention } from "./lib/studio-intervention";
 import { applyStudioLayoutConstraints, type StudioConstraintRequest } from "./lib/studio-layout-constraints";
@@ -3251,7 +3251,9 @@ export default function App() {
           if (raw?.objectFit !== undefined) patch.objectFit = String(raw.objectFit) as "contain" | "cover";
           studioScene = updateStudioWebNodeStyle(studioScene, slideNumber, nodeId, patch);
         }
+        const figureTreatmentsWereProvided = Object.prototype.hasOwnProperty.call(request.input, "figureTreatments");
         const figureTreatments = Array.isArray(request.input.figureTreatments) ? request.input.figureTreatments : [];
+        if (figureTreatmentsWereProvided) studioScene = clearStudioManualFigureTreatments(studioScene, slideNumber);
         for (let index = 0; index < figureTreatments.length; index += 1) {
           const raw = figureTreatments[index];
           const treatment: StudioFigureTreatment = {

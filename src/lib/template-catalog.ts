@@ -455,13 +455,47 @@ function pictureElements(picture: XmlRecord, context: GroupContext, relationship
   }];
 }
 
-async function enrichTextMetadata(elements: TemplatePreviewElement[]): Promise<TemplatePreviewElement[]> {
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number.parseInt(code, 10)))
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+}
+
+function orderedShapeTextById(xml: string): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const shape of xml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/g)) {
+    const block = shape[0];
+    const shapeId = block.match(/<p:cNvPr\b[^>]*\bid=(?:"([^"]+)"|'([^']+)')/)?.slice(1).find(Boolean);
+    const txBody = block.match(/<p:txBody\b[\s\S]*?<\/p:txBody>/)?.[0];
+    if (!shapeId || !txBody) continue;
+    const paragraphs: string[] = [];
+    for (const paragraph of txBody.matchAll(/<a:p\b[^>]*>([\s\S]*?)<\/a:p>/g)) {
+      let text = "";
+      for (const item of (paragraph[1] ?? "").matchAll(/<a:br\b[^>]*(?:\/>|>[\s\S]*?<\/a:br>)|<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)) {
+        if (item[0].startsWith("<a:br")) text += "\n";
+        else text += decodeXmlText(item[1] ?? "");
+      }
+      if (text.trim()) paragraphs.push(text.trim());
+    }
+    if (paragraphs.length) result.set(shapeId, paragraphs.join("\n"));
+  }
+  return result;
+}
+
+async function enrichTextMetadata(elements: TemplatePreviewElement[], orderedText?: Map<string, string>): Promise<TemplatePreviewElement[]> {
   return Promise.all(elements.map(async (element) => {
-    if (element.kind !== "text" || !element.text?.trim()) return element;
-    const paragraphs = element.text.split(/\r?\n/).map((text) => text.replace(/\s+/g, " ").trim()).filter(Boolean);
+    const text = element.kind === "text" && element.sourceShapeId ? orderedText?.get(element.sourceShapeId) ?? element.text : element.text;
+    if (element.kind !== "text" || !text?.trim()) return element;
+    const paragraphs = text.split(/\r?\n/).map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean);
     return {
       ...element,
-      textHash: await sha256Text(element.text.replace(/\s+/g, " ").trim()),
+      text,
+      textHash: await sha256Text(text.replace(/\s+/g, " ").trim()),
       sourceParagraphs: await Promise.all(paragraphs.map(async (text, index) => ({
         index: index + 1,
         text,
@@ -719,9 +753,10 @@ export async function buildSlideRenderCatalog(bytes: Uint8Array, sourceName: str
     const relationships = await readRelationships(zip, slidePart);
     const layoutPart = relationships.find((item) => item.type.endsWith("/slideLayout"))?.target ?? layoutParts[0];
     const layout = await loadLayout(layoutPart);
-    const slideXml = record((await readXml(zip, slidePart)).sld);
+    const slideXmlSource = await zip.file(slidePart)!.async("text");
+    const slideXml = record(record(parser.parse(slideXmlSource)).sld);
     const common = record(slideXml.cSld);
-    const slideElements = (await enrichTextMetadata(flattenSlideTree(record(common.spTree), rootContext, layout.theme, relationships, layout.placeholders, slidePart))).map((element) => ({ ...element, sourcePart: slidePart, origin: "slide" as const }));
+    const slideElements = (await enrichTextMetadata(flattenSlideTree(record(common.spTree), rootContext, layout.theme, relationships, layout.placeholders, slidePart), orderedShapeTextById(slideXmlSource))).map((element) => ({ ...element, sourcePart: slidePart, origin: "slide" as const }));
     const elements = [...layout.elements, ...slideElements];
     for (const element of elements) if (element.mediaId) mediaParts.add(element.mediaId);
     const titleElement = slideElements.find((element) => element.kind === "text" && ["title", "ctrTitle"].includes(element.placeholderType ?? "") && element.text?.trim()) ?? slideElements.find((element) => element.kind === "text" && element.text?.trim());

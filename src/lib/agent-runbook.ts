@@ -37,9 +37,16 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
   const representativeNumbers = new Set(representatives.map((item) => item.slideNumber));
   const prepared = (item: typeof interventions[number]) => item.protected || item.status === "designed" || item.recipe === "source" && item.level === "preserve";
   const representativeInterventions = interventions.filter((item) => representativeNumbers.has(item.slideNumber));
+  const currentHeld = (slideNumber: number) => {
+    const studioSlide = scene?.slides.find((slide) => slide.slideNumber === slideNumber);
+    return studioSlide?.qualityReview?.recordedVerdict === "hold"
+      && studioSlide.qualityReview.slideUpdatedAt === studioSlide.updatedAt;
+  };
+  const heldRepresentatives = representativeInterventions.filter((item) => !item.protected && currentHeld(item.slideNumber));
   const unpreparedRepresentatives = representativeInterventions.filter((item) => !prepared(item));
   const unreviewedRepresentatives = representativeInterventions.filter((item) => {
     if (item.protected) return false;
+    if (currentHeld(item.slideNumber)) return false;
     const studioSlide = scene?.slides.find((slide) => slide.slideNumber === item.slideNumber);
     return !studioSlide || studioSlide.qualityReview?.recordedVerdict !== "ready" || studioSlide.qualityReview.slideUpdatedAt !== studioSlide.updatedAt;
   });
@@ -90,7 +97,8 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
         const studioSlide = scene?.slides.find((slide) => slide.slideNumber === item.slideNumber);
         return studioSlide?.qualityReview?.recordedVerdict === "ready" && studioSlide.qualityReview.slideUpdatedAt === studioSlide.updatedAt;
       }).map((item) => item.slideNumber),
-      gatePassed: unpreparedRepresentatives.length === 0 && unreviewedRepresentatives.length === 0,
+      heldSlideNumbers: heldRepresentatives.map((item) => item.slideNumber),
+      gatePassed: unpreparedRepresentatives.length === 0 && unreviewedRepresentatives.length === 0 && heldRepresentatives.length === 0,
     },
     interventions,
     consistency,

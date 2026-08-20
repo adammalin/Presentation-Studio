@@ -9,6 +9,8 @@ import { buildAgentRunbook } from "../src/lib/agent-runbook";
 import { deriveLayoutSemantics } from "../src/lib/layout-semantics";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { compilePresentationScene } from "../src/lib/scene-graph";
+import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
+import { compileStudioWebScene } from "../src/lib/studio-web-scene";
 import type { TemplateCatalog, TemplateLayoutPreview } from "../src/lib/template-catalog";
 import type { DeckJob } from "../src/types";
 
@@ -16,9 +18,11 @@ async function fixtureDeck(): Promise<DeckJob> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-work-order-"));
   const filePath = path.join(directory, "synthetic.pptx");
   await createSyntheticLegacyDeck(filePath);
-  const audit = await auditPptx(new Uint8Array(await fs.readFile(filePath)));
+  const bytes = new Uint8Array(await fs.readFile(filePath));
+  const audit = await auditPptx(bytes);
   const deck: DeckJob = { id: "deck-work-order", name: "synthetic.pptx", sourceResourceId: "resource-work-order", sourceSha256: "a".repeat(64), operationScope: "reflow", templateClassification: audit.classification, targetTemplateId: "ornl-16x9-v1", targetTemplateDecisionSource: "automatic-default", status: "ready-for-cleanup", audit, protectedSlideNumbers: [] };
   deck.scene = compilePresentationScene({ ...deck, audit });
+  deck.studioScene = compileStudioWebScene(deck, await buildSlideRenderCatalog(bytes, deck.name));
   return deck;
 }
 
@@ -129,4 +133,31 @@ test("agent runbook exposes one source-wins next action and intervention policy"
   assert.ok(runbook.interventions.every((item) => item.sourceWins));
   assert.match(runbook.operatingRules.join(" "), /Source wins/i);
   assert.ok(runbook.representativeQualification.slides.some((item) => item.archetype === "table"));
+});
+
+test("agent runbook does not loop back to a revision-current representative held after pass three", async () => {
+  const deck = await fixtureDeck();
+  const representative = selectRepresentativeSlides(deck)[0];
+  const slide = deck.studioScene!.slides.find((item) => item.slideNumber === representative.slideNumber)!;
+  const reviewedAt = "2026-08-20T14:00:00.000Z";
+  slide.status = "designed";
+  slide.recipe = "ornl-title-content";
+  slide.updatedAt = reviewedAt;
+  slide.qualityReview = {
+    sceneRevision: deck.studioScene!.revision,
+    slideUpdatedAt: reviewedAt,
+    rasterSha256: "c".repeat(64),
+    pass: 3,
+    maxPasses: 3,
+    requestedVerdict: "hold",
+    recordedVerdict: "hold",
+    rationale: "The bounded review loop is exhausted.",
+    objectiveIssues: [],
+    visualIssues: [],
+    recordedAt: reviewedAt,
+  };
+  const runbook = buildAgentRunbook({ deck, projectUpdatedAt: reviewedAt, templateInstalled: true });
+  assert.deepEqual(runbook.representativeQualification.heldSlideNumbers, [representative.slideNumber]);
+  assert.equal(runbook.representativeQualification.gatePassed, false);
+  assert.notEqual(runbook.nextAction.input.slideNumber, representative.slideNumber);
 });

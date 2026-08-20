@@ -43,8 +43,17 @@ test("infers communication archetypes from source structure before choosing geom
   assert.equal(inferStudioDesignArchetype(profile(), { connectorCount: 3 }).archetype, "technical-diagram");
   assert.equal(inferStudioDesignArchetype(profile({ bodyBlockCount: 10 }), { connectorCount: 5, nativeObjectCount: 5, recommendedRecipe: "ornl-title-metric-grid" }).archetype, "comparison");
   assert.equal(inferStudioDesignArchetype(profile({ imageCount: 5, bodyBlockCount: 5, captionBlockCount: 5 }), { repeatedImageSeries: true }).archetype, "image-series");
+  assert.equal(inferStudioDesignArchetype(profile({ imageCount: 24, bodyBlockCount: 0, bodyBlockCharacterCounts: [], bodyCharacterCount: 0 }), { recommendedRecipe: "ornl-title-two-column" }).archetype, "technical-diagram");
   assert.equal(inferStudioDesignArchetype(profile({ bodyCharacterCount: 949, bodyBlockCharacterCounts: [949], desiredIntent: "conclusion" }), { title: "Self-Assessment Summary" }).archetype, "text-led");
   assert.equal(inferStudioDesignArchetype(profile(), { protectedSourceComposition: true }).archetype, "source-preserve");
+});
+
+test("dense peer-logo fields stay on the relationship-preserving contained-image recipe", () => {
+  const plan = planStudioComposition(profile({ imageCount: 24, bodyBlockCount: 0, bodyBlockCharacterCounts: [], bodyCharacterCount: 0, desiredIntent: "visual" }), layouts, { recommendedRecipe: "ornl-title-two-column", connectorCount: 0 });
+  assert.equal(plan.archetype, "technical-diagram");
+  assert.equal(plan.strategy, "shared-archetype-on-native-base");
+  assert.equal(plan.recipe, "ornl-title-two-column");
+  assert.match(plan.reasons.join(" "), /peer-logo field/i);
 });
 
 test("uses an exact native layout only when its complete relationship contract fits", () => {

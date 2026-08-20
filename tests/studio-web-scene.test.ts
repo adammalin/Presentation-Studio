@@ -9,7 +9,7 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { atomizeStudioWebSlide, compileStudioWebScene, inferRepeatedImageSeries, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { atomizeStudioWebSlide, clearStudioManualFigureTreatments, compileStudioWebScene, inferRepeatedImageSeries, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
 import { preflightStudioScene } from "../src/lib/studio-visual-critic";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
@@ -289,7 +289,9 @@ test("a dense peer-logo field stays editable and preserves relative mark scale i
   const title: StudioWebNode = { ...seed, id: "logo-title", sourceObjectId: "logo-title", sourceShapeId: "1", sourceBinding: "editable-object", name: "Logo title", kind: "text", role: "title", text: "Our partner ecosystem", sourceFrame: { x: emu(.47), y: emu(.29), width: emu(12.39), height: emu(.56), rotation: 0 }, frame: { x: emu(.47), y: emu(.29), width: emu(12.39), height: emu(.56), rotation: 0 }, visible: true, locked: false };
   const carrier: StudioWebNode = { ...seed, id: "legacy-logo-carrier", sourceObjectId: "legacy-logo-carrier", sourceShapeId: "2", sourceBinding: "editable-object", name: "Legacy logo carrier", kind: "native-object", role: "group", text: undefined, textHash: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(.35), y: emu(1.2), width: emu(12.6), height: emu(5.3), rotation: 0 }, frame: { x: emu(.35), y: emu(1.2), width: emu(12.6), height: emu(5.3), rotation: 0 }, visible: true, locked: false };
   const logos: StudioWebNode[] = Array.from({ length: 16 }, (_, ordinal) => ({ ...seed, id: `partner-logo-${ordinal + 1}`, sourceObjectId: `partner-logo-${ordinal + 1}`, sourceShapeId: String(ordinal + 3), sourceBinding: "editable-object", name: `Partner logo ${ordinal + 1}`, kind: "image", role: "image", text: undefined, textHash: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(.5 + (ordinal % 4) * 3.0), y: emu(1.3 + Math.floor(ordinal / 4) * 1.2), width: emu(1.4), height: emu(.55), rotation: 0 }, frame: { x: emu(.5 + (ordinal % 4) * 3.0), y: emu(1.3 + Math.floor(ordinal / 4) * 1.2), width: emu(1.4), height: emu(.55), rotation: 0 }, visible: true, locked: false }));
-  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, carrier, ...logos] }] }, sourceSlide.slideNumber, "ornl-title-two-column");
+  const source = { ...scene, slides: [{ ...sourceSlide, nodes: [title, carrier, ...logos] }] };
+  assert.equal(recommendedStudioRecipe(source.slides[0]), "ornl-title-two-column");
+  const designed = recomposeStudioWebSlide(source, sourceSlide.slideNumber, "ornl-title-two-column");
   const slide = designed.slides[0];
   const designedLogos = slide.nodes.filter((node) => node.component?.role === "logo-grid-item");
   assert.equal(slide.nodes.find((node) => node.id === carrier.id)?.visible, false);
@@ -743,6 +745,33 @@ test("golden five-column image series preserves every source image-heading-evide
   }
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.endsWith("-heading-band")).length, 5);
   assert.equal(studioGeneratedComponents(slide).some((component) => component.lineWidthPt > 0), false);
+
+  const firstSeriesGroup = slide.nodes.filter((node) => node.component?.groupId === `studio-image-series-${slide.slideNumber}-1`);
+  assert.throws(() => updateStudioFigureTreatment(designed, slide.slideNumber, {
+    id: "flatten-image-series-column",
+    nodeIds: firstSeriesGroup.map((node) => node.id),
+    mode: "preserve-and-frame",
+    verificationStatus: "source-locked",
+    intentSummary: "Keep one image-series column together.",
+    informationInventory: ["image", "heading", "body"],
+    invariants: ["Preserve all exact text."],
+    rationale: "Treat the column as one group.",
+  }), /Do not flatten its editable text/i);
+
+  const withManualMediaTreatment = updateStudioFigureTreatment(designed, slide.slideNumber, {
+    id: "manual-series-media",
+    nodeIds: [firstSeriesGroup.find((node) => node.component?.role === "image-series-media")!.id],
+    mode: "preserve-and-frame",
+    verificationStatus: "source-locked",
+    intentSummary: "Preserve the source image.",
+    informationInventory: ["source image"],
+    invariants: ["Preserve its authentic pixels."],
+    rationale: "Test explicit manual treatment replacement.",
+  });
+  assert.equal(withManualMediaTreatment.slides[0].figureTreatments.some((treatment) => treatment.id === "manual-series-media"), true);
+  const cleared = clearStudioManualFigureTreatments(withManualMediaTreatment, slide.slideNumber);
+  assert.equal(cleared.slides[0].figureTreatments.some((treatment) => treatment.id === "manual-series-media"), false);
+  assert.equal(cleared.slides[0].figureTreatments.every((treatment) => treatment.id.startsWith("studio-auto-")), true);
 
   const damaged = recomposeStudioWebSlide(source, sourceSlide.slideNumber, "ornl-title-content");
   const failed = preflightStudioScene(damaged);
@@ -1245,7 +1274,13 @@ test("table continuation repeats a concise leftmost merged context label across 
   assert.equal(result.plan.status, "ready");
   assert.equal(result.plan.segments.length, 4);
   assert.equal(result.plan.segments.every((segment) => segment.sourceCellIds.includes(contextId)), true);
-  const targetScene = { ...result.scene, slides: result.scene.slides.filter((slide) => slide.slideNumber === sourceSlide.slideNumber) };
+  const stalePlans = result.scene.tableContinuationPlans?.map((plan) => ({
+    ...plan,
+    // Simulate a project saved by the older planner that allowed the split but
+    // forgot to copy the merged context cell into each output inventory.
+    segments: plan.segments.map((segment) => ({ ...segment, sourceCellIds: segment.sourceCellIds.filter((id) => id !== contextId) })),
+  }));
+  const targetScene = { ...result.scene, tableContinuationPlans: stalePlans, slides: result.scene.slides.filter((slide) => slide.slideNumber === sourceSlide.slideNumber) };
   const rebuilt = await buildStudioCompositionPptx(targetScene, { catalog, strict: false, title: "Repeated context continuation" });
   assert.equal(rebuilt.slideCount, 4);
   const audit = await auditPptx(rebuilt.bytes);

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256 } from "../src/lib/hash";
+import { auditPptx } from "../src/lib/pptx-audit";
 import { qualifyStudioWebBenchmark } from "./qualify-studio-web-benchmark";
 
 interface PrivateGoldenManifest {
@@ -82,6 +83,51 @@ export function parsePrivateGoldenManifest(value: unknown): PrivateGoldenManifes
   };
 }
 
+function benchmarkContentTokens(value: string) {
+  return new Set(value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((token) => token.length > 2));
+}
+
+export function privateGoldenContentCoverage(sourceText: string, benchmarkTexts: string[]) {
+  const source = benchmarkContentTokens(sourceText);
+  const benchmark = benchmarkContentTokens(benchmarkTexts.join(" "));
+  if (!source.size) return 1;
+  let matched = 0;
+  for (const token of source) if (benchmark.has(token)) matched += 1;
+  return matched / source.size;
+}
+
+async function validatePrivateGoldenCaseMappings(manifest: PrivateGoldenManifest) {
+  const [sourceBytes, benchmarkBytes] = await Promise.all([
+    fs.readFile(manifest.source.path),
+    fs.readFile(manifest.benchmark.path),
+  ]);
+  const [sourceAudit, benchmarkAudit] = await Promise.all([
+    auditPptx(new Uint8Array(sourceBytes)),
+    auditPptx(new Uint8Array(benchmarkBytes)),
+  ]);
+  return manifest.cases.map((item) => {
+    const source = sourceAudit.slides.find((slide) => slide.number === item.sourceSlide);
+    if (!source) throw new Error(`Golden case ${item.id} refers to missing source slide ${item.sourceSlide}.`);
+    const benchmarkSlides = item.benchmarkSlides.map((slideNumber) => {
+      const slide = benchmarkAudit.slides.find((candidate) => candidate.number === slideNumber);
+      if (!slide) throw new Error(`Golden case ${item.id} refers to missing benchmark slide ${slideNumber}.`);
+      return slide;
+    });
+    const coverage = privateGoldenContentCoverage(source.text, benchmarkSlides.map((slide) => slide.text));
+    const sourceTokenCount = benchmarkContentTokens(source.text).size;
+    if (sourceTokenCount >= 8 && coverage < 0.65) {
+      const ranked = benchmarkAudit.slides
+        .map((slide) => ({ slideNumber: slide.number, coverage: privateGoldenContentCoverage(source.text, [slide.text]) }))
+        .sort((left, right) => right.coverage - left.coverage)
+        .slice(0, 3)
+        .map((candidate) => `${candidate.slideNumber} (${Math.round(candidate.coverage * 100)}%)`)
+        .join(", ");
+      throw new Error(`Golden case ${item.id} maps source slide ${item.sourceSlide} to benchmark slide${item.benchmarkSlides.length === 1 ? "" : "s"} ${item.benchmarkSlides.join(", ")}, but only ${Math.round(coverage * 100)}% of source content is represented. Best benchmark matches: ${ranked}. Correct the manifest before visual qualification.`);
+    }
+    return { id: item.id, sourceSlide: item.sourceSlide, benchmarkSlides: item.benchmarkSlides, sourceTokenCount, coverage };
+  });
+}
+
 export async function qualifyPrivateGolden(manifestPath: string, outputRoot: string) {
   const manifestBytes = new Uint8Array(await fs.readFile(manifestPath));
   const manifest = parsePrivateGoldenManifest(JSON.parse(new TextDecoder().decode(manifestBytes)));
@@ -90,6 +136,7 @@ export async function qualifyPrivateGolden(manifestPath: string, outputRoot: str
     const templateSha256 = await sha256(new Uint8Array(await fs.readFile(manifest.template.path)));
     if (templateSha256 !== manifest.template.sha256) throw new Error(`The authorized template hash changed. Expected ${manifest.template.sha256}, received ${templateSha256}.`);
   }
+  const benchmarkContentMatches = await validatePrivateGoldenCaseMappings(manifest);
   const benchmarkSlideNumbers = [...new Set(manifest.cases.flatMap((item) => item.benchmarkSlides))];
   const result = await qualifyStudioWebBenchmark(
     manifest.source.path,
@@ -123,6 +170,7 @@ export async function qualifyPrivateGolden(manifestPath: string, outputRoot: str
     benchmark: result.report.benchmark,
     candidate: { path: result.report.candidate.path, sha256: result.report.candidate.sha256 },
     objectiveChecks: result.report.checks,
+    benchmarkContentMatches,
     objectiveReady: result.report.readyForHumanVisualReview,
     status: result.report.readyForHumanVisualReview ? "visual-review-required" : "objective-failure",
     cases,
