@@ -26,6 +26,10 @@ test("macOS one-line installer is self-contained, verified, and policy-safe", as
   assert.match(installer, /configure-mcp\.mjs" --codex/);
   assert.match(installer, /Restart Codex after installation/);
   assert.match(installer, /\.presentation-studio-managed-install/);
+  assert.match(installer, /stop_managed_presentation_studio/);
+  assert.match(installer, /mcp-runtime\.json/);
+  assert.match(installer, /node_modules\/electron/);
+  assert.doesNotMatch(installer, /pkill\s+-f/);
   assert.doesNotMatch(installer, /xattr\s+-d|spctl\s+--disable|csrutil\s+disable|sudo\s/);
 });
 
@@ -43,6 +47,9 @@ test("Windows one-line installer is self-contained, verified, and policy-safe", 
   assert.match(installer, /configure-mcp\.mjs"\), "--codex"/);
   assert.match(installer, /Restart Codex after installation/);
   assert.match(installer, /\.presentation-studio-managed-install/);
+  assert.match(installer, /Stop-ManagedPresentationStudio/);
+  assert.match(installer, /mcp-runtime\.json/);
+  assert.match(installer, /StartsWith\(\$InstallRoot/);
   assert.doesNotMatch(installer, /ExecutionPolicy\s+(Bypass|Unrestricted)|Set-ExecutionPolicy|DisableRealtimeMonitoring/);
 });
 

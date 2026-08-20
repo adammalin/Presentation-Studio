@@ -22,7 +22,7 @@ Paste this entire line into Terminal:
 curl -fsSL https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-macos.sh | /bin/zsh
 ```
 
-The managed installation is placed in `~/Applications/Presentation Studio`. The installer builds and tests a staged copy before replacing an earlier managed version, creates `Launch Presentation Studio.command`, and starts the app. Run the same one-line command again to update it.
+The managed installation is placed in `~/Applications/Presentation Studio`. The installer builds and tests a staged copy before replacing an earlier managed version, creates `Launch Presentation Studio.command`, and starts the app. Run the same one-line command again to update it. For an update, the installer closes only the verified managed Presentation Studio process before activating and reopening the new version so the app and MCP cannot remain on different design-standard versions.
 
 The script does not alter Gatekeeper, quarantine settings, or other operating-system protections. Follow your organization's approved software process if policy blocks execution.
 
@@ -34,7 +34,7 @@ Paste this entire line into PowerShell:
 irm https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-windows.ps1 | iex
 ```
 
-The managed installation is placed in `%LOCALAPPDATA%\Presentation Studio`. The installer builds and tests a staged copy before replacing an earlier managed version, creates `Launch Presentation Studio.cmd`, and starts the app. Run the same one-line command again to update it.
+The managed installation is placed in `%LOCALAPPDATA%\Presentation Studio`. The installer builds and tests a staged copy before replacing an earlier managed version, creates `Launch Presentation Studio.cmd`, and starts the app. Run the same one-line command again to update it. For an update, the installer closes only the verified managed Presentation Studio process before activating and reopening the new version so the app and MCP cannot remain on different design-standard versions.
 
 The script does not alter PowerShell execution policy, SmartScreen, or other operating-system protections. Follow your organization's approved software process if policy blocks execution.
 

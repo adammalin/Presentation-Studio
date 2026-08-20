@@ -40,6 +40,30 @@ function Invoke-Checked([string]$Executable, [string[]]$Arguments) {
   }
 }
 
+function Stop-ManagedPresentationStudio {
+  $RuntimeDescriptor = Join-Path $env:APPDATA "Presentation Studio\mcp-runtime.json"
+  if (-not (Test-Path $RuntimeDescriptor)) { return }
+  try {
+    $ManagedAppPid = [int](Get-Content -Raw -LiteralPath $RuntimeDescriptor | ConvertFrom-Json).pid
+    $ManagedProcess = Get-Process -Id $ManagedAppPid -ErrorAction Stop
+    $ExecutablePath = $ManagedProcess.Path
+    if ([string]::IsNullOrWhiteSpace($ExecutablePath) -or -not $ExecutablePath.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase)) {
+      Write-Host "Leaving unrelated running process $ManagedAppPid untouched; its executable is outside the managed Presentation Studio install."
+      return
+    }
+    Write-Host "Closing the running managed Presentation Studio before activation..."
+    $null = $ManagedProcess.CloseMainWindow()
+    if (-not $ManagedProcess.WaitForExit(8000)) {
+      Write-Host "The managed app did not close within 8 seconds; stopping that exact verified process so the update cannot mix runtime versions."
+      Stop-Process -Id $ManagedAppPid -Force -ErrorAction SilentlyContinue
+    }
+  } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
+    return
+  } catch {
+    Write-Host "The prior Presentation Studio runtime descriptor could not be used; continuing without touching any unverified process."
+  }
+}
+
 if ([string]::IsNullOrWhiteSpace($InstallRoot) -or
     $InstallRoot -eq [System.IO.Path]::GetPathRoot($InstallRoot) -or
     $InstallRoot -eq $env:USERPROFILE) {
@@ -114,6 +138,8 @@ try {
   } finally {
     Pop-Location
   }
+
+  Stop-ManagedPresentationStudio
 
   if (Test-Path $PreviousDir) {
     if (-not (Test-Path (Join-Path $PreviousDir ".presentation-studio-managed-install"))) {

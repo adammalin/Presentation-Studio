@@ -28,6 +28,28 @@ fail() {
   exit 1
 }
 
+stop_managed_presentation_studio() {
+  local runtime_descriptor managed_pid command_line attempt
+  runtime_descriptor="${HOME}/Library/Application Support/Presentation Studio/mcp-runtime.json"
+  [[ -f "${runtime_descriptor}" ]] || return 0
+  managed_pid="$(node -e 'const fs=require("node:fs"); try { const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (Number.isSafeInteger(value.pid) && value.pid > 1) process.stdout.write(String(value.pid)); } catch {}' "${runtime_descriptor}")"
+  [[ -n "${managed_pid}" ]] || return 0
+  kill -0 "${managed_pid}" >/dev/null 2>&1 || return 0
+  command_line="$(ps -p "${managed_pid}" -o command= 2>/dev/null || true)"
+  if [[ "${command_line}" != *"${INSTALL_ROOT}/"*"/node_modules/electron/"* ]]; then
+    print "Leaving unrelated running process ${managed_pid} untouched; its executable is outside the managed Presentation Studio install."
+    return 0
+  fi
+  print "Closing the running managed Presentation Studio before activation..."
+  kill -TERM "${managed_pid}" >/dev/null 2>&1 || true
+  for attempt in {1..80}; do
+    kill -0 "${managed_pid}" >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  print "The managed app did not close within 8 seconds; stopping that exact verified process so the update cannot mix runtime versions."
+  kill -KILL "${managed_pid}" >/dev/null 2>&1 || true
+}
+
 if [[ -z "${INSTALL_ROOT}" || "${INSTALL_ROOT}" == "/" || "${INSTALL_ROOT}" == "${HOME}" ]]; then
   fail "the install location is not safe. Set PRESENTATION_STUDIO_INSTALL_DIR to a dedicated folder."
 fi
@@ -106,6 +128,8 @@ npm test
 npm run check:data-safety
 npm run build
 print "managed by scripts/install-macos.sh" > .presentation-studio-managed-install
+
+stop_managed_presentation_studio
 
 if [[ -d "${PREVIOUS_DIR}" ]]; then
   [[ -f "${PREVIOUS_DIR}/.presentation-studio-managed-install" ]] || fail "${PREVIOUS_DIR} is not a managed backup and will not be replaced."

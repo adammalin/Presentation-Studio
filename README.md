@@ -67,7 +67,7 @@ Version 0.3.1 is currently delivered from the isolated `codex/web-slide-design-e
 curl -fsSL https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-macos.sh | /bin/zsh
 ```
 
-This installs to `~/Applications/Presentation Studio`, verifies the staged application, creates `Launch Presentation Studio.command`, and starts the app. Run the same command again to update the managed installation.
+This installs to `~/Applications/Presentation Studio`, verifies the staged application, creates `Launch Presentation Studio.command`, and starts the app. Run the same command again to update the managed installation. During an update, the installer closes only the verified managed Presentation Studio process before activating and reopening the new version, preventing an old Electron runtime from continuing against new MCP guidance.
 
 ### Windows - one line
 
@@ -77,7 +77,7 @@ Run in PowerShell:
 irm https://raw.githubusercontent.com/adammalin/Presentation-Studio/codex/web-slide-design-engine/scripts/install-windows.ps1 | iex
 ```
 
-This installs to `%LOCALAPPDATA%\Presentation Studio`, verifies the staged application, creates `Launch Presentation Studio.cmd`, and starts the app. Run the same command again to update the managed installation.
+This installs to `%LOCALAPPDATA%\Presentation Studio`, verifies the staged application, creates `Launch Presentation Studio.cmd`, and starts the app. Run the same command again to update the managed installation. During an update, the installer closes only the verified managed Presentation Studio process before activating and reopening the new version, preventing an old Electron runtime from continuing against new MCP guidance.
 
 The installers do not change Gatekeeper, PowerShell execution policy, SmartScreen, or other operating-system protections. Microsoft PowerPoint is optional for launching the app but is required for PowerPoint-native rendering and final native validation; licensed Microsoft software is not installed automatically.
 
