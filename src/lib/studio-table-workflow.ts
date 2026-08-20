@@ -26,6 +26,18 @@ export interface StudioTableContinuationResult {
   plan: StudioTableContinuationPlan;
 }
 
+export interface StudioTableCapacityAssessment {
+  required: boolean;
+  tableNodeId: string;
+  totalCellCharacterCount: number;
+  maximumCellCharacterCount: number;
+  averageCellCharacterCount: number;
+  bodyRowCount: number;
+  recommendedMaximumBodyRowsPerSlide?: number;
+  reason: string;
+  nextTool?: "plan_studio_table_continuation";
+}
+
 export interface MaterializedStudioTableSlide {
   slide: StudioWebSlide;
   continuation?: {
@@ -268,6 +280,37 @@ function bodyRowClusters(node: StudioWebNode, headerRows: number): Array<{ start
     cursor = end + 1;
   }
   return result;
+}
+
+/**
+ * Deterministic capacity guidance for the agent before it spends a native
+ * PowerPoint render on a table that cannot remain readable on one slide.
+ * This is deliberately conservative: the final authority is still the exact
+ * PowerPoint-native measurement after continuation materialization.
+ */
+export function assessStudioTableCapacity(node: StudioWebNode): StudioTableCapacityAssessment {
+  if (!node.table || node.kind !== "table") throw new Error("Choose a native Studio table before assessing slide capacity.");
+  const design = resolvedStudioTableDesign(node);
+  const cellLengths = node.table.cells.map((cell) => cell.text.trim().length);
+  const totalCellCharacterCount = cellLengths.reduce((sum, value) => sum + value, 0);
+  const maximumCellCharacterCount = Math.max(0, ...cellLengths);
+  const averageCellCharacterCount = cellLengths.length ? totalCellCharacterCount / cellLengths.length : 0;
+  const bodyRowCount = Math.max(0, node.table.rows - design.headerRows);
+  const required = bodyRowCount >= 2 && (totalCellCharacterCount > 1_600 || maximumCellCharacterCount > 260 || averageCellCharacterCount > 95);
+  const recommendedMaximumBodyRowsPerSlide = required ? (averageCellCharacterCount > 80 || maximumCellCharacterCount > 220 ? 1 : Math.min(2, bodyRowCount - 1)) : undefined;
+  return {
+    required,
+    tableNodeId: node.id,
+    totalCellCharacterCount,
+    maximumCellCharacterCount,
+    averageCellCharacterCount: Math.round(averageCellCharacterCount * 10) / 10,
+    bodyRowCount,
+    recommendedMaximumBodyRowsPerSlide,
+    reason: required
+      ? `The table contains ${totalCellCharacterCount} characters across ${node.table.rows} rows (${maximumCellCharacterCount} in its longest cell). One-slide composition is not a valid candidate; preserve every cell in a merge-safe continuation before native preview.`
+      : `The table's deterministic source inventory does not require continuation before its first native measurement (${totalCellCharacterCount} characters; ${maximumCellCharacterCount} in its longest cell).`,
+    nextTool: required ? "plan_studio_table_continuation" : undefined,
+  };
 }
 
 function planFor(node: StudioWebNode, slideNumber: number, maximumBodyRowsPerSlide: number, rationale: string | undefined, now: string): StudioTableContinuationPlan {

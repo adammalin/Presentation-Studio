@@ -59,3 +59,33 @@ test("deck consistency review flags a one-off recipe inside a qualified communic
   const issue = analyzeStudioDeckConsistency(scene).issues.find((candidate) => candidate.category === "archetype-pattern");
   assert.deepEqual(issue?.slideNumbers, [3]);
 });
+
+test("deck consistency never calls ordinary source-only coverage build-ready", () => {
+  const timestamp = "2026-08-20T00:00:00.000Z";
+  const slides = [1, 2, 3].map((slideNumber) => ({
+    id: `coverage-${slideNumber}`,
+    slideNumber,
+    sourceSlideId: `source-${slideNumber}`,
+    sourceTextHash: "d".repeat(64),
+    contentCoverage: { exactTextMapped: true, sourceCharacterCount: 1, mappedCharacterCount: 1, sourceTextBoxCount: 1, mappedTextNodeCount: 1, groupedOrUnsupportedTextPresent: false },
+    sourceRevision: "source",
+    recipe: slideNumber === 1 ? "ornl-title-content" as const : "source" as const,
+    background: "#FFFFFF",
+    status: slideNumber === 1 ? "designed" as const : "imported" as const,
+    designRationale: "coverage test",
+    figureTreatments: [],
+    nodes: [node(`coverage-title-${slideNumber}`, "title")],
+    updatedAt: timestamp,
+  }));
+  const scene: StudioWebScene = { schema: STUDIO_WEB_SCENE_SCHEMA, version: STUDIO_WEB_SCENE_VERSION, revision: "coverage", deckId: "deck", sourceSha256: "e".repeat(64), slideSize: { width: emu(13.333), height: emu(7.5) }, sourceSlideSize: { width: emu(13.333), height: emu(7.5) }, designSystem: { id: "ornl-presentation-web-v1", standardVersion: "test", unit: "emu", renderer: "html-css", exportTarget: "editable-powerpoint", compilerModes: ["source-bound-overlay", "fresh-composition"] }, slides };
+
+  const partial = analyzeStudioDeckConsistency(scene);
+  assert.equal(partial.coverageStatus, "partial");
+  assert.equal(partial.readyForWholeDeckBuild, false);
+  assert.equal(partial.buildEligibleSourceSlideCount, 0);
+
+  const protectedSourceAllowed = analyzeStudioDeckConsistency(scene, { buildEligibleSourceSlideNumbers: [2, 3] });
+  assert.equal(protectedSourceAllowed.coverageStatus, "complete");
+  assert.equal(protectedSourceAllowed.readyForWholeDeckBuild, true);
+  assert.equal(protectedSourceAllowed.buildEligibleSourceSlideCount, 2);
+});

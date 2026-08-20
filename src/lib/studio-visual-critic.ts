@@ -39,6 +39,13 @@ function protectedBrandMark(node: StudioWebNode): boolean {
   return node.component?.role === "footer-logo" || /(?:^|\b)(?:ornl|doe|department of energy|oak ridge|wordmark|logo)(?:\b|$)/i.test(node.name);
 }
 
+function productionFontFloor(node: StudioWebNode): number {
+  if (node.role === "title") return 24;
+  if (node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-")) return 10.5;
+  if (node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading") return 14;
+  return 16;
+}
+
 function sourceLockedNodeIds(scene: StudioWebScene, slideNumber: number): Set<string> {
   const slide = scene.slides.find((candidate) => candidate.slideNumber === slideNumber);
   return new Set((slide?.figureTreatments ?? [])
@@ -95,7 +102,7 @@ export function preflightStudioScene(scene: StudioWebScene, options: { protected
     for (const node of editable) {
       if (node.frame.x < 0 || node.frame.y < 0 || node.frame.x + node.frame.width > scene.slideSize.width || node.frame.y + node.frame.height > scene.slideSize.height) add({ category: "safe-region", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} leaves the slide canvas.`, recommendation: "Recompose it inside the 16:9 canvas before building.", autoFixable: true });
       if (!protectedTemplateSlide && node.kind === "text" && node.text?.trim() && node.component?.role !== "footer-meta" && !footerRoles.has(node.role)) {
-        const floor = node.role === "title" ? 24 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading" ? 14 : 16;
+        const floor = productionFontFloor(node);
         if (node.style.fontFamily.trim().toLowerCase() !== "aptos") add({ category: "brand", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} uses ${node.style.fontFamily || "an unspecified font"} instead of Aptos.`, recommendation: "Use Aptos throughout ordinary ORNL presentation content.", autoFixable: true });
         if (node.style.fontSizePt < floor) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is ${node.style.fontSizePt} pt; the production floor for this role is ${floor} pt.`, recommendation: "Choose a roomier recipe, enlarge the region, or use an explicit continuation slide instead of miniaturizing type.", autoFixable: true });
       }
@@ -196,27 +203,34 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
   const issues: StudioQualityIssue[] = [];
   const add = (input: Omit<StudioQualityIssue, "id">) => issues.push(issue(issues.length, input));
   const visible = slide.nodes.filter((node) => node.visible);
-  const nodes = new Map(visible.map((node) => [node.id, node]));
+  const sourceLocked = sourceLockedNodeIds(scene, slideNumber);
+  const reviewVisible = visible.filter((node) => !sourceLocked.has(node.id));
+  const nodes = new Map(reviewVisible.map((node) => [node.id, node]));
   const safe = (scene.rhythm?.safeMarginPt ?? 18) * PT;
 
   for (const overflow of nativeTextOverflows(measurement)) {
     const node = visible.find((candidate) => overflow.name === candidate.id || overflow.name?.endsWith(` · ${candidate.id}`));
+    if (node && sourceLocked.has(node.id)) continue;
     add({ category: "overflow", severity: "blocker", source: "powerpoint-native", nodeIds: node ? [node.id] : [], message: `${overflow.name || "Text"} renders outside its PowerPoint frame (${overflow.edges.join(", ")}).`, recommendation: "Recompose into a larger semantic region or use measured text fitting; do not silently shrink below the readability floor.", autoFixable: Boolean(node) });
   }
 
-  for (const node of visible) {
+  for (const node of reviewVisible) {
     const frame = node.frame;
     if (frame.x < 0 || frame.y < 0 || frame.x + frame.width > scene.slideSize.width || frame.y + frame.height > scene.slideSize.height) add({ category: "safe-region", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} leaves the slide canvas.`, recommendation: "Fit the complete component into the safe region while preserving its internal relationships.", autoFixable: true });
     else if (!["footer", "slide-number", "date", "logo"].includes(node.role) && (frame.x < safe || frame.y < safe || frame.x + frame.width > scene.slideSize.width - safe || frame.y + frame.height > scene.slideSize.height - safe)) add({ category: "safe-region", severity: "minor", source: "scene", nodeIds: [node.id], message: `${node.name} enters the ${scene.rhythm?.safeMarginPt ?? 18}-point working safe region.`, recommendation: "Confirm intentional full-bleed/template placement or fit the relationship group into the safe region.", autoFixable: true });
-    if ((node.kind === "image" || node.kind === "native-object") && (frame.width < 72 * PT || frame.height < 54 * PT)) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is too small to function as readable technical evidence.`, recommendation: "Give the figure a larger primary or supporting visual region, or crop to the meaning-bearing content with a verified focal point.", autoFixable: false });
+    const compactPeerVisual = node.component?.role === "logo-grid-item";
+    const minimumWidth = compactPeerVisual ? 28 * PT : 72 * PT;
+    const minimumHeight = compactPeerVisual ? 28 * PT : 54 * PT;
+    if ((node.kind === "image" || node.kind === "native-object") && (frame.width < minimumWidth || frame.height < minimumHeight)) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is too small to function as readable ${compactPeerVisual ? "peer logo" : "technical evidence"}.`, recommendation: compactPeerVisual ? "Increase the shared logo-grid cell or continue the field without distorting the mark." : "Give the figure a larger primary or supporting visual region, or crop to the meaning-bearing content with a verified focal point.", autoFixable: false });
   }
 
-  const title = visible.find((node) => node.kind === "text" && node.role === "title");
-  const bodySizes = visible.filter((node) => node.kind === "text" && ["body", "label", "caption"].includes(node.role)).map((node) => node.style.fontSizePt);
+  const title = reviewVisible.find((node) => node.kind === "text" && node.role === "title");
+  const bodySizes = reviewVisible.filter((node) => node.kind === "text" && ["body", "label", "caption"].includes(node.role)).map((node) => node.style.fontSizePt);
   if (title && bodySizes.length && title.style.fontSizePt <= Math.max(...bodySizes)) add({ category: "hierarchy", severity: "major", source: "scene", nodeIds: [title.id], message: "The slide title is not typographically dominant over supporting copy.", recommendation: "Use the ORNL title scale or reduce competing headings while preserving readable body type.", autoFixable: true });
-  const characterCount = visible.reduce((sum, node) => sum + (node.text?.length ?? node.table?.cells.reduce((cellSum, cell) => cellSum + cell.text.length, 0) ?? 0), 0);
-  if (characterCount > 1_100 || visible.length > 24) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [], message: `The composition carries ${characterCount} characters across ${visible.length} visible semantic nodes.`, recommendation: "Use hierarchy, a denser approved table treatment, or a continuation slide; do not miniaturize the entire composition.", autoFixable: false });
-  else if (characterCount > 750 || visible.length > 16) add({ category: "legibility", severity: "minor", source: "scene", nodeIds: [], message: "The slide is visually dense and needs a deliberate reading path.", recommendation: "Strengthen grouping and progressive hierarchy while keeping every source statement exact.", autoFixable: false });
+  const densityVisible = reviewVisible.filter((node) => node.component?.role !== "logo-grid-item");
+  const characterCount = densityVisible.reduce((sum, node) => sum + (node.text?.length ?? node.table?.cells.reduce((cellSum, cell) => cellSum + cell.text.length, 0) ?? 0), 0);
+  if (characterCount > 1_100 || densityVisible.length > 24) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [], message: `The composition carries ${characterCount} characters across ${densityVisible.length} visible semantic nodes.`, recommendation: "Use hierarchy, a denser approved table treatment, or a continuation slide; do not miniaturize the entire composition.", autoFixable: false });
+  else if (characterCount > 750 || densityVisible.length > 16) add({ category: "legibility", severity: "minor", source: "scene", nodeIds: [], message: "The slide is visually dense and needs a deliberate reading path.", recommendation: "Strengthen grouping and progressive hierarchy while keeping every source statement exact.", autoFixable: false });
 
   for (const constraint of slide.constraints ?? []) {
     const delta = constraintDelta(constraint, nodes, measurement);

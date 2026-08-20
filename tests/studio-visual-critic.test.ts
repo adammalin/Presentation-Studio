@@ -61,6 +61,31 @@ test("Studio production preflight preserves approved sacred-template typography"
   assert.equal(result.issues.some((issue) => issue.category === "legibility"), false);
 });
 
+test("Studio production preflight honors the qualified 10.5 pt editorial-record grid exception only for that component", () => {
+  const source = scene();
+  const editorial = source.slides[0].nodes.find((node) => node.id === "body")!;
+  source.slides[0] = {
+    ...source.slides[0],
+    recipe: "ornl-title-card-grid",
+    nodes: source.slides[0].nodes.map((node) => node.id === editorial.id ? {
+      ...node,
+      component: { groupId: "studio-editorial-record-grid-1", role: "technical-annotation", ordinal: 0 },
+      style: { ...node.style, fontSizePt: 10.5 },
+    } : node),
+  };
+  const qualified = preflightStudioScene(source);
+  assert.equal(qualified.issues.some((issue) => issue.nodeIds.includes(editorial.id) && issue.category === "legibility"), false);
+
+  const tooSmall = structuredClone(source);
+  tooSmall.slides[0].nodes.find((node) => node.id === editorial.id)!.style.fontSizePt = 10;
+  assert.equal(preflightStudioScene(tooSmall).issues.some((issue) => issue.nodeIds.includes(editorial.id) && /10 pt/.test(issue.message)), true);
+
+  const ordinary = structuredClone(source);
+  const ordinaryNode = ordinary.slides[0].nodes.find((node) => node.id === editorial.id)!;
+  ordinaryNode.component = { groupId: "studio-card-1", role: "card-body", ordinal: 0 };
+  assert.equal(preflightStudioScene(ordinary).issues.some((issue) => issue.nodeIds.includes(editorial.id) && /10.5 pt/.test(issue.message)), true);
+});
+
 test("Studio critic accepts complete supporting metric-icon crops while retaining the strict technical-figure crop gate", () => {
   const supporting = scene();
   supporting.slides[0].figureTreatments = [{
@@ -83,6 +108,29 @@ test("Studio critic accepts complete supporting metric-icon crops while retainin
   technical.slides[0].figureTreatments[0] = { ...technical.slides[0].figureTreatments[0], id: "technical-figure", intentSummary: "Technical evidence figure" };
   const technicalResult = critiqueStudioSlide(technical, 1, measurement());
   assert.equal(technicalResult.issues.some((issue) => issue.category === "figure" && /less than 25%/.test(issue.message)), true);
+});
+
+test("Studio critic judges a source-locked treatment as one unit instead of flagging its hidden legacy inventory", () => {
+  const source = scene();
+  const legacy = source.slides[0].nodes.find((node) => node.id === "body")!;
+  legacy.kind = "native-object";
+  legacy.role = "group";
+  legacy.text = undefined;
+  legacy.frame = { x: 4 * PT, y: 4 * PT, width: 48 * PT, height: 32 * PT, rotation: 0 };
+  source.slides[0].figureTreatments = [{
+    id: "source-locked-legacy-inventory",
+    nodeIds: [legacy.id],
+    mode: "preserve-as-unit",
+    verificationStatus: "source-locked",
+    intentSummary: "Complete source relationship unit",
+    informationInventory: ["Every source member"],
+    invariants: ["Preserve internal relationships"],
+    rationale: "Judge the group frame, not obsolete member geometry.",
+    groupFrame: { x: 90 * PT, y: 120 * PT, width: 420 * PT, height: 220 * PT, rotation: 0 },
+    lockAspectRatio: true,
+  }];
+  const result = critiqueStudioSlide(source, 1, measurement());
+  assert.equal(result.issues.some((item) => item.nodeIds.includes(legacy.id) && ["safe-region", "legibility"].includes(item.category)), false);
 });
 
 test("native production QA treats editable table-cell overflow as a hard issue", () => {

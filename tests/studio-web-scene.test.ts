@@ -16,7 +16,7 @@ import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export
 import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
 import { nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
 import { adoptStudioComponentStyle, compatibleStudioComponentInstances } from "../src/lib/studio-component-library";
-import { planStudioTableContinuation, publishStudioTableExemplar } from "../src/lib/studio-table-workflow";
+import { assessStudioTableCapacity, planStudioTableContinuation, publishStudioTableExemplar } from "../src/lib/studio-table-workflow";
 import { sha256, sha256Text } from "../src/lib/hash";
 import type { DeckJob, StudioWebNode, StudioWebScene } from "../src/types";
 
@@ -278,6 +278,29 @@ test("a mixed legacy control overview stays one complete source-locked region wh
   assert.equal(treatment.verificationStatus, "source-locked");
   assert.deepEqual(nativeIsolationShapeIds(slide, treatment), []);
   assert.equal(studioGeneratedComponents(slide).some((component) => component.id.includes("technical-overview") && component.lineWidthPt > 0), false);
+});
+
+test("a dense peer-logo field stays editable and preserves relative mark scale instead of becoming one screenshot", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const title: StudioWebNode = { ...seed, id: "logo-title", sourceObjectId: "logo-title", sourceShapeId: "1", sourceBinding: "editable-object", name: "Logo title", kind: "text", role: "title", text: "Our partner ecosystem", sourceFrame: { x: emu(.47), y: emu(.29), width: emu(12.39), height: emu(.56), rotation: 0 }, frame: { x: emu(.47), y: emu(.29), width: emu(12.39), height: emu(.56), rotation: 0 }, visible: true, locked: false };
+  const carrier: StudioWebNode = { ...seed, id: "legacy-logo-carrier", sourceObjectId: "legacy-logo-carrier", sourceShapeId: "2", sourceBinding: "editable-object", name: "Legacy logo carrier", kind: "native-object", role: "group", text: undefined, textHash: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(.35), y: emu(1.2), width: emu(12.6), height: emu(5.3), rotation: 0 }, frame: { x: emu(.35), y: emu(1.2), width: emu(12.6), height: emu(5.3), rotation: 0 }, visible: true, locked: false };
+  const logos: StudioWebNode[] = Array.from({ length: 16 }, (_, ordinal) => ({ ...seed, id: `partner-logo-${ordinal + 1}`, sourceObjectId: `partner-logo-${ordinal + 1}`, sourceShapeId: String(ordinal + 3), sourceBinding: "editable-object", name: `Partner logo ${ordinal + 1}`, kind: "image", role: "image", text: undefined, textHash: undefined, sourceParagraphs: undefined, sourceFrame: { x: emu(.5 + (ordinal % 4) * 3.0), y: emu(1.3 + Math.floor(ordinal / 4) * 1.2), width: emu(1.4), height: emu(.55), rotation: 0 }, frame: { x: emu(.5 + (ordinal % 4) * 3.0), y: emu(1.3 + Math.floor(ordinal / 4) * 1.2), width: emu(1.4), height: emu(.55), rotation: 0 }, visible: true, locked: false }));
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, carrier, ...logos] }] }, sourceSlide.slideNumber, "ornl-title-two-column");
+  const slide = designed.slides[0];
+  const designedLogos = slide.nodes.filter((node) => node.component?.role === "logo-grid-item");
+  assert.equal(slide.nodes.find((node) => node.id === carrier.id)?.visible, false);
+  assert.equal(designedLogos.length, logos.length);
+  assert.equal(new Set(designedLogos.map((node) => node.component?.groupId)).size, 1);
+  assert.equal(designedLogos.every((node) => node.style.objectFit === "contain" && node.style.borderWidthPt === 0), true);
+  const firstRow = designedLogos.slice(0, 4).map((node) => node.frame.x).sort((left, right) => left - right);
+  assert.equal(firstRow.every((value, index) => index === 0 || value > firstRow[index - 1]), true);
+  assert.equal(designedLogos.every((node) => Math.abs(node.frame.width / node.frame.height - node.sourceFrame.width / node.sourceFrame.height) < .001), true);
+  assert.equal(slide.figureTreatments.some((candidate) => candidate.id.startsWith("studio-auto-technical-overview")), false);
+  assert.equal(preflightStudioScene(designed).issues.some((issue) => issue.category === "legibility"), false);
 });
 
 test("question-and-diagram recipe atomizes exact questions and preserves the complete native evidence unit", async () => {
@@ -1072,6 +1095,14 @@ test("table continuation planning repeats headers and never splits a merged body
       },
     },
   };
+  const assessedDenseTable: StudioWebNode = {
+    ...denseTable,
+    table: { ...denseTable.table!, cells: denseTable.table!.cells.map((cell) => ({ ...cell, text: `${cell.text} ${"technical evidence ".repeat(12)}` })) },
+  };
+  const capacity = assessStudioTableCapacity(assessedDenseTable);
+  assert.equal(capacity.required, true);
+  assert.equal(capacity.recommendedMaximumBodyRowsPerSlide, 1);
+  assert.equal(capacity.nextTool, "plan_studio_table_continuation");
   scene = {
     ...scene,
     slides: scene.slides.map((slide) => slide.slideNumber !== sourceSlide.slideNumber ? slide : {

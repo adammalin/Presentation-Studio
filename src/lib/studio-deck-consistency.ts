@@ -18,6 +18,7 @@ export interface StudioDeckConsistencyReview {
   totalSlideCount: number;
   designedSlideCount: number;
   sourcePreservedSlideCount: number;
+  buildEligibleSourceSlideCount: number;
   coverageStatus: "no-designed-slides" | "partial" | "complete";
   readyForWholeDeckBuild: boolean;
   repeatedComponentCount: number;
@@ -42,7 +43,7 @@ function tableSignature(node: StudioWebNode): string {
   return [design.headerRows, design.borderMode, design.borderColor.toUpperCase(), design.borderWidthPt.toFixed(2), padding.top, padding.right, padding.bottom, padding.left, node.style.fontSizePt.toFixed(2)].join("|");
 }
 
-export function analyzeStudioDeckConsistency(scene: StudioWebScene): StudioDeckConsistencyReview {
+export function analyzeStudioDeckConsistency(scene: StudioWebScene, options: { buildEligibleSourceSlideNumbers?: readonly number[] } = {}): StudioDeckConsistencyReview {
   const designed = scene.slides.filter((slide) => slide.status === "designed" && slide.recipe !== "source");
   const issues: StudioDeckConsistencyIssue[] = [];
   const titles = designed
@@ -114,6 +115,9 @@ export function analyzeStudioDeckConsistency(scene: StudioWebScene): StudioDeckC
     });
   }
   const sourcePreservedSlideCount = scene.slides.filter((slide) => slide.recipe === "source").length;
-  const coverageStatus = designed.length === 0 ? "no-designed-slides" as const : designed.length + sourcePreservedSlideCount === scene.slides.length ? "complete" as const : "partial" as const;
-  return { sceneRevision: scene.revision, totalSlideCount: scene.slides.length, designedSlideCount: designed.length, sourcePreservedSlideCount, coverageStatus, readyForWholeDeckBuild: coverageStatus === "complete", repeatedComponentCount: [...roleGroups.values()].filter((entries) => entries.length >= 2).reduce((sum, entries) => sum + entries.length, 0), tableCount: designed.flatMap((slide) => slide.nodes).filter((node) => node.visible && node.kind === "table").length, issueCount: issues.length, issues };
+  const buildEligibleSourceSlideNumbers = new Set(options.buildEligibleSourceSlideNumbers ?? []);
+  const buildEligibleSourceSlideCount = scene.slides.filter((slide) => slide.recipe === "source" && buildEligibleSourceSlideNumbers.has(slide.slideNumber)).length;
+  const readyForWholeDeckBuild = designed.length + buildEligibleSourceSlideCount === scene.slides.length;
+  const coverageStatus = designed.length === 0 ? "no-designed-slides" as const : readyForWholeDeckBuild ? "complete" as const : "partial" as const;
+  return { sceneRevision: scene.revision, totalSlideCount: scene.slides.length, designedSlideCount: designed.length, sourcePreservedSlideCount, buildEligibleSourceSlideCount, coverageStatus, readyForWholeDeckBuild, repeatedComponentCount: [...roleGroups.values()].filter((entries) => entries.length >= 2).reduce((sum, entries) => sum + entries.length, 0), tableCount: designed.flatMap((slide) => slide.nodes).filter((node) => node.visible && node.kind === "table").length, issueCount: issues.length, issues };
 }

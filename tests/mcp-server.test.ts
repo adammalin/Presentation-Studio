@@ -67,6 +67,8 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(compositionPlanTool?.description ?? "", /exact Presentation Design Standard version/i);
     assert.match(compositionPlanTool?.description ?? "", /communication job/i);
     assert.match(compositionPlanTool?.description ?? "", /exact approved native layout/i);
+    assert.match(compositionPlanTool?.description ?? "", /tableCapacity\.required/i);
+    assert.match(compositionPlanTool?.description ?? "", /plan_studio_table_continuation/i);
     assert.equal(compositionPlanTool?.annotations?.readOnlyHint, true);
     const stageStudioTool = result.tools.find((tool) => tool.name === "stage_studio_web_design");
     assert.match(stageStudioTool?.description ?? "", /omit recipe/i);

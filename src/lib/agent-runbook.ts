@@ -28,7 +28,9 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
     const intervention = resolveStudioIntervention(deck, audited.number, studioSlide, archetype);
     return { slideNumber: audited.number, archetype, status: studioSlide?.status ?? "not-created", recipe: studioSlide?.recipe, protected: isProtectedOrnlTemplateSlide(deck, audited.number), ...intervention };
   });
-  const consistency = scene ? analyzeStudioDeckConsistency(scene) : undefined;
+  const consistency = scene ? analyzeStudioDeckConsistency(scene, {
+    buildEligibleSourceSlideNumbers: scene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber),
+  }) : undefined;
   const activeThreads = (input.threads ?? []).filter((thread) => thread.deckId === deck.id && ["submitted", "needs-reanchor"].includes(thread.status));
   const buildCurrent = Boolean(scene && input.buildSceneRevision === scene.revision);
   const qualificationCurrent = Boolean(scene && input.qualification?.sceneRevision === scene.revision);

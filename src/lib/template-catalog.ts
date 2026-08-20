@@ -37,6 +37,7 @@ export interface TemplatePreviewElement {
   placeholderType?: string;
   placeholderIndex?: string;
   mediaId?: string;
+  sourceCropped?: boolean;
   sourcePart?: string;
   sourceShapeId?: string;
   origin?: "master" | "layout" | "slide";
@@ -431,7 +432,14 @@ function connectorElements(connector: XmlRecord, context: GroupContext, theme: T
 function pictureElements(picture: XmlRecord, context: GroupContext, relationships: Relationship[], index: number): TemplatePreviewElement[] {
   const transform = transformFor(record(picture.spPr).xfrm);
   if (!transform) return [];
-  const relationshipId = String(record(record(picture.blipFill).blip)["@embed"] ?? "");
+  const blipFill = record(picture.blipFill);
+  const blip = record(blipFill.blip);
+  const sourceCrop = record(blipFill.srcRect);
+  const sourceCropped = ["@l", "@r", "@t", "@b"].some((attribute) => numeric(sourceCrop[attribute], 0) !== 0);
+  const svgRelationshipId = array<XmlRecord>(record(blip.extLst).ext)
+    .map((extension) => String(record(extension.svgBlip)["@embed"] ?? ""))
+    .find(Boolean);
+  const relationshipId = String(blip["@embed"] ?? svgRelationshipId ?? "");
   const relationship = findRelationship(relationships, relationshipId);
   if (!relationship) return [];
   const sourceShapeId = String(record(record(picture.nvPicPr).cNvPr)["@id"] ?? index);
@@ -443,6 +451,7 @@ function pictureElements(picture: XmlRecord, context: GroupContext, relationship
     ...mapTransform(transform, context),
     geometry: "rect",
     mediaId: relationship.target,
+    sourceCropped,
   }];
 }
 

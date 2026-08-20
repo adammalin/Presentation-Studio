@@ -67,13 +67,15 @@ function scaleFrame(value: StudioWebFrame, from: { width: number; height: number
   };
 }
 
-function previewElementFor(catalog: SlideRenderCatalog | undefined, slideNumber: number, shapeId: string, kind?: TemplatePreviewElement["kind"]): TemplatePreviewElement | undefined {
+export function previewElementFor(catalog: SlideRenderCatalog | undefined, slideNumber: number, shapeId: string, kind?: TemplatePreviewElement["kind"]): TemplatePreviewElement | undefined {
   const slide = catalog?.slides.find((item) => item.number === slideNumber);
   if (!slide) return undefined;
-  const suffixes = [`-${shapeId}`, `-${shapeId}-text`];
-  return slide.elements.find((element) => (!kind || element.kind === kind) && element.sourceShapeId === shapeId)
-    ?? slide.elements.find((element) => (!kind || element.kind === kind) && suffixes.some((suffix) => element.id.endsWith(suffix)))
-    ?? slide.elements.find((element) => (!kind || element.kind === kind) && element.id.includes(`-${shapeId}-`));
+  // A shape ID is unique only inside one OOXML part. Master, layout, and slide
+  // elements can all use the same numeric ID, so editable slide objects must
+  // bind to an element originating in the slide part. Element IDs also contain
+  // traversal ordinals; suffix/substring fallback can silently substitute an
+  // unrelated raster and is therefore never safe.
+  return slide.elements.find((element) => element.origin === "slide" && (!kind || element.kind === kind) && element.sourceShapeId === shapeId);
 }
 
 function nodeKind(kind: string, hasText: boolean): StudioWebNode["kind"] {
@@ -197,7 +199,12 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
         cellStyles: [],
       },
     } : undefined,
-    mediaPart: preview?.mediaId,
+    // PowerPoint can display only a cropped region of the embedded source
+    // image. Until that OOXML crop is represented as a first-class scene
+    // transform, use the authoritative native object crop rather than the raw
+    // media part; otherwise whitespace or hidden pixels can replace the
+    // visible logo/figure in both Studio and the exported candidate.
+    mediaPart: preview?.sourceCropped ? undefined : preview?.mediaId,
     opticalInsets: textBox ? {
       left: Math.max(0, Math.round(textBox.opticalLeftOffsetEmu * studioSlideSize.width / audit.slideSize.width)),
       top: Math.max(0, Math.round(textBox.textInsets.top * studioSlideSize.height / audit.slideSize.height)),
@@ -248,7 +255,7 @@ function compileCatalogDerivedNodes(deck: DeckJob, slideNumber: number, studioSl
       text,
       textHash: element.textHash,
       sourceParagraphs: element.sourceParagraphs,
-      mediaPart: element.mediaId,
+      mediaPart: element.sourceCropped ? undefined : element.mediaId,
       style: roleStyle(role, element, undefined),
     }];
   });
@@ -471,6 +478,7 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
   if (node.component?.role === "image-series-media") return { ...base, paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, objectFit: "contain" };
   if (node.component?.role === "image-series-heading") return { ...base, fontSizePt: 14, fontWeight: 700, lineHeight: 1.02, color: palette.polar, textAlign: "center", verticalAlign: "middle", paddingPt: { top: 3, right: 2, bottom: 3, left: 2 } };
   if (node.component?.role === "image-series-body") return { ...base, fontSizePt: 16, fontWeight: 400, lineHeight: 1, color: palette.darkMatter, textAlign: "left", verticalAlign: "top", paddingPt: { top: 0, right: 0, bottom: 0, left: 0 } };
+  if (node.component?.role === "logo-grid-item") return { ...base, paddingPt: { top: 0, right: 0, bottom: 0, left: 0 }, borderColor: undefined, borderWidthPt: 0, objectFit: "contain" };
   if (node.component?.role === "technical-annotation") {
     if (node.component.groupId.startsWith("studio-editorial-record-grid-")) {
       return {
@@ -1260,16 +1268,33 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const nativeObjects = slide.nodes.filter((node) => node.visible && node.kind === "native-object" && !footerNode(node));
     const technicalVisuals = slide.nodes.filter((node) => node.visible && !footerNode(node) && (node.kind === "native-object" || meaningfulImage(node)));
     const editableNarrative = [...content, ...captions].filter((node) => node.kind === "text" && node.role !== "title" && node.sourceBinding === "editable-object");
-    const compositeTechnicalOverview = Boolean(nativeObject && technicalVisuals.length >= 2 && editableNarrative.length === 0);
     const visual = nativeObject ?? content.find((node) => meaningfulImage(node) || node.kind === "table");
     const connectors = slide.nodes.filter((node) => node.visible && node.kind === "connector" && !footerNode(node));
+    const logoImages = technicalVisuals.filter((node) => node.kind === "image");
+    const denseLogoField = logoImages.length >= 12 && connectors.length === 0 && editableNarrative.length === 0;
+    const compositeTechnicalOverview = Boolean(!denseLogoField && nativeObject && technicalVisuals.length >= 2 && editableNarrative.length === 0);
     const figureAnnotations = captions.filter(shortFigureAnnotation);
     const embeddedNativeNodes = nativeObjects.length
       ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && !footerNode(node) && nativeObjects.some((candidate) => sourceFrameContains(candidate.sourceFrame, node.sourceFrame)))
       : [];
     const relationshipBearingFigure = visual && (visual.kind === "native-object" || (visual.kind === "image" && connectors.length >= 1 && figureAnnotations.length >= 2));
     const denseSourceGrid = !nativeObject && technicalVisuals.filter((node) => meaningfulImage(node)).length === 1 && editableNarrative.length >= 8;
-    if (denseSourceGrid) {
+    if (denseLogoField) {
+      nativeObjects.forEach((node) => hiddenNodeIds.add(node.id));
+      // A partner wall is a relationship-bearing visual system, not a list of
+      // interchangeable thumbnails. Preserve the author's relative positions
+      // and each mark's authored footprint while fitting the complete field
+      // between the shared title and footer. Equal cells make wide marks look
+      // microscopic and can materially change the perceived partner hierarchy.
+      const orderedLogos = [...logoImages].sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x || left.zIndex - right.zIndex);
+      const normalizedField = scaleSourceGroup(orderedLogos, frame(.47, contentTop + .08, 12.39, contentHeight - .16));
+      orderedLogos.forEach((node, ordinal) => {
+        const placement = normalizedField.get(node.id);
+        if (!placement) return;
+        placements.set(node.id, placement);
+        components.set(node.id, { groupId: `studio-logo-grid-${slideNumber}`, role: "logo-grid-item", ordinal, frame: placement });
+      });
+    } else if (denseSourceGrid) {
       const preTitleMetadata = [...content, ...captions].filter((node) => node.kind === "text" && node.sourceFrame.y < (title?.sourceFrame.y ?? 0) + (title?.sourceFrame.height ?? 0));
       const metadataIds = new Set(preTitleMetadata.map((node) => node.id));
       const denseDecorations = slide.nodes.filter((node) => node.visible

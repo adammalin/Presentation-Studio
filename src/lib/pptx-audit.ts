@@ -311,7 +311,7 @@ function extractPictureInventory(slideNumber: number, xml: string): PictureInven
   return blocks.map((block, index) => {
     const nonVisual = block.match(/<p:cNvPr\b([^>]*)>/)?.[1] ?? "";
     const extent = block.match(/<a:ext\b([^>]*)\/>/)?.[1] ?? "";
-    const relationshipMatch = block.match(/<a:blip\b[^>]*\br:embed=(?:"([^"]+)"|'([^']+)')/);
+    const relationshipMatch = block.match(/<(?:a:blip|asvg:svgBlip)\b[^>]*\br:embed=(?:"([^"]+)"|'([^']+)')/);
     const description = attributeValue(nonVisual, "descr")?.trim();
     return {
       id: `slide-${slideNumber}-picture-${index + 1}`,

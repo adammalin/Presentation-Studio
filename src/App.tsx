@@ -121,7 +121,7 @@ import { critiqueStudioSlide, nativeStudioProductionIssues, preflightStudioScene
 import { applyStudioDeterministicRepairPass } from "./lib/studio-repair-pass";
 import { analyzeStudioDeckConsistency } from "./lib/studio-deck-consistency";
 import { adoptStudioComponentStyle, compatibleStudioComponentInstances } from "./lib/studio-component-library";
-import { applyStudioTableExemplar, clearStudioTableContinuation, compatibleStudioTableInstances, planStudioTableContinuation, publishStudioTableExemplar } from "./lib/studio-table-workflow";
+import { applyStudioTableExemplar, assessStudioTableCapacity, clearStudioTableContinuation, compatibleStudioTableInstances, planStudioTableContinuation, publishStudioTableExemplar } from "./lib/studio-table-workflow";
 import { attachStudioConceptReference, removeStudioConceptReference } from "./lib/studio-concept-reference";
 import { reconstructStudioConcept } from "./lib/studio-concept-reconstruction";
 import { createStudioVisualNeed, holdStudioVisualNeed, markStudioVisualNeedsReconstructionReady, resolveStudioVisualNeeds } from "./lib/studio-visual-needs";
@@ -1070,7 +1070,9 @@ function StudioView({ deck, catalog, nativeRender, freshPreviews, centralBuild, 
   const [showConsistency, setShowConsistency] = useState(false);
   const scene = deck?.studioScene;
   const selectedNodeId = selectedNodeIds.at(-1);
-  const consistency = useMemo(() => scene ? analyzeStudioDeckConsistency(scene) : undefined, [scene]);
+  const consistency = useMemo(() => scene ? analyzeStudioDeckConsistency(scene, {
+    buildEligibleSourceSlideNumbers: scene.slides.filter((item) => isProtectedOrnlTemplateSlide(deck, item.slideNumber)).map((item) => item.slideNumber),
+  }) : undefined, [deck, scene]);
   useEffect(() => { setSelectedNumber(requestedSlideNumber ?? 1); setSelectedNodeIds([]); setShowEditor(Boolean(requestedSlideNumber)); }, [deck?.id, requestedSlideNumber]);
   if (!deck?.audit) return <NoSelection message="Select an audited deck before entering Studio redesign mode." />;
   if (!scene) return <div className="view-stack studio-empty"><header className="view-header compact"><div><p className="eyebrow">HTML-first presentation design</p><h1>Build a Studio Web Scene</h1><p>Extract exact source content into a semantic 16:9 web canvas. The original PowerPoint remains immutable.</p></div></header><section className="designs-empty"><span className="designs-empty-icon"><Code size={34} /></span><h2>Turn this deck into an editable web design system</h2><p>Studio will preserve source bindings while giving the AI and the user one component-based canvas for layout, hierarchy, tables, imagery, and ORNL templates.</p><button className="button primary large" onClick={onInitialize}><Sparkle size={18} />Create Studio scene</button></section></div>;
@@ -2019,6 +2021,8 @@ export default function App() {
           requestedArchetype: rawArchetype as StudioDesignArchetype | undefined,
         });
         const intervention = resolveStudioIntervention(deck, slideNumber, studioSlide, plan.archetype);
+        const primaryTable = studioSlide.nodes.find((node) => node.visible && node.kind === "table" && node.table);
+        const tableCapacity = primaryTable ? assessStudioTableCapacity(primaryTable) : undefined;
         return {
           updatedAt: current.project.updatedAt,
           designStandardVersion: PRESENTATION_DESIGN_STANDARD.version,
@@ -2036,8 +2040,11 @@ export default function App() {
           },
           plan,
           intervention,
+          tableCapacity,
           sourceWinsGate: "Compare the authoritative source and exact candidate at full size. If the candidate is not at least as strong for hierarchy, legibility, relationships, and message delivery, retain the source or choose a lower intervention level.",
-          instruction: "Use the communication archetype and intervention level as the primary design decisions. An exact compatible native ORNL layout is preferred when its slot contract holds every relationship; otherwise use the recommended shared Studio archetype on the neutral native ORNL base. Stage the plan, build it, and accept only the PowerPoint-native result when it beats or faithfully preserves the source—not an intermediate recipe canvas.",
+          instruction: tableCapacity?.required
+            ? `Use the communication archetype and intervention level as the primary design decisions. Stage the table design, then call plan_studio_table_continuation with maximumBodyRowsPerSlide ${tableCapacity.recommendedMaximumBodyRowsPerSlide} before previewing or building. A one-slide candidate is known to exceed deterministic capacity and must not be staged as build-ready. Accept only the exact PowerPoint-native continuation result.`
+            : "Use the communication archetype and intervention level as the primary design decisions. An exact compatible native ORNL layout is preferred when its slot contract holds every relationship; otherwise use the recommended shared Studio archetype on the neutral native ORNL base. Stage the plan, build it, and accept only the PowerPoint-native result when it beats or faithfully preserves the source—not an intermediate recipe canvas.",
         };
       }
       if (request.operation === "get_slide_design_work_order") {
@@ -2248,7 +2255,9 @@ export default function App() {
       if (request.operation === "get_studio_deck_consistency") {
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.studioScene) throw new Error("Create and persist the Studio Web Scene before reviewing deck consistency.");
-        const review = analyzeStudioDeckConsistency(deck.studioScene);
+        const review = analyzeStudioDeckConsistency(deck.studioScene, {
+          buildEligibleSourceSlideNumbers: deck.studioScene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber),
+        });
         return { updatedAt: current.project.updatedAt, deck: { id: deck.id, name: deck.name }, review, instruction: review.issueCount ? "Inspect each exact slide/node finding, apply only bounded source-preserving component or layout refinements, rebuild the affected slides, then rerun this review before PowerPoint-native whole-deck qualification." : review.coverageStatus === "no-designed-slides" ? "No Studio-designed slides exist yet, so consistency is not evaluable. Qualify the representative archetype set before making deck-wide claims." : review.coverageStatus === "partial" ? "The currently designed slides have no detected repeated-system conflict, but coverage is partial. Finish and visually qualify the representative archetypes before propagation." : "The supported repeated systems are internally consistent. Continue with PowerPoint-native whole-deck qualification; this deterministic review does not prove aesthetic quality." };
       }
       if (request.operation === "preview_studio_fresh_composition") {
@@ -5361,7 +5370,9 @@ export default function App() {
       const sourceSlide = deck.studioScene!.slides.find((slide) => slide.slideNumber === output.sourceSlideNumber);
       return [output.outputSlideNumber, resolveStudioIntervention(deck, output.sourceSlideNumber, sourceSlide, sourceSlide?.designArchetype).level];
     }));
-    const deckConsistency = analyzeStudioDeckConsistency(deck.studioScene);
+    const deckConsistency = analyzeStudioDeckConsistency(deck.studioScene, {
+      buildEligibleSourceSlideNumbers: deck.studioScene.slides.filter((slide) => isProtectedOrnlTemplateSlide(deck, slide.slideNumber)).map((slide) => slide.slideNumber),
+    });
     const visualNeedBySlide = Object.fromEntries(build.outputSlides.flatMap((output) => {
       const sourceSlide = deck.studioScene!.slides.find((slide) => slide.slideNumber === output.sourceSlideNumber);
       const need = (sourceSlide?.visualNeeds ?? []).find((item) => item.status !== "resolved");
