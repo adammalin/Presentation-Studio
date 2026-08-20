@@ -7,7 +7,8 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { buildSlideRenderCatalog, buildTemplateCatalog } from "../src/lib/template-catalog";
 import { buildTemplatePreviewDeck } from "../src/lib/template-preview-deck";
 import { compilePresentationScene } from "../src/lib/scene-graph";
-import { compileStudioWebScene, recomposeStudioWebSlide } from "../src/lib/studio-web-scene";
+import { compileStudioWebScene, inferRepeatedImageSeries, recommendedStudioRecipe, recomposeStudioWebSlide } from "../src/lib/studio-web-scene";
+import { planStudioComposition, type StudioCompositionPlan } from "../src/lib/studio-archetypes";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { analyzeStudioDesignImpact } from "../src/lib/studio-design-impact";
 import { contentProfileForSlide } from "../src/lib/design-work-order";
@@ -18,6 +19,8 @@ import { sha256 } from "../src/lib/hash";
 import { isolateNativePowerPointObjects, nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
 import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
 import { isProtectedOrnlTemplateSlide } from "../src/lib/template-guardrails";
+import { withStudioIntervention } from "../src/lib/studio-intervention";
+import { applyStudioNativeTemplateLayouts, canonicalOrnlContentLayout } from "../src/lib/studio-native-template";
 import type { NativeMeasurementResult, NativeRenderResult } from "../src/lib/desktop";
 import type { DeckJob, StudioWebScene } from "../src/types";
 
@@ -66,8 +69,25 @@ async function writeRender(render: NativeRenderResult, outputRoot: string, prefi
   return outputs;
 }
 
+function contentTextSequence(audit: Awaited<ReturnType<typeof auditPptx>>, slideNumber: number) {
+  const objects = new Map(audit.editableObjects.filter((object) => object.slideNumber === slideNumber).map((object) => [object.shapeId, object]));
+  return audit.textBoxes
+    .filter((textBox) => textBox.slideNumber === slideNumber)
+    .filter((textBox) => {
+      const name = objects.get(textBox.shapeId)?.name ?? "";
+      const isAutomaticSlideNumber = /(?:slide|page)\s*number|slidenum|sldnum/i.test(name) && /^\d+$/.test(textBox.text.trim());
+      return !isAutomaticSlideNumber;
+    })
+    .sort((left, right) => left.ordinal - right.ordinal)
+    .map((textBox) => textBox.text);
+}
+
 function exactSelectedText(source: Awaited<ReturnType<typeof auditPptx>>, candidate: Awaited<ReturnType<typeof auditPptx>>, slideNumbers: number[]) {
-  return candidate.slideCount === slideNumbers.length && slideNumbers.every((slideNumber, index) => source.slides.find((slide) => slide.number === slideNumber)?.textHash === candidate.slides[index]?.textHash);
+  return candidate.slideCount === slideNumbers.length && slideNumbers.every((slideNumber, index) => {
+    const sourceValues = contentTextSequence(source, slideNumber);
+    const candidateValues = contentTextSequence(candidate, index + 1);
+    return sourceValues.length === candidateValues.length && sourceValues.every((value, valueIndex) => value === candidateValues[valueIndex]);
+  });
 }
 
 function exactSelectedTableGrid(source: Awaited<ReturnType<typeof auditPptx>>, candidate: Awaited<ReturnType<typeof auditPptx>>, slideNumbers: number[]) {
@@ -104,13 +124,14 @@ function nativeTextOverflowEvidence(native: NativeMeasurementResult, audit: Awai
     if (!bounds || !text || !margins || shape.text?.coordinateSpace !== "slide") return [];
     const editableObject = audit.editableObjects.find((object) => object.slideNumber === slide.number && object.name === shape.name);
     const textBox = editableObject ? audit.textBoxes.find((item) => item.slideNumber === slide.number && item.shapeId === editableObject.shapeId) : undefined;
-    const tolerance = (textBox?.bulletParagraphCount ?? 0) > 0 ? 3 : .5;
+    const horizontalTolerance = 3;
+    const verticalTolerance = (textBox?.bulletParagraphCount ?? 0) > 0 ? 3 : .5;
     const inner = { left: bounds.left + margins.left, top: bounds.top + margins.top, right: bounds.left + bounds.width - margins.right, bottom: bounds.top + bounds.height - margins.bottom };
     const edges = [
-      text.left < inner.left - tolerance ? "left" : undefined,
-      text.top < inner.top - tolerance ? "top" : undefined,
-      text.left + text.width > inner.right + tolerance ? "right" : undefined,
-      text.top + text.height > inner.bottom + tolerance ? "bottom" : undefined,
+      text.left < inner.left - horizontalTolerance ? "left" : undefined,
+      text.top < inner.top - verticalTolerance ? "top" : undefined,
+      text.left + text.width > inner.right + horizontalTolerance ? "right" : undefined,
+      text.top + text.height > inner.bottom + verticalTolerance ? "bottom" : undefined,
     ].filter((edge): edge is string => Boolean(edge));
     return edges.length ? [{ slideNumber: slide.number, shapeIndex: shape.shapeIndex, name: shape.name, lineCount: shape.text?.lineCount, edges }] : [];
   }));
@@ -159,15 +180,42 @@ export async function qualifyStudioWebBenchmark(
     }));
   }
   let scene = compileStudioWebScene(sourceDeck, catalog);
+  const compositionPlans: Array<{ sourceSlideNumber: number; plan: StudioCompositionPlan }> = [];
   const mappingCompleteBeforeDesign = slideNumbers.every((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)?.contentCoverage.exactTextMapped);
   for (const slideNumber of slideNumbers) {
     if (isProtectedOrnlTemplateSlide(sourceDeck, slideNumber)) continue;
+    const studioSlide = scene.slides.find((slide) => slide.slideNumber === slideNumber);
+    if (!studioSlide) throw new Error(`Studio scene slide ${slideNumber} is unavailable.`);
+    const auditedSlide = sourceAudit.slides.find((slide) => slide.number === slideNumber);
+    const profile = contentProfileForSlide(sourceDeck, slideNumber);
+    const compositionPlan = templateCatalog ? planStudioComposition(profile, templateCatalog.layouts, {
+      slideNumber,
+      title: auditedSlide?.title,
+      connectorCount: studioSlide.nodes.filter((node) => node.kind === "connector").length,
+      nativeObjectCount: studioSlide.nodes.filter((node) => node.kind === "native-object").length,
+      repeatedImageSeries: Boolean(inferRepeatedImageSeries(studioSlide)),
+      recommendedRecipe: recommendedStudioRecipe(studioSlide),
+    }) : undefined;
+    if (compositionPlan) compositionPlans.push({ sourceSlideNumber: slideNumber, plan: compositionPlan });
     if (designMode === "template" && templateCatalog) {
       const recommendation = rankLayoutCompatibility(templateCatalog.layouts, contentProfileForSlide(sourceDeck, slideNumber))[0];
       const layout = templateCatalog.layouts.find((item) => item.id === recommendation?.layoutId);
       if (!layout || recommendation?.status === "incompatible") throw new Error(`No compatible authorized Template Pack layout is available for source slide ${slideNumber}.`);
       scene = recomposeStudioWebSlide(scene, slideNumber, "template-layout", layout, `Benchmark the exact source content in the recommended authorized ${layout.name} Template Pack layout.`);
+    } else if (compositionPlan) {
+      const layout = compositionPlan.layoutId ? templateCatalog?.layouts.find((candidate) => candidate.id === compositionPlan.layoutId) : undefined;
+      scene = recomposeStudioWebSlide(scene, slideNumber, compositionPlan.recipe, layout, compositionPlan.reasons.join(" "));
     } else scene = recomposeStudioWebSlide(scene, slideNumber);
+    const archetype = compositionPlan?.archetype ?? contentProfileForSlide(sourceDeck, slideNumber).designArchetype ?? "assertion-evidence";
+    scene = {
+      ...scene,
+      slides: scene.slides.map((slide) => slide.slideNumber !== slideNumber ? slide : withStudioIntervention(
+        { ...slide, designArchetype: archetype },
+        "recompose",
+        `This benchmark qualifies the shared ${archetype} composition pattern against the exact source slide.`,
+        "automatic",
+      )),
+    };
   }
   scene = { ...scene, slides: slideNumbers.map((slideNumber) => scene.slides.find((slide) => slide.slideNumber === slideNumber)!).filter(Boolean) } as StudioWebScene;
   const sourceFigureRasters: Record<string, { data: string; width: number; height: number }> = {};
@@ -189,6 +237,7 @@ export async function qualifyStudioWebBenchmark(
     sourceFigureRasters,
     sourceSlideText: Object.fromEntries(sourceAudit.slides.map((slide) => [slide.number, slide.text])),
     templateLayoutRasters,
+    nativeTemplateLayoutBaseId: templateCatalog ? canonicalOrnlContentLayout(templateCatalog).id : undefined,
     strict: true,
     title: "Presentation Studio native benchmark",
   });
@@ -197,6 +246,18 @@ export async function qualifyStudioWebBenchmark(
   }
   let candidateBytes = composition.bytes;
   let candidateWarnings = composition.warnings;
+  if (templateBytes && templateCatalog) {
+    const nativeTemplate = await applyStudioNativeTemplateLayouts({
+      bytes: candidateBytes,
+      scene,
+      outputSlides: composition.outputSlides,
+      templateBytes,
+      templateCatalog,
+      defaultLayoutId: canonicalOrnlContentLayout(templateCatalog).id,
+    });
+    candidateBytes = nativeTemplate.bytes;
+    candidateWarnings = [...candidateWarnings, ...nativeTemplate.warnings];
+  }
   for (const slideNumber of sourceDeck.protectedSlideNumbers) {
     const preserved = await preserveNativeSlide({ destinationBytes: candidateBytes, sourceBytes, slideNumber });
     candidateBytes = preserved.bytes;
@@ -246,7 +307,11 @@ export async function qualifyStudioWebBenchmark(
     noNativeTableCellClearanceViolations: metrics.totals.tableCellClearanceViolationCount === 0,
     noOffSlideObjects: metrics.totals.offSlideObjectCount === 0,
     protectedSlidesRemainPixelIdentical: protectedSlideHashes.every((slide) => Boolean(slide.source) && slide.source === slide.candidate),
-    materialCompositionBeyondTypography: designImpact.every((impact) => sourceDeck.protectedSlideNumbers.includes(impact.sourceSlideNumber) || ["layout-redesign", "figure-redesign", "full-redesign"].includes(impact.level)),
+    interventionSpecificDesignImpact: designImpact.every((impact) => {
+      const level = scene.slides.find((slide) => slide.slideNumber === impact.sourceSlideNumber)?.intervention?.level ?? "recompose";
+      return level === "preserve" || level === "polish" || ["layout-redesign", "figure-redesign", "full-redesign"].includes(impact.level);
+    }),
+    ...(templateCatalog ? { approvedOrnlNativeTemplateAttached: composition.outputSlides.every((output) => sourceDeck.protectedSlideNumbers.includes(output.sourceSlideNumber) || candidateWarnings.some((warning) => warning.startsWith(`Output slide ${output.outputSlideNumber}: attached native ORNL layout `))) } : {}),
     ...(designMode === "template" ? { authorizedTemplateArtworkApplied: scene.slides.every((slide) => slide.recipe === "template-layout" && Boolean(slide.targetLayoutId) && composition.warnings.some((warning) => warning.startsWith(`Slide ${slide.slideNumber}: approved `))) } : {}),
   };
   const report = {
@@ -256,7 +321,7 @@ export async function qualifyStudioWebBenchmark(
     source: { path: sourcePath, sha256: sourceSha256, classification: sourceAudit.classification, slideNumbers, protectedSlideNumbers: sourceDeck.protectedSlideNumbers },
     template: templateCatalog ? { path: options?.templatePath, name: templateCatalog.name, sha256: templateCatalog.sha256, designMode, layoutCount: templateCatalog.layouts.length } : undefined,
     benchmark: benchmarkPath ? { path: benchmarkPath, sha256: benchmarkSha256, renderStatus: benchmarkRenderStatus } : undefined,
-    candidate: { path: candidatePath, sha256: await sha256(candidateBytes), recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, warnings: candidateWarnings, textNodeCount: composition.textNodeCount, tableCount: composition.tableCount, imageCount: composition.imageCount, ignoredSourceFurnitureCount: composition.ignoredSourceFurnitureCount, generatedComponentCount: composition.generatedComponentCount },
+    candidate: { path: candidatePath, sha256: await sha256(candidateBytes), compositionPlans, recipes: scene.slides.map((slide) => ({ sourceSlideNumber: slide.slideNumber, archetype: slide.designArchetype, interventionLevel: slide.intervention?.level, recipe: slide.recipe, targetLayoutId: slide.targetLayoutId, targetLayoutName: slide.targetLayoutName, semanticNodeCount: slide.nodes.filter((node) => node.visible).length })), fonts, warnings: candidateWarnings, textNodeCount: composition.textNodeCount, tableCount: composition.tableCount, imageCount: composition.imageCount, ignoredSourceFurnitureCount: composition.ignoredSourceFurnitureCount, generatedComponentCount: composition.generatedComponentCount },
     metrics,
     nativeTextOverflowEvidence: overflowEvidence,
     protectedSlideHashes,

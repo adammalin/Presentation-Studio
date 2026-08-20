@@ -9,7 +9,8 @@ import { auditPptx } from "../src/lib/pptx-audit";
 import { createProject, projectSchema } from "../src/lib/project";
 import { compilePresentationScene } from "../src/lib/scene-graph";
 import { buildSlideRenderCatalog } from "../src/lib/template-catalog";
-import { atomizeStudioWebSlide, compileStudioWebScene, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { atomizeStudioWebSlide, compileStudioWebScene, inferRepeatedImageSeries, planStudioExportBuild, recommendedStudioRecipe, recomposeStudioWebSlide, resizeStudioTableColumn, resizeStudioTableRow, resolvedStudioTableDesign, studioGeneratedComponents, studioGeometryRequests, studioSceneNeedsRebuild, studioVisualDesignRequest, updateStudioConnectorDesign, updateStudioFigureTreatment, updateStudioTableCellDesign, updateStudioTableDesign, updateStudioWebNodeFrame, updateStudioWebNodeStyle } from "../src/lib/studio-web-scene";
+import { preflightStudioScene } from "../src/lib/studio-visual-critic";
 import { buildCleanupProposalPptx, createGeometryBatchProposal, createVisualDesignProposal } from "../src/lib/cleanup";
 import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export";
 import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
@@ -55,6 +56,20 @@ test("Studio content coverage excludes inherited slide-number furniture", async 
   const scene = compileStudioWebScene(deck, catalog);
   assert.equal(scene.slides[0].contentCoverage.exactTextMapped, true);
   assert.equal(scene.slides[0].nodes.some((node) => node.sourceShapeId === "999"), false);
+});
+
+test("Studio import preserves intentional source table column and row proportions", async () => {
+  const { deck, catalog } = await fixture();
+  const table = deck.audit?.tables.find((item) => item.columns?.length === 3 && item.rows?.length === 3);
+  assert.ok(table?.columns && table.rows);
+  table.columns = table.columns.map((column, index) => ({ ...column, widthEmu: [1, 2, 1][index] * 914_400 }));
+  table.rows = table.rows.map((row, index) => ({ ...row, heightEmu: [2, 1, 1][index] * 457_200 }));
+  const scene = compileStudioWebScene(deck, catalog);
+  const tableNode = scene.slides.flatMap((slide) => slide.nodes).find((node) => node.kind === "table" && node.table);
+  assert.ok(tableNode);
+  const design = resolvedStudioTableDesign(tableNode);
+  assert.deepEqual(design.columnWidths, [.25, .5, .25]);
+  assert.deepEqual(design.rowHeights, [.5, .25, .25]);
 });
 
 test("shared ORNL web recipes recompose complete slides and compile back to source-bound PowerPoint commands", async () => {
@@ -491,6 +506,64 @@ test("process-flow recipe keeps low technical inputs out of the footer and pairs
   assert.deepEqual(inputs.map((node) => node.text), ["Steady-state network data files", "Dynamic model data files", "Sequence network data files", "Location and diagram data files"]);
   assert.equal(designedSlide.nodes.find((node) => node.text === "EMT input data files")?.component?.role, "process-output");
   assert.equal(designedSlide.nodes.find((node) => node.id === "location-icon")?.component?.role, "process-icon");
+});
+
+test("golden five-column image series preserves every source image-heading-evidence relationship", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => Math.round(value * 914_400);
+  const textNode = (id: string, text: string, role: StudioWebNode["role"], x: number, y: number, width: number, height: number, zIndex: number): StudioWebNode => ({
+    ...seed, id, sourceObjectId: id, sourceShapeId: id, sourceBinding: "editable-object", name: id, kind: "text", role, text, zIndex, sourceTextOrder: zIndex * 100,
+    sourceParagraphs: [{ index: 1, text, textHash: seed.textHash ?? "a".repeat(64), characterCount: text.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [16] }],
+    sourceFrame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, frame: { x: emu(x), y: emu(y), width: emu(width), height: emu(height), rotation: 0 }, visible: true, locked: false,
+  });
+  const imageNode = (id: string, x: number, zIndex: number): StudioWebNode => ({
+    ...seed, id, sourceObjectId: id, sourceShapeId: id, sourceBinding: "editable-object", name: id, kind: "image", role: "image", text: undefined, textHash: undefined, sourceParagraphs: undefined, zIndex, sourceTextOrder: zIndex * 100,
+    sourceFrame: { x: emu(x), y: emu(1.18), width: emu(2.20), height: emu(1.10), rotation: 0 }, frame: { x: emu(x), y: emu(1.18), width: emu(2.20), height: emu(1.10), rotation: 0 }, visible: true, locked: false, style: { ...seed.style, objectFit: "contain" },
+  });
+  const headings = ["Grid Flexible Solutions", "Building Envelopes & Industrialized Construction", "Energy Storage / Multi-functional Products", "Systems Integration", "High-performance Equipment"];
+  const bodies = [
+    "Advanced wireless sensor technologies, building energy modeling, communications and controls, and urban-scale energy-optimized solutions.",
+    "New and emerging materials, components and systems; productivity, affordability, quality and safety in building construction; durable walls, attics and foundations.",
+    "Integrating advanced energy storage in equipment and envelope systems, flexible building loads, dynamic facades and thermal energy storage materials.",
+    "Testing new components, equipment and systems in realistic environments before market introduction, including research-house and light-commercial platforms.",
+    "Helping industry launch some of the most advanced building equipment technologies on the market for a wide range of applications.",
+  ];
+  const nodes: StudioWebNode[] = [textNode("series-title", "ORNL is accelerating affordable building solutions", "title", .47, .29, 12.39, .56, 1)];
+  for (let ordinal = 0; ordinal < 5; ordinal += 1) {
+    const x = .47 + ordinal * 2.45;
+    nodes.push(imageNode(`series-image-${ordinal + 1}`, x, 10 + ordinal * 3));
+    nodes.push(textNode(`series-heading-${ordinal + 1}`, headings[ordinal], ordinal % 2 ? "body" : "label", x, 2.35, 2.20, .48, 11 + ordinal * 3));
+    nodes.push(textNode(`series-body-${ordinal + 1}`, bodies[ordinal], ordinal % 2 ? "caption" : "body", x, 2.95, 2.20, 2.60, 12 + ordinal * 3));
+  }
+  const source: StudioWebScene = { ...scene, slides: [{ ...sourceSlide, status: "imported", recipe: "source", nodes }] };
+  const inferred = inferRepeatedImageSeries(source.slides[0]);
+  assert.equal(inferred?.groups.length, 5);
+  assert.equal(recommendedStudioRecipe(source.slides[0]), "ornl-title-image-series");
+
+  const designed = recomposeStudioWebSlide(source, sourceSlide.slideNumber);
+  const slide = designed.slides[0];
+  assert.equal(slide.recipe, "ornl-title-image-series");
+  assert.equal(preflightStudioScene(designed).ready, true);
+  assert.equal(slide.nodes.filter((node) => node.component?.role === "image-series-media").length, 5);
+  assert.equal(slide.nodes.filter((node) => node.component?.role === "image-series-heading").length, 5);
+  assert.equal(slide.nodes.filter((node) => node.component?.role === "image-series-body").length, 5);
+  for (let ordinal = 0; ordinal < 5; ordinal += 1) {
+    const groupId = `studio-image-series-${slide.slideNumber}-${ordinal + 1}`;
+    const group = slide.nodes.filter((node) => node.component?.groupId === groupId);
+    assert.deepEqual(new Set(group.map((node) => node.component?.role)), new Set(["image-series-media", "image-series-heading", "image-series-body"]));
+    assert.equal(group.every((node) => node.component?.ordinal === ordinal), true);
+    assert.equal(group.find((node) => node.component?.role === "image-series-body")?.style.fontSizePt, 16);
+  }
+  assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.endsWith("-heading-band")).length, 5);
+  assert.equal(studioGeneratedComponents(slide).some((component) => component.lineWidthPt > 0), false);
+
+  const damaged = recomposeStudioWebSlide(source, sourceSlide.slideNumber, "ornl-title-content");
+  const failed = preflightStudioScene(damaged);
+  assert.equal(failed.ready, false);
+  assert.equal(failed.issues.some((issue) => issue.severity === "blocker" && /image-heading-evidence groups/i.test(issue.message)), true);
 });
 
 test("semantic atomization turns one exact multi-paragraph source box into reusable objective columns", async () => {

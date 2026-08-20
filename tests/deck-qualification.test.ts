@@ -72,6 +72,7 @@ function reportInput(): BuildDeckQualificationReportInput {
     candidateMetrics: metrics(),
     protectedSlideNumbers: [1],
     designImpactBySlide: { 1: "unchanged", 2: "layout-redesign" },
+    interventionBySlide: { 1: "preserve", 2: "recompose" },
     requireMaterialDesignImpact: true,
   };
 }
@@ -158,6 +159,15 @@ test("deck qualification routes an unmet governed visual brief back to image con
   assert.ok(report.issues.some((issue) => issue.slideNumber === 2 && issue.code === "material-design-impact" && issue.repairRoute === "image-concept"));
 });
 
+test("deck qualification does not demand material redesign from a bounded polish intervention", () => {
+  const input = reportInput();
+  input.interventionBySlide = { 1: "preserve", 2: "polish" };
+  input.designImpactBySlide = { 1: "unchanged", 2: "cleanup" };
+  const report = buildDeckQualificationReport(input);
+  assert.equal(report.issues.some((issue) => issue.code === "material-design-impact"), false);
+  assert.equal(report.slides[1].interventionLevel, "polish");
+});
+
 test("deck qualification rejects duplicate render entries and carries global failures onto every slide", () => {
   const input = reportInput();
   input.candidateRender = render("candidate");
@@ -201,6 +211,25 @@ test("qualification visual review is raster-bound, withholds ready on serious fi
   assert.equal(serious.slides[1].review?.requestedVerdict, "ready");
   assert.equal(serious.slides[1].review?.recordedVerdict, "revise");
   assert.equal(serious.status, "revision-required");
+  const sourceWins = recordDeckQualificationReviews(report, {
+    qualificationId: report.id,
+    candidateSha256: report.candidate.sha256,
+    reviewer: "authorized-ai",
+    reviews: [{
+      slideNumber: 2,
+      sourceRasterSha256: report.slides[1].sourceImage.sha256,
+      candidateRasterSha256: report.slides[1].candidateImage.sha256,
+      verdict: "ready",
+      rationale: "The source composition remains more legible.",
+      sourceComparison: { preferred: "source", sourceStrengths: ["Stronger visual grouping"], candidateImprovements: ["Aptos normalization"], candidateRegressions: ["Evidence became too small"] },
+    }],
+  });
+  assert.equal(sourceWins.slides[1].review?.recordedVerdict, "revise");
+  assert.equal(sourceWins.slides[1].review?.sourceComparison.preferred, "source");
+  const sourceWinsHtml = qualificationReportHtml(sourceWins);
+  assert.match(sourceWinsHtml, /Source wins/);
+  assert.match(sourceWinsHtml, /Stronger visual grouping/);
+  assert.match(sourceWinsHtml, /Evidence became too small/);
   assert.throws(() => recordDeckQualificationReviews(report, { qualificationId: report.id, candidateSha256: report.candidate.sha256, reviewer: "authorized-ai", reviews: [{ slideNumber: 1, sourceRasterSha256: "stale", candidateRasterSha256: report.slides[0].candidateImage.sha256, verdict: "ready", rationale: "Stale evidence must fail." }] }), /pixels changed/i);
 });
 

@@ -51,7 +51,7 @@ test("native PowerPoint measurement parser retains rendered text and cell geomet
     "COL\t1\t2\t1\t300",
     "COL\t1\t2\t2\t300",
     "CELL\t1\t2\t1\t1\t51.84\t120\t300\t44\t5\t5\t4\t4\t5\t0\t80\t16\t10\t1\tanchor top",
-    "CELL\t1\t2\t1\t2\t351.84\t120\t300\t44\t5\t5\t4\t4\t305\t0\t60\t16\t8\t1\tanchor top",
+    "CELL\t1\t2\t1\t2\t351.84\t120\t300\t44\t5\t5\t4\t4\t5\t0\t60\t16\t8\t1\tanchor top",
   ].join("\n"), { sourceSha256: "a".repeat(64) });
   assert.equal(parsed.status, "ready");
   assert.equal(parsed.authority, "powerpoint-native");

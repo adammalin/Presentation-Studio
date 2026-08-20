@@ -35,3 +35,27 @@ test("approved template-layout covers do not become false title-grid outliers", 
   const scene: StudioWebScene = { schema: STUDIO_WEB_SCENE_SCHEMA, version: STUDIO_WEB_SCENE_VERSION, revision: "cover-grid", deckId: "deck", sourceSha256: "b".repeat(64), slideSize: { width: emu(13.333), height: emu(7.5) }, sourceSlideSize: { width: emu(13.333), height: emu(7.5) }, designSystem: { id: "ornl-presentation-web-v1", standardVersion: "test", unit: "emu", renderer: "html-css", exportTarget: "editable-powerpoint", compilerModes: ["source-bound-overlay", "fresh-composition"] }, slides };
   assert.equal(analyzeStudioDeckConsistency(scene).issues.some((issue) => issue.category === "title-grid"), false);
 });
+
+test("deck consistency review flags a one-off recipe inside a qualified communication archetype", () => {
+  const timestamp = "2026-08-17T00:00:00.000Z";
+  const slides = [1, 2, 3].map((slideNumber) => ({
+    id: `slide-${slideNumber}`,
+    slideNumber,
+    sourceSlideId: `source-${slideNumber}`,
+    sourceTextHash: "c".repeat(64),
+    contentCoverage: { exactTextMapped: true, sourceCharacterCount: 1, mappedCharacterCount: 1, sourceTextBoxCount: 1, mappedTextNodeCount: 1, groupedOrUnsupportedTextPresent: false },
+    sourceRevision: "source",
+    designArchetype: "comparison" as const,
+    intervention: { level: "recompose" as const, selectedBy: "automatic" as const, reason: "test", sourceWins: true as const, acceptanceRule: "candidate must be better", selectedAt: timestamp },
+    recipe: slideNumber === 3 ? "ornl-title-objective-columns" as const : "ornl-title-card-grid" as const,
+    background: "#FFFFFF",
+    status: "designed" as const,
+    designRationale: "test",
+    figureTreatments: [],
+    nodes: [node(`title-${slideNumber}`, "title")],
+    updatedAt: timestamp,
+  }));
+  const scene: StudioWebScene = { schema: STUDIO_WEB_SCENE_SCHEMA, version: STUDIO_WEB_SCENE_VERSION, revision: "archetype-pattern", deckId: "deck", sourceSha256: "b".repeat(64), slideSize: { width: emu(13.333), height: emu(7.5) }, sourceSlideSize: { width: emu(13.333), height: emu(7.5) }, designSystem: { id: "ornl-presentation-web-v1", standardVersion: "test", unit: "emu", renderer: "html-css", exportTarget: "editable-powerpoint", compilerModes: ["source-bound-overlay", "fresh-composition"] }, slides };
+  const issue = analyzeStudioDeckConsistency(scene).issues.find((candidate) => candidate.category === "archetype-pattern");
+  assert.deepEqual(issue?.slideNumbers, [3]);
+});

@@ -3,11 +3,15 @@ import { nativeTextOverflows } from "./fresh-composition-qa";
 import { calculateNativeCellClearances } from "./native-measurement";
 import { analyzeStudioDesignImpact, type StudioDesignImpact } from "./studio-design-impact";
 import { studioNodeOpticalBox } from "./studio-layout-constraints";
-import { studioGeneratedComponents } from "./studio-web-scene";
+import { inferRepeatedImageSeries, studioGeneratedComponents } from "./studio-web-scene";
 import type { StudioLayoutConstraint, StudioQualityIssue, StudioWebFrame, StudioWebNode, StudioWebScene } from "../types";
 
 const PT = 12_700;
 const ALIGNMENT_TOLERANCE = PT;
+
+function inchesForPreflight(value: number): number {
+  return Math.round(value * 72 * PT);
+}
 
 export interface StudioVisualCritique {
   slideNumber: number;
@@ -63,10 +67,35 @@ export function preflightStudioScene(scene: StudioWebScene, options: { protected
     const footerRoles = new Set(["footer", "slide-number", "date", "logo"]);
     const protectedTemplateSlide = protectedSlideNumbers.has(slide.slideNumber);
 
+    const repeatedImageSeries = inferRepeatedImageSeries(slide);
+    if (!protectedTemplateSlide && repeatedImageSeries && slide.status === "designed" && slide.recipe !== "source") {
+      if (slide.recipe !== "ornl-title-image-series") {
+        add({ category: "figure", severity: "blocker", source: "scene", nodeIds: repeatedImageSeries.sourceNodeIds, message: `The source contains ${repeatedImageSeries.groups.length} image-heading-evidence groups, but ${slide.recipe} does not preserve that repeated relationship system.`, recommendation: "Use the ORNL image-series recipe or keep the faithful source slide; do not flatten peer groups into unrelated text and thumbnails.", autoFixable: true });
+      } else {
+        repeatedImageSeries.groups.forEach((group) => {
+          const expected = [group.visual, group.heading, ...group.body];
+          const groupIds = new Set(expected.map((node) => node.component?.groupId).filter((value): value is string => Boolean(value)));
+          const roles = new Map(expected.map((node) => [node.id, node.component?.role]));
+          const visibleExpected = expected.every((node) => node.visible);
+          const ordinalMatches = expected.every((node) => node.component?.ordinal === group.ordinal);
+          const rolesMatch = roles.get(group.visual.id) === "image-series-media"
+            && roles.get(group.heading.id) === "image-series-heading"
+            && group.body.every((node) => roles.get(node.id) === "image-series-body");
+          if (!visibleExpected || groupIds.size !== 1 || !rolesMatch || !ordinalMatches) add({ category: "figure", severity: "blocker", source: "scene", nodeIds: expected.map((node) => node.id), message: `Image-series group ${group.ordinal + 1} lost its source image, heading, or evidence binding.`, recommendation: "Recompose the complete group as one image-series column with a shared relationship ID and source ordinal.", autoFixable: true });
+          const visualCenter = group.visual.frame.x + group.visual.frame.width / 2;
+          const aligned = [group.heading, ...group.body].every((node) => Math.abs(node.frame.x + node.frame.width / 2 - visualCenter) <= inchesForPreflight(.22));
+          if (!aligned) add({ category: "alignment", severity: "blocker", source: "scene", nodeIds: expected.map((node) => node.id), message: `Image-series group ${group.ordinal + 1} no longer shares one visual column.`, recommendation: "Restore the common column center and equal series grid before native rendering.", autoFixable: true });
+          if (group.visual.frame.width < inchesForPreflight(.82) || group.visual.frame.height < inchesForPreflight(.55)) add({ category: "legibility", severity: "blocker", source: "scene", nodeIds: [group.visual.id], message: `Image-series visual ${group.ordinal + 1} is too small to communicate its source evidence.`, recommendation: "Use the shared equal-column image field; never demote source visuals to decorative thumbnails.", autoFixable: true });
+          const headingBottom = group.heading.frame.y + group.heading.frame.height;
+          if (group.body.some((node) => node.frame.y < headingBottom)) add({ category: "spacing", severity: "blocker", source: "scene", nodeIds: [group.heading.id, ...group.body.map((node) => node.id)], message: `Image-series group ${group.ordinal + 1} places evidence copy inside its heading band.`, recommendation: "Keep the green heading band and body evidence in separate, aligned regions.", autoFixable: true });
+        });
+      }
+    }
+
     for (const node of editable) {
       if (node.frame.x < 0 || node.frame.y < 0 || node.frame.x + node.frame.width > scene.slideSize.width || node.frame.y + node.frame.height > scene.slideSize.height) add({ category: "safe-region", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} leaves the slide canvas.`, recommendation: "Recompose it inside the 16:9 canvas before building.", autoFixable: true });
       if (!protectedTemplateSlide && node.kind === "text" && node.text?.trim() && node.component?.role !== "footer-meta" && !footerRoles.has(node.role)) {
-        const floor = node.role === "title" ? 24 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" ? 14 : 16;
+        const floor = node.role === "title" ? 24 : node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading" ? 14 : 16;
         if (node.style.fontFamily.trim().toLowerCase() !== "aptos") add({ category: "brand", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} uses ${node.style.fontFamily || "an unspecified font"} instead of Aptos.`, recommendation: "Use Aptos throughout ordinary ORNL presentation content.", autoFixable: true });
         if (node.style.fontSizePt < floor) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is ${node.style.fontSizePt} pt; the production floor for this role is ${floor} pt.`, recommendation: "Choose a roomier recipe, enlarge the region, or use an explicit continuation slide instead of miniaturizing type.", autoFixable: true });
       }

@@ -5,7 +5,7 @@ const EMU_PER_INCH = 914_400;
 
 export interface StudioDeckConsistencyIssue {
   id: string;
-  category: "title-grid" | "component-type" | "table-system";
+  category: "title-grid" | "component-type" | "table-system" | "archetype-pattern";
   severity: "major" | "minor";
   slideNumbers: number[];
   nodeIds: string[];
@@ -81,6 +81,33 @@ export function analyzeStudioDeckConsistency(scene: StudioWebScene): StudioDeckC
     const dominant = [...signatures.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
     const outliers = dominant ? entries.filter(({ node }) => tableSignature(node) !== dominant) : [];
     if (outliers.length) issues.push({ id: `table-${key}`, category: "table-system", severity: "major", slideNumbers: [...new Set(outliers.map((item) => item.slideNumber))], nodeIds: outliers.map((item) => item.node.id), message: `${outliers.length} related table${outliers.length === 1 ? " does" : "s do"} not use the deck's dominant structural style.`, recommendation: "Match border, padding, header, and type tokens while preserving each cell's semantic fill role." });
+  }
+  const archetypeGroups = new Map<string, typeof designed>();
+  for (const slide of designed) {
+    if (!slide.designArchetype || ["cover", "section", "conclusion", "source-preserve"].includes(slide.designArchetype)) continue;
+    const entries = archetypeGroups.get(slide.designArchetype) ?? [];
+    entries.push(slide);
+    archetypeGroups.set(slide.designArchetype, entries);
+  }
+  for (const [archetype, entries] of archetypeGroups) {
+    if (entries.length < 3) continue;
+    const signatures = new Map<string, number>();
+    entries.forEach((slide) => {
+      const signature = `${slide.recipe}|${slide.intervention?.level ?? "unclassified"}`;
+      signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
+    });
+    const dominant = [...signatures.entries()].sort((left, right) => right[1] - left[1])[0];
+    if (!dominant || dominant[1] < 2) continue;
+    const outliers = entries.filter((slide) => `${slide.recipe}|${slide.intervention?.level ?? "unclassified"}` !== dominant[0]);
+    if (outliers.length) issues.push({
+      id: `archetype-${archetype}`,
+      category: "archetype-pattern",
+      severity: "minor",
+      slideNumbers: outliers.map((slide) => slide.slideNumber),
+      nodeIds: [],
+      message: `${outliers.length} ${archetype.replaceAll("-", " ")} slide${outliers.length === 1 ? " uses" : "s use"} a one-off recipe or intervention instead of the qualified dominant pattern.`,
+      recommendation: "Reuse the qualified archetype pattern unless the slide has a documented content or relationship exception, then rebuild the deck contact sheet and compare rhythm.",
+    });
   }
   return { sceneRevision: scene.revision, designedSlideCount: designed.length, repeatedComponentCount: [...roleGroups.values()].filter((entries) => entries.length >= 2).reduce((sum, entries) => sum + entries.length, 0), tableCount: designed.flatMap((slide) => slide.nodes).filter((node) => node.visible && node.kind === "table").length, issueCount: issues.length, issues };
 }

@@ -68,8 +68,8 @@ test("document Resources instantiate approved ORNL designs in the native Studio 
     communicationJob: "By the end, technical leaders should understand the verified program result and implementation path.",
     expression: "balanced",
     slides: [
-      { title: "Verified controls support a faster processing path", subtitle: "Source-grounded program overview", body: [], recipe: "template-layout", layoutId: "approved-title", sourceReferences: [{ resourceId: source.id, exactExcerpt: "The program reduces processing time by 42 percent." }], rationale: "Open with the source-supported result using the protected approved title design." },
-      { title: "The pilot retained every required technical control", body: ["Processing time decreased by 42 percent.", "All required technical controls remained in place.", "Implementation proceeds in three stages."], recipe: "ornl-title-two-column", imageResourceIds: [image.id], sourceReferences: [{ resourceId: source.id, exactExcerpt: "The verified pilot retained all required technical controls. Implementation proceeds in three stages." }], rationale: "Pair the assertion and implementation evidence with the authorized source image." },
+      { title: "Verified controls support a faster processing path", subtitle: "Source-grounded program overview", body: [], archetype: "cover", sourceReferences: [{ resourceId: source.id, exactExcerpt: "The program reduces processing time by 42 percent." }] },
+      { title: "The pilot retained every required technical control", body: ["Processing time decreased by 42 percent.", "All required technical controls remained in place.", "Implementation proceeds in three stages."], archetype: "hero-figure", imageResourceIds: [image.id], sourceReferences: [{ resourceId: source.id, exactExcerpt: "The verified pilot retained all required technical controls. Implementation proceeds in three stages." }] },
     ],
   }, [source, image], catalog);
 

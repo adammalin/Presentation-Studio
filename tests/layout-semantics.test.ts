@@ -23,6 +23,11 @@ test("deduplicates inherited placeholders and derives stable semantic slots", ()
   assert.equal(preview.semantic?.intent, "visual");
   assert.equal(preview.semantic?.capabilities.imageSlots, 1);
   assert.equal(preview.semantic?.constraints.requiresVisual, true);
+  assert.equal(preview.semantic?.contract.family, "hero-visual");
+  assert.equal(preview.semantic?.contract.selectionPolicy, "special-purpose");
+  assert.equal(preview.semantic?.contract.surface, "light");
+  assert.deepEqual(preview.semantic?.contract.nativeAuthority, { masterRequired: true, layoutRequired: true, preserveInheritedArtwork: true, inheritedArtworkCount: 0, footerArtworkExpected: false });
+  assert.ok(preview.semantic?.contract.compatibleArchetypes.includes("hero-figure"));
   const titleSlot = preview.semantic?.slots.find((slot) => slot.role === "title");
   const imageSlot = preview.semantic?.slots.find((slot) => slot.role === "image");
   assert.deepEqual(titleSlot?.preferredBounds, { x: 300_000, y: 300_000, width: 11_000_000, height: 900_000 });
@@ -57,4 +62,42 @@ test("ranks content, visual, and data layouts from exact-content needs", () => {
   assert.equal(rankLayoutCompatibility([shortStack, longVisual], unsplitLongBlock)[0].layoutId, "layout-long-visual");
   const oneBodyOneImage = layout("layout-shared-slot", "1-Column Key Image", "image", [title, placeholder("body", "1", 300_000, 1_500_000, 5_500_000, 4_400_000), placeholder("pic", "1", 6_200_000, 1_500_000, 5_500_000, 4_400_000)]);
   assert.equal(rankLayoutCompatibility([oneBodyOneImage, longVisual], unsplitLongBlock)[0].layoutId, "layout-long-visual", "a body slot cannot be counted once for exact text and again as fallback image capacity");
+});
+
+test("builds repeated-slot relationships and keeps sacred layouts out of ordinary content routing", () => {
+  const title = placeholder("title", undefined, 300_000, 300_000, 11_000_000, 900_000);
+  const imageSeries = layout("layout-images", "3-Image Series", "image", [
+    title,
+    placeholder("pic", "1", 400_000, 1_500_000, 3_400_000, 2_700_000),
+    placeholder("pic", "2", 4_400_000, 1_500_000, 3_400_000, 2_700_000),
+    placeholder("pic", "3", 8_400_000, 1_500_000, 3_400_000, 2_700_000),
+    placeholder("body", "1", 400_000, 4_350_000, 3_400_000, 650_000),
+    placeholder("body", "2", 4_400_000, 4_350_000, 3_400_000, 650_000),
+    placeholder("body", "3", 8_400_000, 4_350_000, 3_400_000, 650_000),
+  ]);
+  assert.equal(imageSeries.semantic?.contract.family, "image-series");
+  assert.equal(imageSeries.semantic?.contract.slotGroups.length, 3);
+  assert.ok(imageSeries.semantic?.contract.slotGroups.every((group) => group.kind === "image-evidence" && group.relationship === "image-heading-evidence" && group.slotIds.length === 2));
+  const stackedSeries = layout("layout-stacked", "1-Column Stacked Image Series", "image", [
+    title,
+    placeholder("body", "1", 400_000, 1_500_000, 4_000_000, 4_400_000),
+    placeholder("pic", "1", 5_000_000, 1_500_000, 2_000_000, 1_200_000),
+    placeholder("pic", "2", 7_300_000, 2_900_000, 2_000_000, 1_200_000),
+    placeholder("pic", "3", 9_600_000, 4_300_000, 2_000_000, 1_200_000),
+  ]);
+  assert.equal(stackedSeries.semantic?.contract.slotGroups.length, 1);
+  assert.equal(stackedSeries.semantic?.contract.slotGroups[0]?.kind, "image-series");
+  assert.equal(stackedSeries.semantic?.contract.slotGroups[0]?.relationship, "image-collection-evidence");
+  assert.equal(stackedSeries.semantic?.contract.slotGroups[0]?.slotIds.length, 4);
+
+  const cover = layout("layout-cover", "Title Slide", "title", [title, placeholder("subTitle", "1", 700_000, 4_900_000, 5_000_000, 800_000)]);
+  assert.equal(cover.semantic?.contract.selectionPolicy, "sacred");
+  const tableProfile: LayoutContentProfile = { titleCharacterCount: 30, bodyBlockCount: 0, captionBlockCount: 0, bodyCharacterCount: 0, imageCount: 0, tableCount: 1, chartCount: 0, mediaCount: 0, desiredIntent: "data", designArchetype: "table" };
+  const [tableResult, coverResult] = rankLayoutCompatibility([
+    layout("layout-table", "Table | Full Width", "content", [title, placeholder("tbl", "1", 500_000, 1_500_000, 11_000_000, 4_700_000)]),
+    cover,
+  ], tableProfile);
+  assert.equal(tableResult.layoutId, "layout-table");
+  assert.equal(coverResult.status, "incompatible");
+  assert.match(coverResult.unmetNeeds.join(" "), /Sacred cover layout/i);
 });

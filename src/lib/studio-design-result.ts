@@ -8,6 +8,13 @@ export interface StudioSlideBuildResult {
   nativeRender?: NativeRenderResult;
 }
 
+function acceptedRenderedSlide(studioSlide: StudioWebScene["slides"][number], build: StudioSlideBuildResult | undefined) {
+  const rendered = build?.slideUpdatedAt === studioSlide.updatedAt && build.nativeRender?.status === "ready" && build.nativeRender.authoritative ? build.nativeRender.slides[0] : undefined;
+  const review = studioSlide.qualityReview;
+  if (!rendered || review?.recordedVerdict !== "ready" || review.slideUpdatedAt !== studioSlide.updatedAt || review.rasterSha256 !== rendered.sha256) return undefined;
+  return rendered;
+}
+
 /**
  * Produces the one native render surface used by Slides and Studio.
  * Untouched slides retain their source PowerPoint pixels. Redesigned slides
@@ -20,22 +27,33 @@ export function composeLatestStudioNativeRender(
 ): NativeRenderResult | undefined {
   if (!scene || sourceRender?.status !== "ready") return sourceRender;
   const sourceByNumber = new Map(sourceRender.slides.map((slide) => [slide.number, slide]));
+  const waitingForBuild: number[] = [];
+  const waitingForAcceptance: number[] = [];
+  const missingSource: number[] = [];
   const slides = scene.slides.flatMap((studioSlide) => {
+    const source = sourceByNumber.get(studioSlide.slideNumber);
     if (studioSlide.status !== "designed" || studioSlide.recipe === "source") {
-      const source = sourceByNumber.get(studioSlide.slideNumber);
       return source ? [source] : [];
     }
     const build = builds[`${scene.deckId}:${studioSlide.slideNumber}`];
-    const rendered = build?.slideUpdatedAt === studioSlide.updatedAt && build.nativeRender?.status === "ready" && build.nativeRender.authoritative ? build.nativeRender.slides[0] : undefined;
-    return rendered ? [{ ...rendered, number: studioSlide.slideNumber }] : [];
+    const exactBuild = build?.slideUpdatedAt === studioSlide.updatedAt && build.nativeRender?.status === "ready" && build.nativeRender.authoritative;
+    const rendered = acceptedRenderedSlide(studioSlide, build);
+    if (rendered) return [{ ...rendered, number: studioSlide.slideNumber }];
+    if (exactBuild) waitingForAcceptance.push(studioSlide.slideNumber);
+    else waitingForBuild.push(studioSlide.slideNumber);
+    if (source) return [source];
+    missingSource.push(studioSlide.slideNumber);
+    return [];
   });
-  const held = scene.slides.map((slide) => slide.slideNumber).filter((slideNumber) => !slides.some((slide) => slide.number === slideNumber));
+  const warnings = [...sourceRender.warnings];
+  if (waitingForBuild.length) warnings.push(`Candidate design is waiting for a matching PowerPoint build on slide${waitingForBuild.length === 1 ? "" : "s"} ${waitingForBuild.join(", ")}; the faithful source remains visible.`);
+  if (waitingForAcceptance.length) warnings.push(`Candidate design is waiting for revision-bound visual acceptance on slide${waitingForAcceptance.length === 1 ? "" : "s"} ${waitingForAcceptance.join(", ")}; the faithful source remains visible.`);
+  if (missingSource.length) warnings.push(`No source or accepted candidate render is available for slide${missingSource.length === 1 ? "" : "s"} ${missingSource.join(", ")}.`);
   return {
     ...sourceRender,
     slideCount: slides.length,
     slides,
-    warnings: held.length ? [...sourceRender.warnings, `Latest converted design is waiting for a matching PowerPoint build on slide${held.length === 1 ? "" : "s"} ${held.join(", ")}.`] : sourceRender.warnings,
-    reason: held.length ? "Some converted slide revisions have not been built yet." : undefined,
+    warnings,
+    reason: waitingForBuild.length || waitingForAcceptance.length || missingSource.length ? "Unaccepted candidate revisions remain held behind faithful source pixels." : undefined,
   };
 }
-

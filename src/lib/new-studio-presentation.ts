@@ -1,6 +1,7 @@
 import type {
   PptxAudit,
   ProjectResource,
+  StudioDesignArchetype,
   StudioLayoutRecipe,
   StudioResourceBinding,
   StudioTableCellDesign,
@@ -14,6 +15,8 @@ import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import { sha256Text } from "./hash";
 import { defaultStudioDeckRhythm, recomposeStudioWebSlide } from "./studio-web-scene";
 import type { TemplateCatalog, TemplateLayoutPreview } from "./template-catalog";
+import { planStudioComposition } from "./studio-archetypes";
+import { withStudioIntervention } from "./studio-intervention";
 
 const EMU_PER_INCH = 914_400;
 
@@ -31,11 +34,18 @@ export interface NewStudioSlideInput {
   title: string;
   subtitle?: string;
   body: string[];
-  recipe: Exclude<StudioLayoutRecipe, "source">;
+  archetype?: Exclude<StudioDesignArchetype, "source-preserve">;
+  recipe?: Exclude<StudioLayoutRecipe, "source">;
   layoutId?: string;
   imageResourceIds?: string[];
   table?: NewStudioTableInput;
   sourceReferences: NewStudioSourceReference[];
+  rationale?: string;
+}
+
+interface ResolvedNewStudioSlideInput extends NewStudioSlideInput {
+  recipe: Exclude<StudioLayoutRecipe, "source">;
+  resolvedArchetype: StudioDesignArchetype;
   rationale: string;
 }
 
@@ -242,7 +252,7 @@ function titleLayout(catalog: TemplateCatalog, requestedId?: string): TemplateLa
   return selected;
 }
 
-function layoutForSlide(catalog: TemplateCatalog, slide: NewStudioSlideInput, slideNumber: number): TemplateLayoutPreview | undefined {
+function layoutForSlide(catalog: TemplateCatalog, slide: ResolvedNewStudioSlideInput, slideNumber: number): TemplateLayoutPreview | undefined {
   if (slide.recipe !== "template-layout") return undefined;
   if (slideNumber === 1) return titleLayout(catalog, slide.layoutId);
   const layout = slide.layoutId ? catalog.layouts.find((item) => item.id === slide.layoutId) : undefined;
@@ -250,13 +260,47 @@ function layoutForSlide(catalog: TemplateCatalog, slide: NewStudioSlideInput, sl
   return layout;
 }
 
+function resolvedSlidePlans(input: NewStudioPresentationInput, templateCatalog: TemplateCatalog): ResolvedNewStudioSlideInput[] {
+  return input.slides.map((slide, index) => {
+    const slideNumber = index + 1;
+    const bodyCharacterCount = slide.body.reduce((sum, block) => sum + block.length, 0) + (slide.subtitle?.length ?? 0);
+    const profile = {
+      titleCharacterCount: slide.title.length,
+      bodyBlockCount: slide.body.length + (slide.subtitle?.trim() ? 1 : 0),
+      bodyBlockCharacterCounts: [...(slide.subtitle?.trim() ? [slide.subtitle.length] : []), ...slide.body.map((block) => block.length)],
+      captionBlockCount: (slide.imageResourceIds?.length ?? 0) >= 2 && slide.body.length >= (slide.imageResourceIds?.length ?? 0) ? slide.imageResourceIds?.length ?? 0 : 0,
+      bodyCharacterCount,
+      imageCount: slide.imageResourceIds?.length ?? 0,
+      tableCount: slide.table ? 1 : 0,
+      chartCount: 0,
+      mediaCount: 0,
+    };
+    const plan = planStudioComposition(profile, templateCatalog.layouts, {
+      slideNumber,
+      title: slide.title,
+      repeatedImageSeries: profile.imageCount >= 3 && profile.imageCount <= 6 && slide.body.length >= profile.imageCount,
+      requestedArchetype: slide.archetype,
+    });
+    const recipe = (slideNumber === 1 ? "template-layout" : slide.recipe ?? plan.recipe) as Exclude<StudioLayoutRecipe, "source">;
+    const layoutId = slide.layoutId ?? (recipe === "template-layout" ? plan.layoutId : undefined);
+    return {
+      ...slide,
+      recipe,
+      resolvedArchetype: plan.archetype,
+      layoutId,
+      rationale: slide.rationale?.trim() || plan.reasons.join(" "),
+    };
+  });
+}
+
 export async function createNewStudioPresentationScene(input: NewStudioPresentationInput, resources: ProjectResource[], templateCatalog: TemplateCatalog): Promise<StudioWebScene> {
   if (!input.slides.length) throw new Error("Create at least one slide.");
+  const plannedSlides = resolvedSlidePlans(input, templateCatalog);
   const byId = new Map(resources.map((resource) => [resource.id, resource]));
   const now = new Date().toISOString();
   const slides: StudioWebSlide[] = [];
 
-  for (const [index, planned] of input.slides.entries()) {
+  for (const [index, planned] of plannedSlides.entries()) {
     const slideNumber = index + 1;
     if (slideNumber === 1 && planned.recipe !== "template-layout") throw new Error("The first slide of a new ORNL presentation must use an approved Template Pack title layout.");
     const sourceBindings: StudioResourceBinding[] = [];
@@ -294,6 +338,7 @@ export async function createNewStudioPresentationScene(input: NewStudioPresentat
       sourceTextHash,
       contentCoverage: { exactTextMapped: true, sourceCharacterCount: normalizedText(mappedText).length, mappedCharacterCount: normalizedText(mappedText).length, sourceTextBoxCount: nodes.filter((node) => node.kind === "text").length, mappedTextNodeCount: nodes.filter((node) => node.kind === "text" || node.kind === "table").length, groupedOrUnsupportedTextPresent: false },
       sourceRevision: `resources:${allBindings.map((binding) => binding.resourceSha256).sort().join(":")}`,
+      designArchetype: planned.resolvedArchetype,
       recipe: planned.recipe,
       background: "#FFFFFF",
       status: "designed",
@@ -305,7 +350,7 @@ export async function createNewStudioPresentationScene(input: NewStudioPresentat
     });
   }
 
-  const resourceDigest = await sha256Text(JSON.stringify({ name: input.name, communicationJob: input.communicationJob, expression: input.expression, slides: input.slides, resources: resources.map((resource) => [resource.id, resource.sha256]) }));
+  const resourceDigest = await sha256Text(JSON.stringify({ name: input.name, communicationJob: input.communicationJob, expression: input.expression, slides: plannedSlides, resources: resources.map((resource) => [resource.id, resource.sha256]) }));
   let scene: StudioWebScene = {
     schema: STUDIO_WEB_SCENE_SCHEMA,
     version: STUDIO_WEB_SCENE_VERSION,
@@ -322,9 +367,19 @@ export async function createNewStudioPresentationScene(input: NewStudioPresentat
     designSystem: { id: "ornl-presentation-web-v1", standardVersion: PRESENTATION_DESIGN_STANDARD.version, unit: "emu", renderer: "html-css", exportTarget: "editable-powerpoint", compilerModes: ["source-bound-overlay", "fresh-composition"] },
     slides,
   };
-  for (const [index, planned] of input.slides.entries()) {
+  for (const [index, planned] of plannedSlides.entries()) {
     const slideNumber = index + 1;
     scene = recomposeStudioWebSlide(scene, slideNumber, planned.recipe, layoutForSlide(templateCatalog, planned, slideNumber), planned.rationale);
+    scene = {
+      ...scene,
+      slides: scene.slides.map((slide) => slide.slideNumber !== slideNumber ? slide : withStudioIntervention(
+        { ...slide, designArchetype: planned.resolvedArchetype },
+        "recompose",
+        "This source-grounded slide is being composed from approved Resources into the ORNL Studio system.",
+        "automatic",
+        now,
+      )),
+    };
   }
   return { ...scene, slides: scene.slides.map((slide) => ({ ...slide, nodes: slide.nodes.map((node) => ({ ...node, sourceFrame: { ...node.frame } })) })) };
 }
@@ -345,6 +400,7 @@ export function bindNewStudioSceneToGeneratedPowerPoint(scene: StudioWebScene, s
         sourceTextHash: audited.textHash,
         sourceRevision: sourceSha256,
         recipe: slide.slideNumber === 1 ? "source" : slide.recipe,
+        intervention: slide.slideNumber === 1 ? withStudioIntervention(slide, "preserve", "The generated approved ORNL title layout is now native-qualified and sacred.", "automatic", now).intervention : slide.intervention,
         status: "designed",
         nodes: slide.nodes.map((node) => ({ ...node, sourceFrame: { ...node.frame } })),
         updatedAt: now,

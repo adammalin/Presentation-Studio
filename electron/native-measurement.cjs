@@ -274,18 +274,11 @@ function parsePowerPointMeasurement(text, { sourceSha256, generatedAt = new Date
       shape.table.columnWidthsPt[(finiteNumber(fields[3]) || 1) - 1] = finiteNumber(fields[4]) || 0;
     } else if (kind === "CELL") {
       const cellBounds = bounds(fields[5], fields[6], fields[7], fields[8]);
-      const tableRelativeTextBounds = bounds(fields[13], fields[14], fields[15], fields[16]);
-      // PowerPoint's cell TextRange bounds are relative to the table shape,
-      // while the cell shape bounds are slide-relative. Normalize the text
-      // bounds to the cell before exposing the declared cell-relative packet.
-      // Treating the raw table-relative left/top as cell-relative produces
-      // increasingly negative clearance values in later columns.
-      const cellRelativeTextBounds = cellBounds && tableRelativeTextBounds && shape.boundsPt ? {
-        left: shape.boundsPt.left + tableRelativeTextBounds.left - cellBounds.left,
-        top: shape.boundsPt.top + tableRelativeTextBounds.top - cellBounds.top,
-        width: tableRelativeTextBounds.width,
-        height: tableRelativeTextBounds.height,
-      } : tableRelativeTextBounds;
+      // PowerPoint returns a table cell's TextRange bounds in that cell's own
+      // coordinate space. Keep those values cell-relative. Re-basing them
+      // against the table and slide positions makes every later column look
+      // progressively farther outside its cell and creates false clipping.
+      const cellRelativeTextBounds = bounds(fields[13], fields[14], fields[15], fields[16]);
       shape.table.cells.push({
         row: finiteNumber(fields[3]) || 0,
         column: finiteNumber(fields[4]) || 0,

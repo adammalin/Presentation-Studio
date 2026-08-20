@@ -1,7 +1,8 @@
 import type { NativeMeasurementResult } from "./desktop";
 import type { DesignMetricsReport } from "./design-metrics";
 import type { NativeMeasurementPacket } from "./native-measurement";
-import type { PptxAudit } from "../types";
+import type { PptxAudit, StudioInterventionLevel } from "../types";
+import type { StudioDeckConsistencyIssue } from "./studio-deck-consistency";
 import type { StudioCompositionOutputSlide } from "./studio-composition-export";
 import type { StudioCompositionContentValidation } from "./studio-composition-validation";
 
@@ -28,6 +29,12 @@ export interface DeckQualificationSlideReview {
   recordedVerdict: QualificationReviewVerdict;
   pass: number;
   rationale: string;
+  sourceComparison: {
+    preferred: "source" | "candidate" | "equivalent";
+    sourceStrengths: string[];
+    candidateImprovements: string[];
+    candidateRegressions: string[];
+  };
   findings: Array<{
     category: "hierarchy" | "alignment" | "spacing" | "layout-balance" | "table-quality" | "figure-clarity" | "template-fidelity" | "deck-consistency" | "source-intent" | "other";
     severity: "major" | "minor";
@@ -63,7 +70,7 @@ export interface DeckQualificationIssue {
   id: string;
   slideNumber?: number;
   severity: "blocker" | "major" | "minor";
-  category: "content" | "render" | "typography" | "geometry" | "table" | "template" | "design-impact";
+  category: "content" | "render" | "typography" | "geometry" | "table" | "template" | "design-impact" | "consistency";
   code: string;
   message: string;
   evidence: string;
@@ -116,6 +123,7 @@ export interface DeckQualificationReport {
     candidateImage: QualificationRenderSlide;
     pixelsChanged: boolean;
     protected: boolean;
+    interventionLevel?: StudioInterventionLevel;
     designImpact?: string;
     status: "objective-failure" | "visual-review-required" | "ready" | "revise" | "hold";
     issueIds: string[];
@@ -155,6 +163,8 @@ export interface BuildDeckQualificationReportInput {
   protectedSlideNumbers?: number[];
   designImpactBySlide?: Record<number, string>;
   visualNeedBySlide?: Record<number, { id: string; type: string; status: string }>;
+  interventionBySlide?: Record<number, StudioInterventionLevel>;
+  deckConsistencyIssues?: StudioDeckConsistencyIssue[];
   requireMaterialDesignImpact?: boolean;
   previousReport?: DeckQualificationReport;
 }
@@ -291,6 +301,20 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
     }
   }
 
+  for (const issue of input.deckConsistencyIssues ?? []) {
+    const slideNumber = issue.slideNumbers.length === 1 ? issue.slideNumbers[0] : undefined;
+    addIssue({
+      slideNumber,
+      severity: issue.severity,
+      category: "consistency",
+      code: `deck-${issue.category}-${issue.id}`,
+      message: issue.message,
+      evidence: `Affected slides: ${issue.slideNumbers.join(", ") || "deck-wide"}. ${issue.recommendation}`,
+      repairRoute: "mcp-design",
+      evidenceRegion: slideNumber ? evidenceRegion(input, slideNumber, issue.nodeIds, "Deck-consistency outlier") : undefined,
+    });
+  }
+
   for (const slideNumber of protectedSlides) {
     const mapping = outputSlides.find((slide) => slide.outputSlideNumber === slideNumber);
     const source = mapping ? sourceRasters.get(mapping.sourceSlideNumber) : undefined;
@@ -305,12 +329,15 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
     const slideNumber = mapping.outputSlideNumber;
     const protectedSlide = protectedSlides.has(slideNumber);
     const designImpact = input.designImpactBySlide?.[slideNumber];
+    const interventionLevel = input.interventionBySlide?.[slideNumber];
     const visualNeed = input.visualNeedBySlide?.[slideNumber];
     const pixelsChanged = sourceImage.sha256 !== candidateImage.sha256;
-    if (input.requireMaterialDesignImpact && !protectedSlide && (!pixelsChanged || !designImpact || ["unchanged", "typography-only", "cleanup"].includes(designImpact))) {
+    const requiresMaterialDesignImpact = !protectedSlide && (interventionLevel ? ["recompose", "rebuild-figure"].includes(interventionLevel) : input.requireMaterialDesignImpact === true);
+    if (requiresMaterialDesignImpact && (!pixelsChanged || !designImpact || ["unchanged", "typography-only", "cleanup"].includes(designImpact))) {
       const repairRoute: QualificationRepairRoute = visualNeed?.status === "brief-ready" ? "image-concept" : visualNeed?.status === "held" ? "human-review" : "mcp-design";
       addIssue({ slideNumber, severity: "major", category: "design-impact", code: "material-design-impact", message: "This redesign does not yet show a material whole-slide composition improvement.", evidence: `PowerPoint pixels changed: ${pixelsChanged ? "yes" : "no"}; recorded impact: ${designImpact ?? "unrecorded"}${visualNeed ? `; visual need: ${visualNeed.type} (${visualNeed.status})` : ""}.`, repairRoute, evidenceRegion: fullSlideRegion("Whole-slide design impact") });
     }
+    if (!protectedSlide && interventionLevel === "preserve" && pixelsChanged) addIssue({ slideNumber, severity: "major", category: "design-impact", code: "preserve-drift", message: "A preserve-level slide changed visually.", evidence: "The source and candidate native raster hashes differ even though the slide intervention is preserve.", repairRoute: "mcp-design", evidenceRegion: fullSlideRegion("Preserve intervention drift") });
     const slideIssueIds = issues.filter((issue) => issue.slideNumber === slideNumber || issue.slideNumber === undefined && issue.severity !== "minor").map((issue) => issue.id);
     return {
       slideNumber,
@@ -318,6 +345,7 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
       candidateImage,
       pixelsChanged,
       protected: protectedSlide,
+      interventionLevel,
       designImpact,
       status: slideIssueIds.length ? "objective-failure" as const : "visual-review-required" as const,
       issueIds: slideIssueIds,
@@ -386,7 +414,7 @@ export function buildDeckQualificationReport(input: BuildDeckQualificationReport
     repairRouting,
     visualAcceptance: {
       status: "pending-human-or-authorized-ai-review",
-      rule: "Inspect every candidate PNG at full-slide size and compare it with the source. Objective checks make the deck reviewable; they do not prove that the design is better.",
+      rule: "Inspect every candidate PNG at full-slide size and compare it with the source. The source wins whenever a candidate is weaker. Objective checks make the deck reviewable; they do not prove that the design is better.",
       requiredJudgments: ["hierarchy", "alignment", "spacing", "layout balance", "table quality", "figure clarity", "template fidelity", "deck consistency", "source intent"],
       reviewedSlideCount: 0,
       readySlideCount: 0,
@@ -408,6 +436,7 @@ export function recordDeckQualificationReviews(report: DeckQualificationReport, 
     candidateRasterSha256: string;
     verdict: QualificationReviewVerdict;
     rationale: string;
+    sourceComparison?: DeckQualificationSlideReview["sourceComparison"];
     findings?: DeckQualificationSlideReview["findings"];
   }>;
 }): DeckQualificationReport {
@@ -433,7 +462,19 @@ export function recordDeckQualificationReviews(report: DeckQualificationReport, 
     });
     const previous = existing.get(slide.slideNumber);
     const pass = (previous?.pass ?? 0) + 1;
-    const serious = slide.issueIds.length > 0 || findings.some((finding) => finding.severity === "major");
+    const suppliedComparison = requested.sourceComparison;
+    const sourceComparison: DeckQualificationSlideReview["sourceComparison"] = suppliedComparison ? {
+      preferred: suppliedComparison.preferred,
+      sourceStrengths: suppliedComparison.sourceStrengths.slice(0, 12).map((value) => String(value).trim().slice(0, 500)).filter(Boolean),
+      candidateImprovements: suppliedComparison.candidateImprovements.slice(0, 12).map((value) => String(value).trim().slice(0, 500)).filter(Boolean),
+      candidateRegressions: suppliedComparison.candidateRegressions.slice(0, 12).map((value) => String(value).trim().slice(0, 500)).filter(Boolean),
+    } : {
+      preferred: slide.sourceImage.sha256 === slide.candidateImage.sha256 ? "equivalent" : requested.verdict === "ready" ? "candidate" : "source",
+      sourceStrengths: [],
+      candidateImprovements: [],
+      candidateRegressions: [],
+    };
+    const serious = slide.issueIds.length > 0 || findings.some((finding) => finding.severity === "major") || sourceComparison.preferred === "source";
     let recordedVerdict: QualificationReviewVerdict = requested.verdict === "ready" && serious ? "revise" : requested.verdict;
     if (input.reviewer === "authorized-ai" && pass >= report.iteration.automaticPassLimit && recordedVerdict === "revise") recordedVerdict = "hold";
     existing.set(slide.slideNumber, {
@@ -445,6 +486,7 @@ export function recordDeckQualificationReviews(report: DeckQualificationReport, 
       recordedVerdict,
       pass,
       rationale,
+      sourceComparison,
       findings,
       reviewedAt,
     });

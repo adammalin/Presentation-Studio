@@ -364,7 +364,7 @@ const studioWebSceneSchema = z.object({
   sourceSlideSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
   rhythm: z.object({ safeMarginPt: z.number().positive(), gridPt: z.number().positive(), compactGapPt: z.number().nonnegative(), normalGapPt: z.number().nonnegative(), primaryGapPt: z.number().nonnegative(), captionGapPt: z.number().nonnegative(), titleContentGapPt: z.number().nonnegative() }).optional(),
   designMemory: z.array(z.object({
-    contentSignature: z.string().min(1).max(300), recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]), targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(),
+    contentSignature: z.string().min(1).max(300), recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-image-series", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]), targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(),
     rhythm: z.object({ safeMarginPt: z.number().positive(), gridPt: z.number().positive(), compactGapPt: z.number().nonnegative(), normalGapPt: z.number().nonnegative(), primaryGapPt: z.number().nonnegative(), captionGapPt: z.number().nonnegative(), titleContentGapPt: z.number().nonnegative() }),
     adoptedFromSlideNumber: z.number().int().positive(), qualityRasterSha256: z.string().length(64), recordedAt: isoTimestamp,
   })).max(80).default([]),
@@ -415,7 +415,16 @@ const studioWebSceneSchema = z.object({
   slides: z.array(z.object({
     id: z.string().min(1), slideNumber: z.number().int().positive(), sourceSlideId: z.string().min(1), sourceTextHash: z.string().regex(/^[0-9a-f]{64}$/), sourceRevision: z.string().min(1),
     contentCoverage: z.object({ exactTextMapped: z.boolean(), sourceContentSignature: z.string().optional(), sourceCharacterCount: z.number().int().nonnegative(), mappedCharacterCount: z.number().int().nonnegative(), sourceTextBoxCount: z.number().int().nonnegative(), mappedTextNodeCount: z.number().int().nonnegative(), groupedOrUnsupportedTextPresent: z.boolean() }),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    designArchetype: z.enum(["cover", "section", "assertion-evidence", "text-led", "hero-figure", "comparison", "image-series", "portrait-series", "table", "data-visualization", "process-flow", "technical-diagram", "conclusion", "source-preserve"]).optional(),
+    intervention: z.object({
+      level: z.enum(["preserve", "polish", "recompose", "rebuild-figure"]),
+      selectedBy: z.enum(["automatic", "human", "ai"]),
+      reason: z.string().min(1).max(1_000),
+      sourceWins: z.literal(true),
+      acceptanceRule: z.string().min(1).max(1_000),
+      selectedAt: isoTimestamp,
+    }).optional(),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-image-series", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
     targetLayoutId: z.string().optional(), targetLayoutName: z.string().optional(), background: z.string(), status: z.enum(["imported", "designed"]), designRationale: z.string().max(1_000), resourceBindings: z.array(studioResourceBindingSchema).max(40).optional(),
     figureTreatments: z.array(z.object({
       id: z.string().min(1).max(180),
@@ -493,6 +502,12 @@ const studioWebSceneSchema = z.object({
     qualityReview: z.object({
       sceneRevision: z.string().min(1), slideUpdatedAt: isoTimestamp, rasterSha256: z.string().length(64), pass: z.number().int().min(1).max(3), maxPasses: z.literal(3),
       requestedVerdict: z.enum(["ready", "revise", "hold"]), recordedVerdict: z.enum(["ready", "revise", "hold"]), rationale: z.string().min(1).max(1_000), recordedAt: isoTimestamp,
+      sourceComparison: z.object({
+        preferred: z.enum(["source", "candidate", "equivalent"]),
+        sourceStrengths: z.array(z.string().min(1).max(500)).max(12),
+        candidateImprovements: z.array(z.string().min(1).max(500)).max(12),
+        candidateRegressions: z.array(z.string().min(1).max(500)).max(12),
+      }).optional(),
       objectiveIssues: z.array(z.object({ id: z.string().min(1), category: z.enum(["overflow", "alignment", "spacing", "safe-region", "hierarchy", "figure", "brand", "legibility", "consistency", "other"]), severity: z.enum(["blocker", "major", "minor"]), source: z.enum(["powerpoint-native", "scene", "ai-visual"]), nodeIds: z.array(z.string()), message: z.string().min(1).max(1_000), recommendation: z.string().min(1).max(1_000), autoFixable: z.boolean() })).max(80),
       visualIssues: z.array(z.object({ id: z.string().min(1), category: z.enum(["overflow", "alignment", "spacing", "safe-region", "hierarchy", "figure", "brand", "legibility", "consistency", "other"]), severity: z.enum(["blocker", "major", "minor"]), source: z.literal("ai-visual"), nodeIds: z.array(z.string()), message: z.string().min(1).max(1_000), recommendation: z.string().min(1).max(1_000), autoFixable: z.boolean() })).max(40),
     }).optional(),

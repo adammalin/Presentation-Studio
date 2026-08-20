@@ -43,21 +43,34 @@ function scene(): StudioWebScene {
   };
 }
 
-test("latest Studio render preserves source slides and replaces designed slides with their exact build", () => {
+function acceptSlide(scene: StudioWebScene, slideNumber: number, rasterSha256: string): StudioWebScene {
+  return { ...scene, slides: scene.slides.map((slide) => slide.slideNumber !== slideNumber ? slide : { ...slide, qualityReview: { sceneRevision: scene.revision, slideUpdatedAt: slide.updatedAt, rasterSha256, pass: 1, maxPasses: 3, requestedVerdict: "ready", recordedVerdict: "ready", rationale: "The exact candidate is visually sound.", objectiveIssues: [], visualIssues: [], recordedAt: "2026-08-19T12:00:00.000Z" } }) };
+}
+
+test("latest Studio render preserves source slides and replaces designed slides only with an accepted exact build", () => {
   const builds: Record<string, StudioSlideBuildResult> = {
     "deck-1:2": { deckId: "deck-1", sourceSlideNumber: 2, slideUpdatedAt: "two", nativeRender: native([1]) },
   };
-  const result = composeLatestStudioNativeRender(scene(), native([1, 2]), builds);
+  const result = composeLatestStudioNativeRender(acceptSlide(scene(), 2, "slide-1"), native([1, 2]), builds);
   assert.deepEqual(result?.slides.map((slide) => [slide.number, slide.sha256]), [[1, "slide-1"], [2, "slide-1"]]);
   assert.equal(result?.reason, undefined);
 });
 
-test("latest Studio render holds a redesigned slide when only a stale build exists", () => {
+test("latest Studio render keeps faithful source pixels when only a stale build exists", () => {
   const builds: Record<string, StudioSlideBuildResult> = {
     "deck-1:2": { deckId: "deck-1", sourceSlideNumber: 2, slideUpdatedAt: "old", nativeRender: native([1]) },
   };
   const result = composeLatestStudioNativeRender(scene(), native([1, 2]), builds);
-  assert.deepEqual(result?.slides.map((slide) => slide.number), [1]);
-  assert.match(result?.reason ?? "", /not been built/i);
+  assert.deepEqual(result?.slides.map((slide) => [slide.number, slide.sha256]), [[1, "slide-1"], [2, "slide-2"]]);
+  assert.match(result?.reason ?? "", /held behind faithful source/i);
   assert.match(result?.warnings.at(-1) ?? "", /slide 2/i);
+});
+
+test("latest Studio render keeps faithful source pixels until the exact candidate passes visual review", () => {
+  const builds: Record<string, StudioSlideBuildResult> = {
+    "deck-1:2": { deckId: "deck-1", sourceSlideNumber: 2, slideUpdatedAt: "two", nativeRender: native([1]) },
+  };
+  const result = composeLatestStudioNativeRender(scene(), native([1, 2]), builds);
+  assert.deepEqual(result?.slides.map((slide) => [slide.number, slide.sha256]), [[1, "slide-1"], [2, "slide-2"]]);
+  assert.match(result?.warnings.at(-1) ?? "", /visual acceptance/i);
 });

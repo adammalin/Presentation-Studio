@@ -1,4 +1,5 @@
 import type { TemplateLayoutPreview, TemplatePreviewElement } from "./template-catalog";
+import type { StudioDesignArchetype, StudioLayoutRecipe } from "../types";
 
 export type TemplateSemanticRole = "title" | "subtitle" | "body" | "caption" | "image" | "table" | "chart" | "media" | "content" | "footer" | "date" | "slide-number" | "other";
 export type TemplateContentKind = "text" | "image" | "table" | "chart" | "media";
@@ -56,7 +57,36 @@ export interface TemplateLayoutSemantics {
     requiresVisual: boolean;
     supportsDenseText: boolean;
   };
+  contract: TemplateLayoutContract;
   summary: string;
+}
+
+export type TemplateLayoutFamily = "cover" | "reading" | "hero-visual" | "comparison" | "image-series" | "portrait-series" | "conclusion" | "blank" | "special";
+export type TemplateLayoutSelectionPolicy = "sacred" | "content-ready" | "special-purpose" | "fallback-only";
+
+export interface TemplateLayoutSlotGroup {
+  id: string;
+  kind: "column" | "image-evidence" | "image-series" | "portrait";
+  ordinal: number;
+  slotIds: string[];
+  relationship: "peer" | "image-heading-evidence" | "image-collection-evidence" | "portrait-label";
+}
+
+export interface TemplateLayoutContract {
+  family: TemplateLayoutFamily;
+  selectionPolicy: TemplateLayoutSelectionPolicy;
+  surface: "light" | "dark" | "mixed";
+  compatibleArchetypes: StudioDesignArchetype[];
+  recommendedRecipes: StudioLayoutRecipe[];
+  slotGroups: TemplateLayoutSlotGroup[];
+  contentBounds?: TemplateSlotBounds;
+  nativeAuthority: {
+    masterRequired: true;
+    layoutRequired: true;
+    preserveInheritedArtwork: true;
+    inheritedArtworkCount: number;
+    footerArtworkExpected: boolean;
+  };
 }
 
 export interface LayoutContentProfile {
@@ -71,6 +101,7 @@ export interface LayoutContentProfile {
   chartCount: number;
   mediaCount: number;
   desiredIntent?: TemplateLayoutIntent;
+  designArchetype?: StudioDesignArchetype;
 }
 
 export interface LayoutCompatibilityResult {
@@ -190,7 +221,113 @@ function summaryFor(intent: TemplateLayoutIntent, capabilities: TemplateLayoutSe
   return `${intent[0].toUpperCase()}${intent.slice(1)} layout${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
 }
 
-export function deriveLayoutSemantics(layout: Pick<TemplateLayoutPreview, "id" | "name" | "category" | "elements">, slideWidth: number, slideHeight: number): TemplateLayoutSemantics {
+function layoutFamily(name: string, intent: TemplateLayoutIntent, capabilities: TemplateLayoutSemantics["capabilities"]): TemplateLayoutFamily {
+  const normalized = name.toLowerCase();
+  if (intent === "cover") return "cover";
+  if (intent === "conclusion") return "conclusion";
+  if (intent === "blank") return "blank";
+  if (normalized.includes("portrait")) return "portrait-series";
+  if (capabilities.imageSlots >= 2 || normalized.includes("image series")) return "image-series";
+  if (capabilities.imageSlots === 1 || normalized.includes("key image") || normalized.includes("cut-out")) return "hero-visual";
+  if (capabilities.bodySlots >= 2 || intent === "comparison") return "comparison";
+  if (capabilities.bodySlots === 1) return "reading";
+  return "special";
+}
+
+function selectionPolicy(family: TemplateLayoutFamily, name: string): TemplateLayoutSelectionPolicy {
+  if (["cover", "conclusion"].includes(family)) return "sacred";
+  if (["image-series", "portrait-series", "hero-visual"].includes(family)) return "special-purpose";
+  if (["reading", "comparison"].includes(family)) return "content-ready";
+  return name.toLowerCase().includes("blank") ? "fallback-only" : "special-purpose";
+}
+
+function archetypesFor(family: TemplateLayoutFamily, capabilities: TemplateLayoutSemantics["capabilities"]): StudioDesignArchetype[] {
+  if (family === "cover") return capabilities.imageSlots ? ["cover", "section", "hero-figure"] : ["cover", "section"];
+  if (family === "conclusion") return ["conclusion"];
+  if (family === "portrait-series") return ["portrait-series", "image-series"];
+  if (family === "image-series") return ["image-series", "comparison"];
+  if (family === "hero-visual") return ["hero-figure", "assertion-evidence", "data-visualization", "technical-diagram"];
+  if (family === "comparison") return ["comparison", "assertion-evidence", "process-flow"];
+  if (family === "reading") return ["assertion-evidence", "text-led", "table", "data-visualization", "process-flow", "technical-diagram"];
+  return [];
+}
+
+function recipesFor(archetypes: StudioDesignArchetype[]): StudioLayoutRecipe[] {
+  const recipes = new Set<StudioLayoutRecipe>();
+  for (const archetype of archetypes) {
+    if (["cover", "section", "conclusion", "portrait-series"].includes(archetype)) recipes.add("template-layout");
+    if (["assertion-evidence", "text-led"].includes(archetype)) recipes.add("ornl-title-content");
+    if (["hero-figure", "data-visualization", "technical-diagram"].includes(archetype)) recipes.add("ornl-title-two-column");
+    if (archetype === "comparison") recipes.add("ornl-title-card-grid");
+    if (archetype === "image-series") recipes.add("ornl-title-image-series");
+    if (archetype === "table") recipes.add("ornl-title-table");
+    if (archetype === "process-flow") recipes.add("ornl-title-process-flow");
+  }
+  return [...recipes];
+}
+
+function surfaceFor(background: string, elements: TemplatePreviewElement[]): TemplateLayoutContract["surface"] {
+  const parse = (value: string | undefined) => /^#?([0-9a-f]{6})$/i.exec(value ?? "")?.[1];
+  const luminance = (value: string | undefined) => {
+    const hex = parse(value);
+    if (!hex) return undefined;
+    const channels = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255).map((channel) => channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+    return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+  };
+  const backgroundLuminance = luminance(background) ?? 1;
+  const substantialFills = elements.filter((element) => element.fill && element.width * element.height > 300_000_000_000).map((element) => luminance(element.fill)).filter((value): value is number => value !== undefined);
+  const hasLight = backgroundLuminance > .45 || substantialFills.some((value) => value > .45);
+  const hasDark = backgroundLuminance <= .45 || substantialFills.some((value) => value <= .45);
+  return hasLight && hasDark ? "mixed" : hasDark ? "dark" : "light";
+}
+
+function contentBoundsFor(slots: TemplateSemanticSlot[]): TemplateSlotBounds | undefined {
+  const content = slots.filter((slot) => !["title", "subtitle", "footer", "date", "slide-number", "other"].includes(slot.role));
+  if (!content.length) return undefined;
+  const x = Math.min(...content.map((slot) => slot.x));
+  const y = Math.min(...content.map((slot) => slot.y));
+  const right = Math.max(...content.map((slot) => slot.x + slot.width));
+  const bottom = Math.max(...content.map((slot) => slot.y + slot.height));
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+function slotGroupsFor(slots: TemplateSemanticSlot[], family: TemplateLayoutFamily): TemplateLayoutSlotGroup[] {
+  const images = slots.filter((slot) => slot.role === "image").sort((left, right) => left.x - right.x || left.y - right.y);
+  const text = slots.filter((slot) => ["body", "caption", "content"].includes(slot.role));
+  if (images.length >= 2 && text.length >= images.length) {
+    const unused = new Set(text.map((slot) => slot.id));
+    return images.map((image, ordinal) => {
+      const imageCenterX = image.x + image.width / 2;
+      const support = text.filter((slot) => unused.has(slot.id)).sort((left, right) => Math.abs(left.x + left.width / 2 - imageCenterX) - Math.abs(right.x + right.width / 2 - imageCenterX))[0];
+      if (support) unused.delete(support.id);
+      return { id: `${image.id}-group`, kind: family === "portrait-series" ? "portrait" : "image-evidence", ordinal, slotIds: [image.id, ...(support ? [support.id] : [])], relationship: family === "portrait-series" ? "portrait-label" : "image-heading-evidence" };
+    });
+  }
+  if (images.length >= 2) {
+    return [{ id: `${images[0].id}-series-group`, kind: "image-series", ordinal: 0, slotIds: [...images.map((image) => image.id), ...text.map((slot) => slot.id)], relationship: "image-collection-evidence" }];
+  }
+  const columns = slots.filter((slot) => ["body", "content"].includes(slot.role)).sort((left, right) => left.x - right.x || left.y - right.y);
+  return columns.map((slot, ordinal) => ({ id: `${slot.id}-group`, kind: "column", ordinal, slotIds: [slot.id], relationship: "peer" }));
+}
+
+function layoutContract(layout: Pick<TemplateLayoutPreview, "name" | "background" | "elements">, intent: TemplateLayoutIntent, capabilities: TemplateLayoutSemantics["capabilities"], slots: TemplateSemanticSlot[]): TemplateLayoutContract {
+  const family = layoutFamily(layout.name, intent, capabilities);
+  const compatibleArchetypes = archetypesFor(family, capabilities);
+  const inheritedArtwork = layout.elements.filter((element) => !element.placeholderType && ["master", "layout"].includes(element.origin ?? "layout"));
+  const footerArtworkExpected = inheritedArtwork.some((element) => element.y > 5_700_000 || /footer|logo|slide number|ornl|oak ridge/i.test(element.name));
+  return {
+    family,
+    selectionPolicy: selectionPolicy(family, layout.name),
+    surface: surfaceFor(layout.background, layout.elements),
+    compatibleArchetypes,
+    recommendedRecipes: recipesFor(compatibleArchetypes),
+    slotGroups: slotGroupsFor(slots, family),
+    contentBounds: contentBoundsFor(slots),
+    nativeAuthority: { masterRequired: true, layoutRequired: true, preserveInheritedArtwork: true, inheritedArtworkCount: inheritedArtwork.length, footerArtworkExpected },
+  };
+}
+
+export function deriveLayoutSemantics(layout: Pick<TemplateLayoutPreview, "id" | "name" | "category" | "background" | "elements">, slideWidth: number, slideHeight: number): TemplateLayoutSemantics {
   const slots = uniquePlaceholderElements(layout.elements).map((element, index): TemplateSemanticSlot => {
     const role = roleFor(element, slideHeight);
     const acceptedContent = acceptedContentFor(role);
@@ -227,6 +364,7 @@ export function deriveLayoutSemantics(layout: Pick<TemplateLayoutPreview, "id" |
   const intent = inferIntent(layout.name, slots, layout.category);
   const requiresVisual = intent === "visual" && capabilities.imageSlots > 0;
   const supportsDenseText = bodySlots === 1 && slots.some((slot) => ["body", "content"].includes(slot.role) && slot.capacity === "long") && !requiresVisual;
+  const contract = layoutContract(layout, intent, capabilities, slots);
   return {
     intent,
     slots,
@@ -239,6 +377,7 @@ export function deriveLayoutSemantics(layout: Pick<TemplateLayoutPreview, "id" |
       requiresVisual,
       supportsDenseText,
     },
+    contract,
     summary: summaryFor(intent, capabilities),
   };
 }
@@ -317,6 +456,19 @@ export function scoreLayoutCompatibility(layout: TemplateLayoutPreview, profile:
     if (profile.desiredIntent === semantics.intent) { score += 12; reasons.push(`Matches the requested ${profile.desiredIntent} intent.`); }
     else if (["cover", "conclusion", "section"].includes(profile.desiredIntent)) { score -= 28; unmetNeeds.push(`Requested ${profile.desiredIntent} intent does not match this ${semantics.intent} layout.`); }
     else score -= 8;
+  }
+
+  if (profile.designArchetype) {
+    if (semantics.contract.compatibleArchetypes.includes(profile.designArchetype)) {
+      score += 14;
+      reasons.push(`Supports the ${profile.designArchetype.replaceAll("-", " ")} communication archetype.`);
+    } else if (semantics.contract.selectionPolicy === "sacred") {
+      score -= 45;
+      unmetNeeds.push(`Sacred ${semantics.contract.family} layout is not compatible with the ${profile.designArchetype.replaceAll("-", " ")} archetype.`);
+    } else {
+      score -= 18;
+      unmetNeeds.push(`Layout family does not natively support the ${profile.designArchetype.replaceAll("-", " ")} archetype.`);
+    }
   }
 
   score = Math.max(0, Math.min(100, Math.round(score)));

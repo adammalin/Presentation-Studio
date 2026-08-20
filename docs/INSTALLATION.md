@@ -91,7 +91,7 @@ Use this after Presentation Studio is open, the MCP connection is enabled, and t
 ```text
 Connect to the Presentation Studio MCP and work in the currently open project.
 
-First, read the Presentation Studio design contract, check the app status, inventory the authorized project Resources, and inspect the installed ORNL Template Pack. Confirm that you can read the source content - not merely filenames or metadata. If anything required is inaccessible, tell me exactly what must be shared or attached. Do not invent missing content.
+First, read the Presentation Studio design contract, check the app status, then call get_agent_runbook and follow its current next action. Inventory the authorized project Resources and inspect the installed ORNL Template Pack. Confirm that you can read the source content - not merely filenames or metadata. If anything required is inaccessible, tell me exactly what must be shared or attached. Do not invent missing content.
 
 For a source-only project, read every required compatible text Resource completely with get_resource_text, inspect stable layout IDs with get_template_layout_catalog, then call create_studio_presentation once with the complete source-grounded deck plan. Create it without a starter PowerPoint; do not invent one.
 
@@ -117,8 +117,9 @@ Workflow:
 2. Create the presentation in the single central Studio HTML/CSS scene.
 3. Start the complete editable PowerPoint build, then poll get_studio_presentation_build_status until that exact background job reports ready. Do not treat started, measuring, failed, canceled, or superseded as ready.
 4. Inspect the PowerPoint-native contact sheet and every full-size candidate slide.
-5. Run Found issues -> Fixing -> Rechecking original intent. Correct overflow, alignment, hierarchy, spacing, tables, missing imagery, and message drift.
-6. Do not call the presentation ready while any blocker or major visual issue remains.
+5. Run Found issues -> Fixing -> Rechecking original intent. For every slide, compare source strengths, candidate improvements, and candidate regressions. If the candidate is weaker within its preserve, polish, recompose, or rebuild-figure intervention level, the source wins.
+6. Correct overflow, alignment, hierarchy, spacing, tables, missing imagery, deck-system inconsistencies, and message drift. Qualify representative slides from every communication archetype before scaling a pattern across the deck.
+7. Do not call the presentation ready while any blocker or major visual issue remains.
 
 Use your best design judgment and minimize routine questions. Leave the completed central design visible for my review. Do not save or export the final PowerPoint until I explicitly request it.
 ```

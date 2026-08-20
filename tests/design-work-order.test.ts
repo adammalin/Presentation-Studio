@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createSyntheticLegacyDeck } from "../scripts/create-synthetic-fixture";
 import { buildDeckDesignWorkOrder, buildSlideDesignWorkOrder, selectRepresentativeSlides } from "../src/lib/design-work-order";
+import { buildAgentRunbook } from "../src/lib/agent-runbook";
 import { deriveLayoutSemantics } from "../src/lib/layout-semantics";
 import { auditPptx } from "../src/lib/pptx-audit";
 import { compilePresentationScene } from "../src/lib/scene-graph";
@@ -49,7 +50,7 @@ test("slide design work order closes content and binds evidence to scene, templa
   const updatedAt = "2026-08-12T20:00:00.000Z";
   const workOrder = buildSlideDesignWorkOrder({ deck, slideNumber: 1, projectUpdatedAt: updatedAt, templateCatalog: catalog() });
   assert.equal(workOrder.schema, "presentation-studio/design-work-order");
-  assert.equal(workOrder.version, 1);
+  assert.equal(workOrder.version, 2);
   assert.match(workOrder.revision, /render-unavailable:measurement-unavailable$/);
   assert.equal(workOrder.slide.exactVisibleText, deck.audit?.slides[0].text);
   assert.equal(workOrder.closedContentInventory.lockedTextHash, deck.audit?.slides[0].textHash);
@@ -67,6 +68,8 @@ test("slide design work order closes content and binds evidence to scene, templa
   assert.match(workOrder.requiredSequence.join(" "), /addressedThreadIds/);
   assert.match(workOrder.requiredSequence.join(" "), /PowerPoint/i);
   assert.match(workOrder.definitionOfDone, /visibly stronger/i);
+  assert.equal(workOrder.intervention.sourceWins, true);
+  assert.match(workOrder.sourceWinsGate.rule, /source composition remains the baseline/i);
 });
 
 test("source-template work order preserves the detected design system and withholds ORNL-only operations", async () => {
@@ -103,12 +106,27 @@ test("deck work order selects a bounded representative qualification set", async
   }
   const representatives = selectRepresentativeSlides(deck);
   assert.equal(representatives[0].role, "cover");
+  assert.equal(representatives[0].archetype, "cover");
   assert.ok(representatives.some((item) => item.role === "table"));
   assert.equal(new Set(representatives.map((item) => item.slideNumber)).size, representatives.length);
   assert.ok(representatives.length <= 5);
   const workOrder = buildDeckDesignWorkOrder({ deck, projectUpdatedAt: "2026-08-12T20:00:00.000Z", templateCatalog: catalog() });
   assert.equal(workOrder.workOrders.length, representatives.length);
   assert.match(workOrder.executionPolicy, /representative set/i);
+  assert.match(workOrder.archetypeQualification.gate, /every present communication archetype/i);
   assert.equal(workOrder.deckSemanticVisuals.tableColorMap[0]?.role, "accent6");
   assert.equal(workOrder.deckSemanticVisuals.tableColorMap[0]?.occurrences[0]?.cellIds[0], semanticTable?.cells?.[3]?.id);
+  const tableWorkOrder = workOrder.workOrders.find((item) => item.archetype === "table")?.workOrder.tables[0];
+  assert.ok(tableWorkOrder?.sourceRelationalGeometry.normalizedColumnWidths.length);
+  assert.ok(Math.abs((tableWorkOrder?.sourceRelationalGeometry.normalizedColumnWidths.reduce((sum, value) => sum + value, 0) ?? 0) - 1) < 0.0001);
+});
+
+test("agent runbook exposes one source-wins next action and intervention policy", async () => {
+  const deck = await fixtureDeck();
+  const runbook = buildAgentRunbook({ deck, projectUpdatedAt: "2026-08-20T12:00:00.000Z", templateInstalled: true });
+  assert.equal(runbook.schema, "presentation-studio/agent-runbook");
+  assert.equal(runbook.nextAction.tool, "get_studio_composition_plan");
+  assert.ok(runbook.interventions.every((item) => item.sourceWins));
+  assert.match(runbook.operatingRules.join(" "), /Source wins/i);
+  assert.ok(runbook.representativeQualification.slides.some((item) => item.archetype === "table"));
 });

@@ -457,9 +457,10 @@ export interface PresentationScene {
   preservationEnvelope: PowerPointPreservationEnvelope;
 }
 
-export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-metric-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "ornl-title-question-diagram" | "ornl-title-challenges-evidence" | "ornl-title-process-flow" | "template-layout";
+export type StudioLayoutRecipe = "source" | "ornl-title-content" | "ornl-title-two-column" | "ornl-title-card-grid" | "ornl-title-metric-grid" | "ornl-title-table" | "ornl-title-figure-grid" | "ornl-title-objective-columns" | "ornl-title-steps-evidence" | "ornl-title-labeled-figure-grid" | "ornl-title-image-series" | "ornl-title-question-diagram" | "ornl-title-challenges-evidence" | "ornl-title-process-flow" | "template-layout";
+export type StudioDesignArchetype = "cover" | "section" | "assertion-evidence" | "text-led" | "hero-figure" | "comparison" | "image-series" | "portrait-series" | "table" | "data-visualization" | "process-flow" | "technical-diagram" | "conclusion" | "source-preserve";
 export type StudioWebNodeKind = "text" | "image" | "table" | "shape" | "connector" | "native-object";
-export const STUDIO_COMPONENT_ROLES = ["eyebrow", "card-kicker", "card-heading", "card-body", "metric-card", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"] as const;
+export const STUDIO_COMPONENT_ROLES = ["eyebrow", "card-kicker", "card-heading", "card-body", "metric-card", "objective-body", "step-heading", "step-body", "figure-media", "figure-label", "figure-caption", "image-series-media", "image-series-heading", "image-series-body", "technical-annotation", "question-intro", "question-item", "challenge-assertion", "challenge-intro", "challenge-body", "process-icon", "process-input", "process-stage", "process-output", "supporting-copy", "footer-logo", "footer-meta"] as const;
 export type StudioComponentRole = typeof STUDIO_COMPONENT_ROLES[number];
 export type StudioFigureTreatmentMode = "preserve-as-unit" | "preserve-and-frame" | "hybrid-rebuild" | "redraw-candidate";
 export type StudioFigureVerificationStatus = "source-locked" | "needs-content-review" | "verified";
@@ -643,6 +644,12 @@ export interface StudioQualityReview {
   requestedVerdict: "ready" | "revise" | "hold";
   recordedVerdict: "ready" | "revise" | "hold";
   rationale: string;
+  sourceComparison?: {
+    preferred: "source" | "candidate" | "equivalent";
+    sourceStrengths: string[];
+    candidateImprovements: string[];
+    candidateRegressions: string[];
+  };
   objectiveIssues: StudioQualityIssue[];
   visualIssues: StudioQualityIssue[];
   recordedAt: string;
@@ -853,6 +860,8 @@ export interface StudioWebSlide {
     groupedOrUnsupportedTextPresent: boolean;
   };
   sourceRevision: string;
+  designArchetype?: StudioDesignArchetype;
+  intervention?: StudioInterventionDecision;
   recipe: StudioLayoutRecipe;
   targetLayoutId?: string;
   targetLayoutName?: string;
@@ -867,6 +876,17 @@ export interface StudioWebSlide {
   qualityReview?: StudioQualityReview;
   nodes: StudioWebNode[];
   updatedAt: string;
+}
+
+export type StudioInterventionLevel = "preserve" | "polish" | "recompose" | "rebuild-figure";
+
+export interface StudioInterventionDecision {
+  level: StudioInterventionLevel;
+  selectedBy: "automatic" | "human" | "ai";
+  reason: string;
+  sourceWins: true;
+  acceptanceRule: string;
+  selectedAt: string;
 }
 
 export interface StudioWebScene {

@@ -15,6 +15,11 @@ export interface PresentationDesignStandard {
     contentIntegrity: string;
     relationshipPolicy: string;
   };
+  interventionPolicy: {
+    principle: string;
+    levels: Record<"preserve" | "polish" | "recompose" | "rebuild-figure", string>;
+    sourceWinsGate: string[];
+  };
   defaults: {
     profileId: string;
     profileLabel: string;

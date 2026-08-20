@@ -56,6 +56,13 @@ server.registerTool("get_design_contract", {
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, () => success(DESIGN_CONTRACT, designContractMessage()));
 
+server.registerTool("get_agent_runbook", {
+  title: "Get the current Presentation Studio agent runbook",
+  description: "Return the concise current-state workflow for one open deck: non-negotiable ORNL and source-preservation rules, representative communication-archetype qualification set, explicit preserve/polish/recompose/rebuild-figure decisions, deck-consistency status, build and native-review readiness, and exactly one recommended next MCP action. Call this after get_design_contract and list_decks, and again whenever the central scene revision changes. It does not return presentation bytes, change a slide, save, or export.",
+  inputSchema: { deckId: z.string().min(1).max(120).optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_agent_runbook", input, (result) => `Read the current runbook for ${result.deck.name}. Next action: ${result.nextAction.tool}.`));
+
 server.registerTool("get_app_status", {
   title: "Get Presentation Studio status",
   description: "Check whether the local desktop app is open, summarize the active project without reading deck content, and report whether PowerPoint-native render/measurement is ready or blocked by a locked Mac. AI session access may remain off for this status check.",
@@ -104,7 +111,7 @@ server.registerTool("get_studio_web_scene", {
 
 server.registerTool("get_studio_deck_consistency", {
   title: "Review repeated design systems across the Studio deck",
-  description: "Read a deterministic revision-bound review of title-grid outliers, repeated component typography, and related table structural styles across the one canonical Studio scene. Findings identify exact slide and node IDs but make no changes. Use this after individual slide design and before whole-deck qualification; preserve intentional semantic table-color differences and judge final appearance through PowerPoint-native pixels.",
+  description: "Read a deterministic revision-bound review of title-grid outliers, repeated component typography, related table structural styles, and unexplained one-off recipe/intervention patterns within the same communication archetype across the one canonical Studio scene. Findings identify exact slide and node IDs but make no changes. Use this after representative archetype qualification and before whole-deck qualification; preserve intentional semantic table-color differences and judge final appearance through PowerPoint-native pixels.",
   inputSchema: { deckId: z.string().min(1).max(120) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("get_studio_deck_consistency", input, (result) => `Reviewed ${result.review.designedSlideCount} designed slides in ${result.deck.name} and found ${result.review.issueCount} deck-system difference${result.review.issueCount === 1 ? "" : "s"}.`));
@@ -160,10 +167,11 @@ server.registerTool("repair_studio_objective_issues", {
 
 server.registerTool("record_studio_visual_critique", {
   title: "Record a bounded Studio visual-quality pass",
-  description: "Record the AI's visual judgment for the exact Studio scene revision and PowerPoint raster returned by get_studio_slide_critique. Supply only concrete visible issues after comparing original and export-result pixels. A ready verdict is withheld when native blocker or major issues remain, or when the AI reports blocker/major issues. Passes are capped at three; unresolved pass 3 becomes hold for human review. Recording critique metadata does not change slide design geometry, save a project, or export PowerPoint.",
+  description: "Record the AI's visual judgment for the exact Studio scene revision and PowerPoint raster returned by get_studio_slide_critique. Supply concrete source strengths, candidate improvements and regressions, a source/candidate/equivalent preference, and only visible issues after comparing original and export-result pixels. Source wins when the candidate is weaker. A ready verdict is withheld when native blocker or major issues remain, when the AI reports blocker/major issues, or when source is preferred. Passes are capped at three; unresolved pass 3 becomes hold for human review. Recording critique metadata does not change slide design geometry, save a project, or export PowerPoint.",
   inputSchema: {
     deckId: z.string().min(1).max(120), expectedUpdatedAt: z.string().datetime({ offset: true }), expectedSceneRevision: z.string().min(1).max(500), slideNumber: z.number().int().min(1), rasterSha256: z.string().length(64),
     verdict: z.enum(["ready", "revise", "hold"]), rationale: z.string().min(1).max(1_000),
+    sourceComparison: z.object({ preferred: z.enum(["source", "candidate", "equivalent"]), sourceStrengths: z.array(z.string().min(1).max(500)).max(12), candidateImprovements: z.array(z.string().min(1).max(500)).max(12), candidateRegressions: z.array(z.string().min(1).max(500)).max(12) }),
     visualIssues: z.array(z.object({ category: z.enum(["alignment", "spacing", "hierarchy", "figure", "brand", "legibility", "consistency", "other"]), severity: z.enum(["blocker", "major", "minor"]), nodeIds: z.array(z.string().min(1).max(180)).max(30).default([]), message: z.string().min(1).max(1_000), recommendation: z.string().min(1).max(1_000), autoFixable: z.boolean().default(false) })).max(30).default([]),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -226,11 +234,17 @@ server.registerTool("get_qualification_contact_sheet", {
 
 server.registerTool("record_deck_qualification_review", {
   title: "Record revision-bound full-deck visual review",
-  description: "Record visual verdicts for 1–40 exact source/candidate slide pairs after inspecting their clean full-resolution PowerPoint images. Every verdict is bound to both raster hashes, the candidate SHA-256, and the scene revision. A ready verdict is withheld when objective issues or major visual findings remain. Authorized-AI retries are capped at three before hold. This writes only private qualification metadata; it does not change slide design, save the project, export PowerPoint, or constitute formal ORNL approval.",
+  description: "Record visual verdicts for 1–40 exact source/candidate slide pairs after inspecting their clean full-resolution PowerPoint images. Every review must state source strengths, candidate improvements and regressions, and whether source, candidate, or equivalent is preferred. The source wins automatically when the candidate is weaker. Every verdict is bound to both raster hashes, the candidate SHA-256, and the scene revision. A ready verdict is withheld when objective issues, major visual findings, or a source-preferred comparison remain. Authorized-AI retries are capped at three before hold. This writes only private qualification metadata; it does not change slide design, save the project, export PowerPoint, or constitute formal ORNL approval.",
   inputSchema: {
     deckId: z.string().min(1).max(120), expectedSceneRevision: z.string().min(1).max(500), qualificationId: z.string().min(1).max(180), candidateSha256: z.string().length(64),
     reviews: z.array(z.object({
       slideNumber: z.number().int().min(1), sourceRasterSha256: z.string().length(64), candidateRasterSha256: z.string().length(64), verdict: z.enum(["ready", "revise", "hold"]), rationale: z.string().min(1).max(2_000),
+      sourceComparison: z.object({
+        preferred: z.enum(["source", "candidate", "equivalent"]),
+        sourceStrengths: z.array(z.string().min(1).max(500)).max(12),
+        candidateImprovements: z.array(z.string().min(1).max(500)).max(12),
+        candidateRegressions: z.array(z.string().min(1).max(500)).max(12),
+      }),
       findings: z.array(z.object({ category: z.enum(["hierarchy", "alignment", "spacing", "layout-balance", "table-quality", "figure-clarity", "template-fidelity", "deck-consistency", "source-intent", "other"]), severity: z.enum(["major", "minor"]), message: z.string().min(1).max(1_000), repairRoute: z.enum(["mcp-design", "engine-code", "image-concept", "human-review"]) })).max(12).default([]),
     })).min(1).max(40),
   },
@@ -260,7 +274,7 @@ server.registerTool("get_resource_preview", {
 
 server.registerTool("create_studio_presentation", {
   title: "Create a source-grounded native Studio presentation",
-  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from source excerpts and image Resources automatically shared by the app's single AI access switch. The first slide must use an approved ORNL title layout; later slides use shared Studio recipes or named converted Template Pack layouts. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene, crash-checkpoints that project revision, and leaves it visible for review; it does not save a user-named project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
+  description: "Create a brand-new editable 16:9 presentation in the one canonical native Studio JSON/HTML/CSS scene from source excerpts and image Resources automatically shared by the app's single AI access switch. The first slide must use an approved ORNL title layout; it is sacred, and Studio always applies it. For later slides, specify the communication archetype and omit recipe to let Studio select an exact compatible native ORNL layout contract or the controlled shared responsive recipe; provide recipe only for a deliberate override. Every slide and node retains Resource hashes and exact source excerpts. This creates an embedded editable PowerPoint source plus the central Studio scene, crash-checkpoints that project revision, and leaves it visible for review; it does not save a user-named project file or export PowerPoint to a user destination. Read all required Resource text and the Template Pack catalog first.",
   inputSchema: {
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     name: z.string().min(1).max(240),
@@ -270,12 +284,13 @@ server.registerTool("create_studio_presentation", {
       title: z.string().min(1).max(300),
       subtitle: z.string().min(1).max(600).optional(),
       body: z.array(z.string().min(1).max(1_500)).max(12).default([]),
-      recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+      archetype: z.enum(["cover", "section", "assertion-evidence", "text-led", "hero-figure", "comparison", "image-series", "portrait-series", "table", "data-visualization", "process-flow", "technical-diagram", "conclusion"]).optional(),
+      recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-image-series", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]).optional(),
       layoutId: z.string().min(1).max(180).optional(),
-      imageResourceIds: z.array(z.string().min(1).max(180)).max(4).default([]),
+      imageResourceIds: z.array(z.string().min(1).max(180)).max(14).default([]),
       table: z.object({ headers: z.array(z.string().min(1).max(500)).min(1).max(12), rows: z.array(z.array(z.string().max(2_000)).min(1).max(12)).max(40) }).optional(),
       sourceReferences: z.array(z.object({ resourceId: z.string().min(1).max(180), exactExcerpt: z.string().min(1).max(20_000) })).min(1).max(12),
-      rationale: z.string().min(1).max(1_000),
+      rationale: z.string().min(1).max(1_000).optional(),
     })).min(1).max(80),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -353,7 +368,7 @@ server.registerTool("reconstruct_studio_concept", {
     expectedSceneRevision: z.string().min(1).max(500),
     slideNumber: z.number().int().min(1),
     referenceId: z.string().min(1).max(180),
-    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
+    recipe: z.enum(["ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-image-series", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow"]).optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, (input) => call("reconstruct_studio_concept", input, (result) => `Reconstructed concept ${result.referenceId} into ${result.mappedNodeIds.length} editable source-bound element${result.mappedNodeIds.length === 1 ? "" : "s"} on Studio slide ${result.slideNumber}. Build and inspect the PowerPoint-native result before review; nothing was saved or exported.`));
@@ -390,6 +405,17 @@ server.registerTool("recommend_slide_layouts", {
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, (input) => call("recommend_slide_layouts", input, (result) => `Ranked ${result.recommendations.length} approved layouts for slide ${result.slide.number} of ${result.deck.name}.`));
 
+server.registerTool("get_studio_composition_plan", {
+  title: "Plan one slide as an ORNL communication archetype",
+  description: "Classify one slide by its communication job—cover, assertion-evidence, text-led, hero figure, comparison, image series, portrait series, table, data visualization, process flow, technical diagram, conclusion, or source preserve—then return the safest high-level Studio recipe, compatible native ORNL layout contract, and explicit preserve/polish/recompose/rebuild-figure intervention. Use this before staging design. The planner prefers an exact approved native layout only when all source relationships fit; otherwise it chooses a shared responsive Studio archetype on the neutral native ORNL base. Source always wins when a candidate is not visibly stronger. This is a design plan, not visual approval.",
+  inputSchema: {
+    deckId: z.string().min(1).max(120),
+    slideNumber: z.number().int().min(1),
+    archetype: z.enum(["cover", "section", "assertion-evidence", "text-led", "hero-figure", "comparison", "image-series", "portrait-series", "table", "data-visualization", "process-flow", "technical-diagram", "conclusion", "source-preserve"]).optional(),
+  },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, (input) => call("get_studio_composition_plan", input, (result) => `Planned slide ${result.slide.number} of ${result.deck.name} as ${result.plan.archetype} using ${result.plan.strategy}.`));
+
 server.registerTool("get_slide_design_work_order", {
   title: "Read one versioned AI slide-design work order",
   description: "Assemble the authoritative Current PowerPoint evidence, exact locked copy, hybrid scene objects and allowed operations, slide findings, submitted comments, ORNL rules, and ranked Template Pack layouts into one revision-bound work order. Call this before designing a slide; it is the primary Inspect and Diagnose input for the iterative visual-design loop.",
@@ -406,10 +432,10 @@ server.registerTool("get_slide_inspection_packet", {
 
 server.registerTool("get_deck_design_work_order", {
   title: "Read the representative deck-design qualification set",
-  description: "Select up to five representative slides—cover, text-led content, diagram, image-heavy, and dense table—and return a complete versioned work order for each plus the deck-wide semantic table-color map. Use this bounded set to prove the design loop before expanding across the full deck. Exact source content is included, so visible AI session access is required.",
+  description: "Select up to eight high-complexity representative slides, one for each communication archetype present, and return a complete versioned work order for each plus archetype coverage and the deck-wide semantic table-color map. Qualify this bounded set before propagating any layout pattern across the full deck. Exact source content is included, so visible AI session access is required.",
   inputSchema: { deckId: z.string().min(1).max(120) },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, (input) => call("get_deck_design_work_order", input, (result) => `Built ${result.workOrders.length} representative design work orders for ${result.deck.name}.`));
+}, (input) => call("get_deck_design_work_order", input, (result) => `Built ${result.workOrders.length} communication-archetype qualification work orders for ${result.deck.name}.`));
 
 server.registerTool("get_deck_contact_sheet", {
   title: "Review a PowerPoint-native deck contact sheet",
@@ -526,15 +552,18 @@ server.registerTool("get_design_thread", {
 
 server.registerTool("stage_studio_web_design", {
   title: "Recompose a slide in Studio and stage editable PowerPoint",
-  description: "For an ornl-studio target only, update the one canonical Studio presentation by making a substantive layout decision with a shared HTML/CSS recipe or compatible converted ORNL Template Pack layout, then compile it through fresh-composition. Converted layouts remain vocabulary in the same scene, not alternate proposals. This tool rejects source-template-cleanup decks because sponsor/custom masters and layouts must instead use source-bound proposals unless the user explicitly selected ORNL cross-template conversion. HARD RULE: an existing populated ORNL title slide is sacred and may only use source. Preserve meaning-bearing UI, code, labels, values, arrows, sequence, and causality. Optional nodeFrames are final refinements, not a layout substitute. Judge the compiled result through PowerPoint-native visual QA. The project revision is crash-checkpointed automatically; no user-named project file or export is created or overwritten.",
+  description: "For an ornl-studio target only, update the one canonical Studio presentation by making a substantive layout decision from a communication archetype, then compile it through fresh-composition. Call get_studio_composition_plan first, or provide archetype here and omit recipe to let the planner choose a compatible native ORNL layout or shared responsive Studio archetype. Converted layouts remain vocabulary in the same scene, not alternate proposals. This tool rejects source-template-cleanup decks because sponsor/custom masters and layouts must instead use source-bound proposals unless the user explicitly selected ORNL cross-template conversion. HARD RULE: an existing populated ORNL title slide is sacred and may only use source. Preserve meaning-bearing UI, code, labels, values, arrows, sequence, causality, and repeated source relationships. For image-heading-evidence groups, never flatten the groups into stacked text and tiny thumbnails; likewise, do not flatten technical relationships into unrelated text. Optional nodeFrames are final refinements, not a layout substitute. Judge the compiled result through PowerPoint-native visual QA; an intermediate recipe canvas is not reviewable output. A technical build is only a candidate and cannot become exportable until its exact raster passes revision-bound visual review. The project revision is crash-checkpointed automatically; no user-named project file or export is created or overwritten.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
     slideNumber: z.number().int().min(1),
-    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]),
+    archetype: z.enum(["cover", "section", "assertion-evidence", "text-led", "hero-figure", "comparison", "image-series", "portrait-series", "table", "data-visualization", "process-flow", "technical-diagram", "conclusion", "source-preserve"]).optional(),
+    interventionLevel: z.enum(["preserve", "polish", "recompose", "rebuild-figure"]).optional(),
+    interventionRationale: z.string().min(1).max(1_000).optional(),
+    recipe: z.enum(["source", "ornl-title-content", "ornl-title-two-column", "ornl-title-card-grid", "ornl-title-metric-grid", "ornl-title-table", "ornl-title-figure-grid", "ornl-title-objective-columns", "ornl-title-steps-evidence", "ornl-title-labeled-figure-grid", "ornl-title-image-series", "ornl-title-question-diagram", "ornl-title-challenges-evidence", "ornl-title-process-flow", "template-layout"]).optional(),
     compilerMode: z.literal("fresh-composition").default("fresh-composition"),
     layoutId: z.string().min(1).max(120).optional(),
-    rationale: z.string().min(1).max(1000),
+    rationale: z.string().min(1).max(1000).optional(),
     nodeFrames: z.array(z.object({
       nodeId: z.string().min(1).max(180),
       xInches: z.number().min(0).max(20),
