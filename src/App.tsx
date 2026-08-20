@@ -2021,6 +2021,8 @@ export default function App() {
         const intervention = resolveStudioIntervention(deck, slideNumber, studioSlide, plan.archetype);
         return {
           updatedAt: current.project.updatedAt,
+          designStandardVersion: PRESENTATION_DESIGN_STANDARD.version,
+          sceneDesignStandardVersion: scene.designSystem.standardVersion,
           deck: { id: deck.id, name: deck.name },
           slide: { number: slideNumber, title: auditedSlide?.title, sceneRevision: scene.revision, slideRevision: studioSlide.updatedAt },
           profile,
@@ -3174,6 +3176,7 @@ export default function App() {
         return { updatedAt: current.project.updatedAt, thread, deck: deck ? { id: deck.id, name: deck.name, targetTemplateId: deck.targetTemplateId } : null, slide: slide ? { id: slide.id, number: slide.number, outputSlideNumber: thread.outputSlideNumber, title: slide.title, textHash: slide.textHash, objects: { tables: slide.tableCount, pictures: slide.pictureCount, charts: slide.chartCount } } : null, instruction: thread.outputSlideNumber ? "This comment is anchored to one exact materialized output slide. Read the current source-scene revision, rebuild it, and inspect that output number in the PowerPoint-native preview or qualification evidence before staging a bounded fix." : "Read the current revision and get_slide_render before staging a bounded fix. Do not guess if the anchor no longer maps unambiguously." };
       }
       if (request.operation === "stage_studio_web_design") {
+        if (request.input.designStandardVersion !== PRESENTATION_DESIGN_STANDARD.version) throw new Error("The Presentation Design Standard changed. Read get_design_contract and get_studio_composition_plan again before staging Studio design.");
         if (request.input.expectedUpdatedAt !== current.project.updatedAt) throw new Error("The project changed. Read get_studio_web_scene again before staging a Studio design.");
         const deck = current.decks.find((item) => item.id === request.input.deckId);
         if (!deck?.audit || !deck.scene) throw new Error("The requested deck does not have a current PowerPoint audit and preservation scene.");
@@ -3186,6 +3189,7 @@ export default function App() {
         if (isProtectedOrnlTemplateSlide(deck, slideNumber) && !isUnqualifiedConvertedOrnlTitle(deck, slideNumber)) throw new Error(`The approved ORNL template composition on slide ${slideNumber} is sacred and locked. Its source or converted-template design, artwork, content bindings, typography, and geometry cannot be recomposed or restyled.`);
         const catalog = await getOrBuildSlideCatalog(deck, current);
         const baseScene = deck.studioScene ?? compileStudioWebScene(deck, catalog);
+        if (baseScene.designSystem.standardVersion !== PRESENTATION_DESIGN_STANDARD.version) throw new Error(`The central Studio scene uses design standard ${baseScene.designSystem.standardVersion}; the active app uses ${PRESENTATION_DESIGN_STANDARD.version}. Let Presentation Studio upgrade the scene, then read get_studio_composition_plan again.`);
         const studioSourceSlide = baseScene.slides.find((slide) => slide.slideNumber === slideNumber);
         if (!studioSourceSlide) throw new Error("The requested slide is unavailable in the central Studio scene.");
         const rawArchetype = typeof request.input.archetype === "string" ? request.input.archetype : undefined;
@@ -3313,6 +3317,7 @@ export default function App() {
           setActiveView("studio");
           return {
             projectUpdatedAt: next.project.updatedAt,
+            designStandardVersion: PRESENTATION_DESIGN_STANDARD.version,
             studioSceneRevision: studioScene.revision,
             compilerMode,
             compositionPlan,

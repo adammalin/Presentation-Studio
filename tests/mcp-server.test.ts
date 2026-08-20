@@ -64,6 +64,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(reconstructConceptTool?.description ?? "", /rather than merely shrinking type/i);
     assert.equal(reconstructConceptTool?.annotations?.destructiveHint, false);
     const compositionPlanTool = result.tools.find((tool) => tool.name === "get_studio_composition_plan");
+    assert.match(compositionPlanTool?.description ?? "", /exact Presentation Design Standard version/i);
     assert.match(compositionPlanTool?.description ?? "", /communication job/i);
     assert.match(compositionPlanTool?.description ?? "", /exact approved native layout/i);
     assert.equal(compositionPlanTool?.annotations?.readOnlyHint, true);
@@ -248,6 +249,8 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     assert.match(studioStageTool?.description ?? "", /same scene, not alternate proposals/i);
     assert.match(studioStageTool?.description ?? "", /PowerPoint-native visual QA/i);
     assert.match(studioStageTool?.description ?? "", /substantive layout decision/i);
+    assert.match(studioStageTool?.description ?? "", /echo its exact designStandardVersion/i);
+    assert.match(JSON.stringify(studioStageTool?.inputSchema), /designStandardVersion/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-two-column/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-card-grid/);
     assert.match(JSON.stringify(studioStageTool?.inputSchema), /ornl-title-objective-columns/);
