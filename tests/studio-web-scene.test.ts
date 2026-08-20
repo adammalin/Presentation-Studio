@@ -301,6 +301,26 @@ test("a dense peer-logo field stays editable and preserves relative mark scale i
   assert.equal(designedLogos.every((node) => Math.abs(node.frame.width / node.frame.height - node.sourceFrame.width / node.sourceFrame.height) < .001), true);
   assert.equal(slide.figureTreatments.some((candidate) => candidate.id.startsWith("studio-auto-technical-overview")), false);
   assert.equal(preflightStudioScene(designed).issues.some((issue) => issue.category === "legibility"), false);
+  assert.throws(() => updateStudioFigureTreatment(designed, slide.slideNumber, {
+    id: "flatten-logo-wall",
+    nodeIds: designedLogos.map((node) => node.id),
+    mode: "preserve-as-unit",
+    verificationStatus: "source-locked",
+    intentSummary: "Flatten the partner field",
+    informationInventory: ["Every partner mark"],
+    invariants: ["Preserve each identity"],
+    rationale: "Regression guard",
+  }), /independent editable contained images/i);
+  assert.throws(() => updateStudioFigureTreatment(designed, slide.slideNumber, {
+    id: "flatten-hidden-logo-carrier",
+    nodeIds: [carrier.id],
+    mode: "preserve-as-unit",
+    verificationStatus: "source-locked",
+    intentSummary: "Flatten the legacy carrier around every partner mark",
+    informationInventory: ["Every partner mark"],
+    invariants: ["Preserve each identity"],
+    rationale: "Regression guard for an aggregate carrier selection",
+  }), /independent editable contained images/i);
 });
 
 test("question-and-diagram recipe atomizes exact questions and preserves the complete native evidence unit", async () => {
@@ -422,7 +442,9 @@ test("dense year-led editorial records remain one collision-free grid even when 
     const column = index % 6;
     const row = Math.floor(index / 6);
     const year = index < 4 ? "2026" : index < 10 ? "2025" : "2024";
-    const body = `Award record ${index + 1} preserves its complete title, researchers, collaborators, technical qualifier, and attribution without rewriting or omission.`;
+    const awardTitle = `Award record ${index + 1} preserves its complete technical title`;
+    const attribution = "Researchers, collaborators, technical qualifier, and attribution remain exact without rewriting or omission.";
+    const body = `${awardTitle}\n${attribution}`;
     return {
       ...seed,
       id: `award-${index + 1}`,
@@ -434,11 +456,12 @@ test("dense year-led editorial records remain one collision-free grid even when 
       name: `Award record ${index + 1}`,
       kind: "text",
       role: index === 7 ? "caption" : "body",
-      text: `${year} ${body}`,
+      text: `${year}\n${body}`,
       exactContent: true,
       sourceParagraphs: [
         { index: 1, text: year, textHash: `year-${index}`, characterCount: year.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [12] },
-        { index: 2, text: body, textHash: `body-${index}`, characterCount: body.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
+        { index: 2, text: awardTitle, textHash: `title-${index}`, characterCount: awardTitle.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
+        { index: 3, text: attribution, textHash: `attribution-${index}`, characterCount: attribution.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
       ],
       sourceFrame: { x: emu(.31 + column * 2.16), y: emu(1.26 + row * 2.45), width: emu(2.02), height: emu(2.04), rotation: 0 },
       frame: { x: emu(.31 + column * 2.16), y: emu(1.26 + row * 2.45), width: emu(2.02), height: emu(2.04), rotation: 0 },
@@ -479,6 +502,10 @@ test("dense year-led editorial records remain one collision-free grid even when 
     assert.equal(overlaps, false, `${designedRecords[left].id} overlaps ${designedRecords[right].id}`);
   }
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("editorial-record-grid") && component.id.endsWith("-outline")).length, 12);
+  const rebuilt = await buildStudioCompositionPptx({ ...designed, slides: [slide] }, { catalog, strict: false, title: "Editorial hierarchy" });
+  const slideXml = await (await JSZip.loadAsync(rebuilt.bytes)).file("ppt/slides/slide1.xml")!.async("text");
+  assert.equal(slideXml.match(/b="1"/g)?.length, 25); // Two hierarchy runs per record plus the slide title.
+  assert.equal(slideXml.match(/<a:t>Researchers, collaborators, technical qualifier, and attribution remain exact without rewriting or omission\.<\/a:t>/g)?.length, 12);
 });
 
 test("repeated sponsor metric groups become an editable ORNL metric grid instead of a preserved legacy figure", async () => {
@@ -538,7 +565,27 @@ test("repeated sponsor metric groups become an editable ORNL metric grid instead
     visible: true,
     locked: true,
   }));
-  const source = { ...scene, slides: [{ ...sourceSlide, nodes: [title, ...metrics, ...groups] }] };
+  const icons = Array.from({ length: 10 }, (_, index): StudioWebNode => ({
+    ...seed,
+    id: `source-icon-${index + 1}`,
+    sourceObjectId: `source-icon-${index + 1}`,
+    sourceShapeId: `source-icon-${index + 1}`,
+    sourceBinding: "catalog-derived",
+    name: `Source icon ${index + 1}`,
+    kind: "image",
+    role: "image",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    mediaPart: `icon-${index + 1}.png`,
+    exactContent: false,
+    sourceFrame: { x: emu(index % 2 ? 6.61 : .73), y: emu(1.34 + Math.floor(index / 2) * 1.02), width: emu(.68), height: emu(.68), rotation: 0 },
+    frame: { x: emu(index % 2 ? 6.61 : .73), y: emu(1.34 + Math.floor(index / 2) * 1.02), width: emu(.68), height: emu(.68), rotation: 0 },
+    zIndex: 50 + index,
+    visible: true,
+    locked: true,
+  }));
+  const source = { ...scene, slides: [{ ...sourceSlide, nodes: [title, ...metrics, ...groups, ...icons] }] };
   assert.equal(recommendedStudioRecipe(source.slides[0]), "ornl-title-metric-grid");
   const slide = recomposeStudioWebSlide(source, sourceSlide.slideNumber).slides[0];
   const metricCards = slide.nodes.filter((node) => node.component?.role === "metric-card");
@@ -548,6 +595,7 @@ test("repeated sponsor metric groups become an editable ORNL metric grid instead
   assert.equal(groups.every((group) => slide.nodes.find((node) => node.id === group.id)?.visible === true), true);
   const iconTreatments = slide.figureTreatments.filter((treatment) => treatment.id.startsWith("studio-auto-metric-icon-"));
   assert.equal(iconTreatments.length, metricTexts.length);
+  assert.equal(icons.every((icon) => iconTreatments.some((treatment) => treatment.nodeIds.includes(icon.id))), true);
   assert.equal(slide.figureTreatments.every((treatment) => treatment.crop && treatment.lockAspectRatio), true);
   assert.equal(metricCards.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 16), true);
   for (const group of groups) {
@@ -559,10 +607,20 @@ test("repeated sponsor metric groups become an editable ORNL metric grid instead
   }
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("studio-metric-") && component.id.endsWith("-surface")).length, metricTexts.length);
   assert.equal(studioGeneratedComponents(slide).some((component) => component.id.includes("studio-auto") || component.lineWidthPt > 0), false);
+  const onePixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=";
+  const rebuilt = await buildStudioCompositionPptx({ ...source, slides: [slide] }, {
+    catalog,
+    sourceFigureRasters: Object.fromEntries(iconTreatments.map((treatment) => [treatment.id, { data: onePixel, width: 1, height: 1 }])),
+    strict: false,
+  });
+  assert.equal(rebuilt.imageCount, iconTreatments.length);
+  assert.equal(icons.some((icon) => rebuilt.renderedNodeIds.includes(icon.id)), false);
+  assert.deepEqual(rebuilt.renderedFigureTreatmentIds.sort(), iconTreatments.map((treatment) => treatment.id).sort());
 
   const first = iconTreatments[0];
   const second = iconTreatments[1];
   let withIndependentCrops = updateStudioFigureTreatment({ ...source, slides: [slide] }, slide.slideNumber, { ...first, id: "manual-icon-left" });
+  assert.equal(withIndependentCrops.slides[0].figureTreatments.some((treatment) => treatment.id.startsWith("studio-auto-") && treatment.nodeIds.some((id) => first.nodeIds.includes(id))), false);
   withIndependentCrops = updateStudioFigureTreatment(withIndependentCrops, slide.slideNumber, { ...second, id: "manual-icon-right", nodeIds: first.nodeIds });
   assert.deepEqual(withIndependentCrops.slides[0].figureTreatments.filter((treatment) => treatment.id.startsWith("manual-icon-")).map((treatment) => treatment.id).sort(), ["manual-icon-left", "manual-icon-right"]);
   const changedRecipe = recomposeStudioWebSlide(withIndependentCrops, slide.slideNumber, "ornl-title-two-column").slides[0];
@@ -1074,8 +1132,8 @@ test("table continuation planning repeats headers and never splits a merged body
   const columns = 2;
   const cells: NonNullable<StudioWebNode["table"]>["cells"] = [];
   for (let row = 1; row <= rows; row += 1) {
-    if (row !== 5) cells.push({ id: `continuation-r${row}c1`, row, column: 1, rowSpan: row === 4 ? 2 : 1, columnSpan: 1, text: `R${row}C1` });
-    cells.push({ id: `continuation-r${row}c2`, row, column: 2, rowSpan: 1, columnSpan: 1, text: `R${row}C2` });
+    cells.push({ id: `continuation-r${row}c1`, row, column: 1, rowSpan: 1, columnSpan: 1, text: `R${row}C1` });
+    if (row !== 5) cells.push({ id: `continuation-r${row}c2`, row, column: 2, rowSpan: row === 4 ? 2 : 1, columnSpan: 1, text: `R${row}C2` });
   }
   const denseTable: StudioWebNode = {
     ...sourceTable,
@@ -1137,6 +1195,62 @@ test("table continuation planning repeats headers and never splits a merged body
   assert.equal(audit.slideCount, 4);
   assert.equal(audit.tables.length, 4);
   assert.equal(audit.tables.every((table) => (table.cells ?? []).some((cell) => cell.text === "R1C1") && (table.cells ?? []).some((cell) => cell.text === "R1C2")), true);
+});
+
+test("table continuation repeats a concise leftmost merged context label across otherwise safe body segments", async () => {
+  const { deck, catalog } = await fixture();
+  let scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides.find((slide) => slide.nodes.some((node) => node.kind === "table" && node.table));
+  const sourceTable = sourceSlide?.nodes.find((node) => node.kind === "table" && node.table);
+  assert.ok(sourceSlide && sourceTable?.table);
+  const contextId = "leadership-context";
+  const rows = 5;
+  const cells: NonNullable<StudioWebNode["table"]>["cells"] = [
+    { id: contextId, row: 1, column: 1, rowSpan: rows, columnSpan: 1, text: "Leadership goal" },
+    { id: "header-quarter", row: 1, column: 2, rowSpan: 1, columnSpan: 1, text: "Quarter" },
+    { id: "header-activity", row: 1, column: 3, rowSpan: 1, columnSpan: 1, text: "Activity" },
+  ];
+  for (let row = 2; row <= rows; row += 1) {
+    cells.push({ id: `quarter-${row}`, row, column: 2, rowSpan: 1, columnSpan: 1, text: `Q${row - 1}` });
+    cells.push({ id: `activity-${row}`, row, column: 3, rowSpan: 1, columnSpan: 1, text: `Exact activity ${row - 1} ${"technical evidence ".repeat(18)}` });
+  }
+  const denseTable: StudioWebNode = {
+    ...sourceTable,
+    id: "context-continuation-table",
+    sourceObjectId: "context-continuation-table",
+    sourceShapeId: "context-continuation-table",
+    table: {
+      rows,
+      columns: 3,
+      cells,
+      design: {
+        ...resolvedStudioTableDesign(sourceTable),
+        headerRows: 1,
+        columnWidths: [.18, .16, .66],
+        rowHeights: Array.from({ length: rows }, () => 1 / rows),
+        cellStyles: [],
+      },
+    },
+  };
+  scene = {
+    ...scene,
+    slides: scene.slides.map((slide) => slide.slideNumber !== sourceSlide.slideNumber ? slide : {
+      ...slide,
+      recipe: "ornl-title-table",
+      status: "designed",
+      nodes: slide.nodes.map((node) => node.id === sourceTable.id ? denseTable : node),
+    }),
+  };
+  const result = planStudioTableContinuation(scene, { slideNumber: sourceSlide.slideNumber, tableNodeId: denseTable.id, maximumBodyRowsPerSlide: 1 });
+  assert.equal(result.plan.status, "ready");
+  assert.equal(result.plan.segments.length, 4);
+  assert.equal(result.plan.segments.every((segment) => segment.sourceCellIds.includes(contextId)), true);
+  const targetScene = { ...result.scene, slides: result.scene.slides.filter((slide) => slide.slideNumber === sourceSlide.slideNumber) };
+  const rebuilt = await buildStudioCompositionPptx(targetScene, { catalog, strict: false, title: "Repeated context continuation" });
+  assert.equal(rebuilt.slideCount, 4);
+  const audit = await auditPptx(rebuilt.bytes);
+  assert.equal(audit.tables.length, 4);
+  assert.equal(audit.tables.every((table) => table.cells?.some((cell) => cell.text === "Leadership goal")), true);
 });
 
 test("verified Studio connector authoring binds stable endpoints and exports one editable PowerPoint connector", async () => {
@@ -1220,6 +1334,54 @@ test("fresh composition carries a disclosed complex source figure as one PowerPo
   const after = await auditPptx(rebuilt.bytes);
   assert.equal(after.pictures.some((picture) => picture.name.startsWith("Source-locked · Technical schematic")), true);
   assert.equal(rebuilt.warnings.some((warning) => warning.includes("source-locked PowerPoint-rendered evidence unit from an object-isolated native render")), true);
+  assert.deepEqual(rebuilt.renderedFigureTreatmentIds, ["source-locked-schematic"]);
+});
+
+test("source-locked figure treatments replace constituent image layers instead of duplicating them", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides[0];
+  const seed = sourceSlide.nodes[0];
+  const imageNode: StudioWebNode = {
+    ...seed,
+    id: "locked-source-image",
+    sourceObjectId: "locked-source-image",
+    sourceShapeId: "locked-source-image",
+    sourceBinding: "editable-object",
+    name: "Locked source image",
+    kind: "image",
+    role: "image",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    mediaPart: "locked.png",
+    sourceFrame: { x: 914_400, y: 1_371_600, width: 3_657_600, height: 2_743_200, rotation: 0 },
+    frame: { x: 1_828_800, y: 1_371_600, width: 5_486_400, height: 4_114_800, rotation: 0 },
+    visible: true,
+    locked: false,
+    exactContent: false,
+  };
+  const treatment = {
+    id: "locked-source-figure",
+    nodeIds: [imageNode.id],
+    mode: "preserve-as-unit" as const,
+    verificationStatus: "source-locked" as const,
+    intentSummary: "One authoritative source figure",
+    informationInventory: ["Every source pixel"],
+    invariants: ["No duplicate member layer"],
+    rationale: "Use one visible evidence authority.",
+  };
+  const scene: StudioWebScene = { ...source, slides: [{ ...sourceSlide, status: "designed", recipe: "ornl-title-two-column", nodes: [imageNode], figureTreatments: [treatment] }] };
+  const onePixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=";
+  const rebuilt = await buildStudioCompositionPptx(scene, {
+    catalog: { ...catalog, media: { ...catalog.media, "locked.png": onePixel } },
+    sourceSlideRasters: { [sourceSlide.slideNumber]: { data: onePixel, width: 1, height: 1 } },
+    sourceFigureRasters: { [treatment.id]: { data: onePixel, width: 1, height: 1 } },
+    strict: false,
+  });
+  assert.equal(rebuilt.imageCount, 1);
+  assert.equal(rebuilt.renderedNodeIds.includes(imageNode.id), false);
+  assert.deepEqual(rebuilt.renderedFigureTreatmentIds, [treatment.id]);
 });
 
 test("fresh composition stops before writing a slide whose grouped or unsupported text is not completely mapped", async () => {

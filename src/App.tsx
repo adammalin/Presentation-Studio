@@ -2329,7 +2329,7 @@ export default function App() {
         const sourceRender = await getOrBuildNativeRender(deck, "current", current);
         const sourceImage = sourceRender?.status === "ready" ? sourceRender.slides.find((slide) => slide.number === slideNumber) : undefined;
         if (!sourceImage || !exportImage) throw new Error("Both authoritative original and export-result images are required for Studio critique.");
-        const critique = critiqueStudioSlide(deck.studioScene, slideNumber, preview.nativeMeasurement);
+        const critique = critiqueStudioSlide(deck.studioScene, slideNumber, preview.nativeMeasurement, preview);
         const conceptImages = [] as Array<{ label: string; representation: "concept"; data: string; mimeType: "image/png"; width: number; height: number; sha256: string; referenceId: string; approvedInfluences: string[] }>;
         for (const reference of (studioSlide.conceptReferences ?? []).slice(0, 2)) {
           const resource = current.resources.find((item) => item.id === reference.resourceId && item.sha256 === reference.resourceSha256 && item.mcpAccess === "preview");
@@ -2403,7 +2403,7 @@ export default function App() {
         if (preview?.slideCount !== 1) throw new Error("A multi-slide table continuation must be reviewed output-by-output through whole-deck qualification; one source-slide raster verdict cannot approve multiple PowerPoint slides.");
         const exportImage = preview?.nativeRender?.status === "ready" ? preview.nativeRender.slides[0] : undefined;
         if (!preview || preview.sceneRevision !== deck.studioScene.revision || preview.slideUpdatedAt !== studioSlide.updatedAt || preview.nativeMeasurement?.status !== "ready" || !exportImage || request.input.rasterSha256 !== exportImage.sha256) throw new Error("The Studio export raster changed. Request a fresh critique before recording visual judgment.");
-        const critique = critiqueStudioSlide(deck.studioScene, slideNumber, preview.nativeMeasurement);
+        const critique = critiqueStudioSlide(deck.studioScene, slideNumber, preview.nativeMeasurement, preview);
         const rawVisualIssues = Array.isArray(request.input.visualIssues) ? request.input.visualIssues as Array<Record<string, unknown>> : [];
         const visualIssues: StudioQualityIssue[] = rawVisualIssues.map((raw, index) => ({
           id: `ai-visual-${index + 1}`,

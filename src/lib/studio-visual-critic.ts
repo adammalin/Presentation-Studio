@@ -196,7 +196,7 @@ function constraintDelta(constraint: StudioLayoutConstraint, nodes: Map<string, 
   return 0;
 }
 
-export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, measurement: NativeMeasurementResult): StudioVisualCritique {
+export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, measurement: NativeMeasurementResult, coverage?: { renderedNodeIds?: readonly string[]; renderedFigureTreatmentIds?: readonly string[] }): StudioVisualCritique {
   if (measurement.status !== "ready" || measurement.authority !== "powerpoint-native") throw new Error("Studio visual critique requires the exact slide revision measured by Microsoft PowerPoint.");
   const slide = scene.slides.find((item) => item.slideNumber === slideNumber);
   if (!slide) throw new Error(`Slide ${slideNumber} is unavailable in the current Studio scene.`);
@@ -207,6 +207,17 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
   const reviewVisible = visible.filter((node) => !sourceLocked.has(node.id));
   const nodes = new Map(reviewVisible.map((node) => [node.id, node]));
   const safe = (scene.rhythm?.safeMarginPt ?? 18) * PT;
+
+  if (coverage) {
+    const renderedNodeIds = new Set(coverage.renderedNodeIds ?? []);
+    const renderedFigureTreatmentIds = new Set(coverage.renderedFigureTreatmentIds ?? []);
+    const uncoveredMedia = reviewVisible.filter((node) => node.kind === "image" && !renderedNodeIds.has(node.id));
+    if (uncoveredMedia.length) add({ category: "figure", severity: "blocker", source: "scene", nodeIds: uncoveredMedia.map((node) => node.id), message: `${uncoveredMedia.length} visible source image${uncoveredMedia.length === 1 ? " is" : "s are"} absent from the editable PowerPoint candidate.`, recommendation: "Repair the source-object/media binding or keep the source slide. Never qualify a candidate with missing figures, icons, logos, or photographs.", autoFixable: false });
+    const missingTreatments = slide.figureTreatments.filter((treatment) => ["preserve-as-unit", "preserve-and-frame"].includes(treatment.mode)
+      && ["source-locked", "verified"].includes(treatment.verificationStatus)
+      && !renderedFigureTreatmentIds.has(treatment.id));
+    if (missingTreatments.length) add({ category: "figure", severity: "blocker", source: "scene", nodeIds: missingTreatments.flatMap((treatment) => treatment.nodeIds), message: `${missingTreatments.length} source-locked figure treatment${missingTreatments.length === 1 ? " was" : "s were"} not rendered into the PowerPoint candidate.`, recommendation: "Restore the authoritative source figure raster or hold the slide; never accept an incomplete evidence field.", autoFixable: false });
+  }
 
   for (const overflow of nativeTextOverflows(measurement)) {
     const node = visible.find((candidate) => overflow.name === candidate.id || overflow.name?.endsWith(` · ${candidate.id}`));
@@ -229,7 +240,13 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
   if (title && bodySizes.length && title.style.fontSizePt <= Math.max(...bodySizes)) add({ category: "hierarchy", severity: "major", source: "scene", nodeIds: [title.id], message: "The slide title is not typographically dominant over supporting copy.", recommendation: "Use the ORNL title scale or reduce competing headings while preserving readable body type.", autoFixable: true });
   const densityVisible = reviewVisible.filter((node) => node.component?.role !== "logo-grid-item");
   const characterCount = densityVisible.reduce((sum, node) => sum + (node.text?.length ?? node.table?.cells.reduce((cellSum, cell) => cellSum + cell.text.length, 0) ?? 0), 0);
-  if (characterCount > 1_100 || densityVisible.length > 24) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [], message: `The composition carries ${characterCount} characters across ${densityVisible.length} visible semantic nodes.`, recommendation: "Use hierarchy, a denser approved table treatment, or a continuation slide; do not miniaturize the entire composition.", autoFixable: false });
+  const editorialRecords = densityVisible.filter((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-"));
+  const ordinaryEditorialText = densityVisible.filter((node) => node.kind === "text" && !["title", "footer", "slide-number", "date", "logo"].includes(node.role));
+  const qualifiedEditorialGrid = editorialRecords.length >= 5
+    && ordinaryEditorialText.length === editorialRecords.length
+    && editorialRecords.every((node) => node.style.fontSizePt >= productionFontFloor(node));
+  if ((characterCount > 1_100 || densityVisible.length > 24) && !qualifiedEditorialGrid) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [], message: `The composition carries ${characterCount} characters across ${densityVisible.length} visible semantic nodes.`, recommendation: "Use hierarchy, a denser approved table treatment, or a continuation slide; do not miniaturize the entire composition.", autoFixable: false });
+  else if ((characterCount > 1_100 || densityVisible.length > 24) && qualifiedEditorialGrid) add({ category: "legibility", severity: "minor", source: "scene", nodeIds: editorialRecords.map((node) => node.id), message: "The dense editorial-record grid uses its qualified compact type exception and preserves year/title/attribution hierarchy.", recommendation: "Inspect the complete record grid at full slide size; keep it only when native text clearance and visual grouping remain clean.", autoFixable: false });
   else if (characterCount > 750 || densityVisible.length > 16) add({ category: "legibility", severity: "minor", source: "scene", nodeIds: [], message: "The slide is visually dense and needs a deliberate reading path.", recommendation: "Strengthen grouping and progressive hierarchy while keeping every source statement exact.", autoFixable: false });
 
   for (const constraint of slide.constraints ?? []) {

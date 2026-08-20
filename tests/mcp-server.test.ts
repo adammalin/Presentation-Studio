@@ -273,6 +273,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     const inspectionTool = result.tools.find((tool) => tool.name === "get_slide_inspection_packet");
     assert.match(inspectionTool?.description ?? "", /Found issues/i);
     assert.match(inspectionTool?.description ?? "", /Rechecking original intent/i);
+    assert.match(inspectionTool?.description ?? "", /fresh central Studio composition.*get_studio_slide_critique/i);
     const freshCompositionTool = result.tools.find((tool) => tool.name === "preview_studio_fresh_composition");
     assert.match(freshCompositionTool?.description ?? "", /genuinely new editable native PowerPoint output slides/i);
     assert.match(freshCompositionTool?.description ?? "", /exact source\/output text/i);

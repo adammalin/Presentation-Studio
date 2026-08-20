@@ -42,6 +42,28 @@ test("Studio critic refuses non-native measurement evidence", () => {
   assert.throws(() => critiqueStudioSlide(scene(), 1, { ...measurement(), authority: "direct-ooxml" }), /Microsoft PowerPoint/i);
 });
 
+test("Studio critic blocks visible source media and source-locked treatments missing from the compiled candidate", () => {
+  const source = scene();
+  const seed = source.slides[0].nodes.find((node) => node.id === "body")!;
+  const image: StudioWebNode = { ...seed, id: "partner-logo", sourceObjectId: "partner-logo", sourceShapeId: "partner-logo", name: "Partner logo", kind: "image", role: "image", text: undefined, textHash: undefined, sourceParagraphs: undefined, mediaPart: "logo.png", exactContent: false, style: { ...seed.style, objectFit: "contain" } };
+  source.slides[0].nodes.push(image);
+  let result = critiqueStudioSlide(source, 1, measurement(), { renderedNodeIds: ["title", "body"], renderedFigureTreatmentIds: [] });
+  assert.equal(result.issues.some((issue) => issue.category === "figure" && issue.severity === "blocker" && issue.nodeIds.includes(image.id)), true);
+
+  source.slides[0].figureTreatments = [{
+    id: "locked-logo",
+    nodeIds: [image.id],
+    mode: "preserve-as-unit",
+    verificationStatus: "source-locked",
+    intentSummary: "Complete source logo",
+    informationInventory: ["Every source pixel"],
+    invariants: ["No omission"],
+    rationale: "Preserve exact identity.",
+  }];
+  result = critiqueStudioSlide(source, 1, measurement(), { renderedNodeIds: ["title", "body"], renderedFigureTreatmentIds: [] });
+  assert.equal(result.issues.some((issue) => issue.category === "figure" && issue.severity === "blocker" && /source-locked figure treatment/.test(issue.message)), true);
+});
+
 test("Studio production preflight blocks undersized ordinary type and crop-prone protected marks", () => {
   const source = scene();
   const body = source.slides[0].nodes.find((node) => node.id === "body")!;
@@ -84,6 +106,20 @@ test("Studio production preflight honors the qualified 10.5 pt editorial-record 
   const ordinaryNode = ordinary.slides[0].nodes.find((node) => node.id === editorial.id)!;
   ordinaryNode.component = { groupId: "studio-card-1", role: "card-body", ordinal: 0 };
   assert.equal(preflightStudioScene(ordinary).issues.some((issue) => issue.nodeIds.includes(editorial.id) && /10.5 pt/.test(issue.message)), true);
+});
+
+test("Studio critic allows a native-clean dense editorial record grid without flattening its hierarchy", () => {
+  const source = scene();
+  source.slides[0].constraints = [];
+  source.slides[0].nodes = [source.slides[0].nodes[0], ...Array.from({ length: 7 }, (_, index) => {
+    const record = textNode(`record-${index + 1}`, "body", 36 + (index % 2) * 430, 100 + Math.floor(index / 2) * 92, 390, 78, 10.5);
+    record.text = `${2020 + index}\nA substantive laboratory award title that must remain visibly emphasized\nNamed researcher and complete source attribution ${"evidence ".repeat(11)}`;
+    record.component = { groupId: `studio-editorial-record-grid-${index + 1}`, role: "technical-annotation", ordinal: index };
+    return record;
+  })];
+  const result = critiqueStudioSlide(source, 1, measurement());
+  assert.equal(result.issues.some((item) => item.category === "legibility" && item.severity === "major" && /composition carries/.test(item.message)), false);
+  assert.equal(result.issues.some((item) => item.category === "legibility" && item.severity === "minor" && /editorial-record grid/.test(item.message)), true);
 });
 
 test("Studio critic accepts complete supporting metric-icon crops while retaining the strict technical-figure crop gate", () => {

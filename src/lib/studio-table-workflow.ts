@@ -259,6 +259,16 @@ export function applyStudioTableExemplar(scene: StudioWebScene, input: { definit
   return applyDefinition(scene, definition, input.targetSlideNumbers);
 }
 
+type StudioTableCell = NonNullable<StudioWebNode["table"]>["cells"][number];
+
+function repeatableContextCell(cell: StudioTableCell): boolean {
+  return cell.column === 1
+    && cell.columnSpan === 1
+    && cell.rowSpan > 1
+    && cell.text.trim().length > 0
+    && cell.text.trim().length <= 240;
+}
+
 function bodyRowClusters(node: StudioWebNode, headerRows: number): Array<{ start: number; end: number }> {
   if (!node.table) return [];
   const result: Array<{ start: number; end: number }> = [];
@@ -269,6 +279,11 @@ function bodyRowClusters(node: StudioWebNode, headerRows: number): Array<{ start
     while (expanded) {
       expanded = false;
       for (const cell of node.table.cells) {
+        // A concise leftmost merged label is repeated as continuation context
+        // on each output slide. It must not force every body row into one
+        // indivisible cluster; the detailed cells in the other columns remain
+        // the actual merge-safe boundary authority.
+        if (repeatableContextCell(cell)) continue;
         const cellEnd = cell.row + cell.rowSpan - 1;
         if (cell.row <= end && cellEnd >= cursor && cellEnd > end) {
           end = cellEnd;
@@ -321,7 +336,7 @@ function planFor(node: StudioWebNode, slideNumber: number, maximumBodyRowsPerSli
   if (design.headerRows < 1) blockers.push("Identify at least one repeated header row before continuing this table.");
   for (const cell of node.table.cells) {
     const cellEnd = cell.row + cell.rowSpan - 1;
-    if (cell.row <= design.headerRows && cellEnd > design.headerRows) blockers.push(`Cell ${cell.id} merges across the header/body boundary.`);
+    if (cell.row <= design.headerRows && cellEnd > design.headerRows && !repeatableContextCell(cell)) blockers.push(`Cell ${cell.id} merges across the header/body boundary.`);
   }
   const clusters = bodyRowClusters(node, design.headerRows);
   const bodyRows = Math.max(0, node.table.rows - design.headerRows);
@@ -344,7 +359,13 @@ function planFor(node: StudioWebNode, slideNumber: number, maximumBodyRowsPerSli
   if (current) segments.push({ ordinal: segments.length + 1, bodyRowStart: current.start, bodyRowEnd: current.end, repeatedHeaderRows: design.headerRows, sourceCellIds: [] });
   for (const segment of segments) {
     segment.sourceCellIds = node.table.cells
-      .filter((cell) => cell.row <= design.headerRows || (cell.row >= segment.bodyRowStart && cell.row + cell.rowSpan - 1 <= segment.bodyRowEnd))
+      .filter((cell) => {
+        const cellEnd = cell.row + cell.rowSpan - 1;
+        const intersectsBodySegment = cell.row <= segment.bodyRowEnd && cellEnd >= segment.bodyRowStart;
+        if (repeatableContextCell(cell) && intersectsBodySegment) return true;
+        return cell.row <= design.headerRows && cellEnd <= design.headerRows
+          || cell.row >= segment.bodyRowStart && cellEnd <= segment.bodyRowEnd;
+      })
       .map((cell) => cell.id);
   }
   return {
@@ -400,10 +421,21 @@ function materializedTableNode(node: StudioWebNode, plan: StudioTableContinuatio
     ...Array.from({ length: segment.bodyRowEnd - segment.bodyRowStart + 1 }, (_, index) => segment.bodyRowStart + index),
   ];
   const selectedRowHeights = normalizedWeights(selectedRows.map((row) => design.rowHeights[row - 1] ?? 1));
-  const cells = node.table.cells.filter((cell) => included.has(cell.id)).map((cell) => ({
-    ...cell,
-    row: cell.row <= plan.headerRows ? cell.row : plan.headerRows + cell.row - segment.bodyRowStart + 1,
-  }));
+  const segmentBodyRows = segment.bodyRowEnd - segment.bodyRowStart + 1;
+  const cells = node.table.cells.filter((cell) => included.has(cell.id)).map((cell) => {
+    if (repeatableContextCell(cell)) {
+      const crossesHeader = cell.row <= plan.headerRows;
+      return {
+        ...cell,
+        row: crossesHeader ? cell.row : plan.headerRows + 1,
+        rowSpan: crossesHeader ? selectedRows.length - cell.row + 1 : segmentBodyRows,
+      };
+    }
+    return {
+      ...cell,
+      row: cell.row <= plan.headerRows ? cell.row : plan.headerRows + cell.row - segment.bodyRowStart + 1,
+    };
+  });
   return {
     ...node,
     table: {

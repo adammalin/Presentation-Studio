@@ -16,6 +16,8 @@ export interface StudioCompositionExportResult {
   imageCount: number;
   ignoredSourceFurnitureCount: number;
   generatedComponentCount: number;
+  renderedNodeIds: string[];
+  renderedFigureTreatmentIds: string[];
   warnings: string[];
 }
 
@@ -70,10 +72,11 @@ function margins(node: StudioWebNode): [number, number, number, number] {
 function editableText(node: StudioWebNode): string | PptxGenJS.TextProps[] {
   const text = node.text ?? "";
   const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.length > 0) ?? [];
-  if (paragraphs.length <= 1 && !paragraphs[0]?.bullet && !/[\uE000-\uF8FF]/.test(text)) return text;
+  const editorialRecord = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-");
+  if (!editorialRecord && paragraphs.length <= 1 && !paragraphs[0]?.bullet && !/[\uE000-\uF8FF]/.test(text)) return text;
   const runs: PptxGenJS.TextProps[] = [];
   const source = paragraphs.length ? paragraphs : [{ text, bullet: false, level: 0 }];
-  const paragraphSpaceAfter = source.length >= 7 ? 2 : source.some((paragraph) => paragraph.bullet) ? 3 : PRESENTATION_DESIGN_STANDARD.componentSystem.paragraph.bodySpaceAfterPt;
+  const paragraphSpaceAfter = editorialRecord ? 0 : source.length >= 7 ? 2 : source.some((paragraph) => paragraph.bullet) ? 3 : PRESENTATION_DESIGN_STANDARD.componentSystem.paragraph.bodySpaceAfterPt;
   source.forEach((paragraph, paragraphIndex) => {
     const parts = paragraph.text.split(/([\uE000-\uF8FF])/).filter(Boolean);
     parts.forEach((value, partIndex) => {
@@ -88,6 +91,11 @@ function editableText(node: StudioWebNode): string | PptxGenJS.TextProps[] {
           bullet: partIndex === 0 && paragraph.bullet ? { indent: 18 + Math.max(0, paragraph.level ?? 0) * 14 } : undefined,
           breakLine: finalPart && paragraphIndex < source.length - 1,
           paraSpaceAfter: finalPart && paragraphIndex < source.length - 1 ? paragraphSpaceAfter : undefined,
+          // Dense award/editorial records are one editable text box, but their
+          // year and record title are semantic headings. Preserve that reading
+          // hierarchy in native PowerPoint instead of flattening every run to
+          // the same weight merely because the component uses compact type.
+          bold: editorialRecord ? paragraphIndex <= 1 : undefined,
         },
       });
     });
@@ -390,6 +398,8 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
   let imageCount = 0;
   let ignoredSourceFurnitureCount = 0;
   let generatedComponentCount = 0;
+  const renderedNodeIds = new Set<string>();
+  const renderedFigureTreatmentIds = new Set<string>();
   const outputSlides: StudioCompositionOutputSlide[] = [];
 
   for (const sourceSceneSlide of [...scene.slides].sort((left, right) => left.slideNumber - right.slideNumber)) {
@@ -511,6 +521,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
           objectName: `${node.name} · ${node.id}`.slice(0, 240),
         });
         generatedComponentCount += 1;
+        renderedNodeIds.add(node.id);
         continue;
       }
       if (node.kind === "shape") {
@@ -522,6 +533,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
             objectName: `${node.name} · ${node.id}`.slice(0, 240),
           });
           generatedComponentCount += 1;
+          renderedNodeIds.add(node.id);
           continue;
         }
         ignoredSourceFurnitureCount += 1;
@@ -546,6 +558,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
           rotate: node.frame.rotation,
         });
         textNodeCount += 1;
+        renderedNodeIds.add(node.id);
         continue;
       }
       if (node.kind === "table" && node.table) {
@@ -560,6 +573,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
           autoPage: false,
         });
         tableCount += 1;
+        renderedNodeIds.add(node.id);
         continue;
       }
       if (node.kind === "image") {
@@ -589,6 +603,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
         });
         if (!extractedData) warnings.push(`Slide ${sourceSlide.slideNumber}: ${node.name} was preserved from the authoritative PowerPoint source render because its embedded media part was unavailable.`);
         imageCount += 1;
+        renderedNodeIds.add(node.id);
       }
     }
     for (const treatment of sourceLockedTreatments) {
@@ -613,11 +628,12 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
         altText: `Source-locked technical evidence preserved from slide ${sourceSlide.slideNumber}. ${treatment.intentSummary}`.slice(0, 500),
       });
       imageCount += 1;
+      renderedFigureTreatmentIds.add(treatment.id);
       warnings.push(`Slide ${sourceSlide.slideNumber}: ${treatment.intentSummary} is preserved as one source-locked PowerPoint-rendered evidence unit${isolatedRaster ? " from an object-isolated native render" : ""}.`);
     }
     }
   }
   const output = await pptx.write({ outputType: "uint8array", compression: true });
   const bytes = output instanceof Uint8Array ? output : new Uint8Array(output as ArrayBuffer);
-  return { bytes, slideCount: outputSlides.length, outputSlides, textNodeCount, tableCount, imageCount, ignoredSourceFurnitureCount, generatedComponentCount, warnings };
+  return { bytes, slideCount: outputSlides.length, outputSlides, textNodeCount, tableCount, imageCount, ignoredSourceFurnitureCount, generatedComponentCount, renderedNodeIds: [...renderedNodeIds], renderedFigureTreatmentIds: [...renderedFigureTreatmentIds], warnings };
 }

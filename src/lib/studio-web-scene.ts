@@ -1602,6 +1602,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const rowGroups = slide.nodes
       .filter((node) => node.visible && node.kind === "native-object" && node.role === "group" && !footerNode(node))
       .sort((left, right) => left.sourceFrame.y - right.sourceFrame.y || left.sourceFrame.x - right.sourceFrame.x);
+    const sourceIcons = slide.nodes.filter((node) => node.visible && meaningfulImage(node) && !footerNode(node));
     metrics.forEach((node, ordinal) => {
       const row = Math.floor(ordinal / columns);
       const column = ordinal % columns;
@@ -1609,6 +1610,15 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       const sourceCenterY = node.sourceFrame.y + node.sourceFrame.height / 2;
       const sourceGroup = rowGroups.find((candidate) => sourceCenterY >= candidate.sourceFrame.y && sourceCenterY <= candidate.sourceFrame.y + candidate.sourceFrame.height);
       if (sourceGroup) {
+        const sourceCenterX = node.sourceFrame.x + node.sourceFrame.width / 2;
+        const sourceIcon = sourceIcons
+          .filter((candidate) => {
+            const centerX = candidate.sourceFrame.x + candidate.sourceFrame.width / 2;
+            const centerY = candidate.sourceFrame.y + candidate.sourceFrame.height / 2;
+            return centerX >= sourceGroup.sourceFrame.x && centerX <= sourceGroup.sourceFrame.x + sourceGroup.sourceFrame.width
+              && centerY >= sourceGroup.sourceFrame.y && centerY <= sourceGroup.sourceFrame.y + sourceGroup.sourceFrame.height;
+          })
+          .sort((left, right) => Math.abs(left.sourceFrame.x + left.sourceFrame.width / 2 - sourceCenterX) - Math.abs(right.sourceFrame.x + right.sourceFrame.width / 2 - sourceCenterX))[0];
         const groupLeft = sourceGroup.sourceFrame.x;
         const groupRight = groupLeft + sourceGroup.sourceFrame.width;
         const sideLeft = column === 0 ? groupLeft : groupLeft + sourceGroup.sourceFrame.width / 2;
@@ -1628,7 +1638,11 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
         const rightCrop = Math.max(0, Math.min(.99, 1 - (iconRight - groupLeft) / sourceGroup.sourceFrame.width));
         generatedFigureTreatments.push({
           id: `studio-auto-metric-icon-${slideNumber}-${ordinal + 1}`,
-          nodeIds: [sourceGroup.id],
+          // Catalog-derived image nodes describe the same native picture that
+          // is already present inside this source group raster. Bind the
+          // closest peer icon to the treatment so the editable compiler
+          // suppresses that duplicate representation.
+          nodeIds: [sourceGroup.id, ...(sourceIcon ? [sourceIcon.id] : [])],
           mode: "preserve-as-unit",
           verificationStatus: "source-locked",
           intentSummary: `Preserve the source metric icon for item ${ordinal + 1}.`,
@@ -2175,6 +2189,17 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
   }
   if (treatment.relationshipPolicy === "editable-diagram" && treatment.verificationStatus !== "verified") throw new Error("An editable diagram relationship policy requires verified information and relationships.");
   if (nodes.some((node) => node && protectedBrandMark(node)) && treatment.lockAspectRatio === false) throw new Error("ORNL and DOE marks are protected artwork. Any figure group containing a mark must keep its aspect ratio locked.");
+  const allPeerLogoNodes = slide.nodes.filter((node) => node.visible && node.component?.role === "logo-grid-item");
+  const peerLogoNodes = nodes.filter((node) => node?.component?.role === "logo-grid-item");
+  const selectedContainerCoversLogoField = nodes.some((node) => node && ["image", "native-object", "shape"].includes(node.kind)
+    && allPeerLogoNodes.filter((logo) => sourceFrameContains(node.sourceFrame, logo.sourceFrame, 0)).length >= 12);
+  const proposedFrameCoversLogoField = Boolean(treatment.groupFrame
+    && allPeerLogoNodes.filter((logo) => sourceFrameContains(treatment.groupFrame!, logo.frame, 0)).length >= 12);
+  if (allPeerLogoNodes.length >= 12
+    && (peerLogoNodes.length > 0 || selectedContainerCoversLogoField || proposedFrameCoversLogoField)
+    && ["preserve-as-unit", "preserve-and-frame"].includes(treatment.mode)) {
+    throw new Error("A dense peer-logo field must remain independent editable contained images. Do not flatten the logo grid into one source-locked figure; preserve every authentic mark and suppress only its duplicate legacy carrier.");
+  }
   const relationshipKeys = new Set<string>();
   const relationships = (treatment.relationships ?? []).map((relationship) => {
     const from = slide.nodes.find((node) => node.id === relationship.fromNodeId);
@@ -2214,11 +2239,17 @@ export function updateStudioFigureTreatment(scene: StudioWebScene, slideNumber: 
       status: "designed",
       updatedAt: now,
       designRationale: `${item.designRationale} Figure treatment: ${normalized.mode}.`.trim().slice(0, 1_000),
-      // A source object may supply more than one independently cropped visual
-      // instance (for example, the left and right icons inside one legacy row
-      // group). Treatment identity, not shared source-node membership, is the
-      // replacement key. Recipe changes clear stale treatments upstream.
-      figureTreatments: [...(item.figureTreatments ?? []).filter((candidate) => candidate.id !== normalized.id), normalized],
+      // A source object may supply more than one independently cropped manual
+      // visual instance (for example, the left and right icons inside one
+      // legacy row group), so manual peers remain identity-keyed. An explicit
+      // treatment does replace every overlapping generated auto-treatment;
+      // otherwise a bounded agent repair renders the inherited source crop and
+      // the new treatment together, duplicating icons or background content.
+      figureTreatments: [
+        ...(item.figureTreatments ?? []).filter((candidate) => candidate.id !== normalized.id
+          && !(candidate.id.startsWith("studio-auto-") && candidate.nodeIds.some((id) => nodeIds.includes(id)))),
+        normalized,
+      ],
     }),
   };
 }
