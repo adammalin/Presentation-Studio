@@ -124,6 +124,11 @@ mv "${SOURCE_DIR}" "${STAGING_DIR}"
 print "Installing locked dependencies and verifying the staged application..."
 cd "${STAGING_DIR}"
 npm ci
+if ! node -e 'const fs=require("node:fs"); const executable=require("electron"); fs.accessSync(executable, fs.constants.X_OK);' >/dev/null 2>&1; then
+  print "Electron's desktop runtime was not materialized by npm ci; rebuilding that locked dependency..."
+  npm rebuild electron
+fi
+node -e 'const fs=require("node:fs"); const executable=require("electron"); fs.accessSync(executable, fs.constants.X_OK);' >/dev/null 2>&1 || fail "the Electron desktop runtime is missing or not executable after dependency installation."
 npm test
 npm run check:data-safety
 npm run build

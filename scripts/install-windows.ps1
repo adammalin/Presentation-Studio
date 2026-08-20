@@ -109,6 +109,7 @@ try {
   }
 
   if (-not (Test-CompatibleNode)) { Stop-Install "Node.js $NodeVersion or newer could not be prepared." }
+  $NodeCommand = (Get-Command node.exe -ErrorAction Stop).Source
   $NpmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
 
   $SourceArchiveUrl = if ($env:PRESENTATION_STUDIO_SOURCE_ARCHIVE_URL) {
@@ -131,6 +132,12 @@ try {
   Push-Location $StagingDir
   try {
     Invoke-Checked $NpmCommand @("ci")
+    & $NodeCommand -e 'const fs=require("node:fs"); const executable=require("electron"); fs.accessSync(executable, fs.constants.X_OK);'
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Electron's desktop runtime was not materialized by npm ci; rebuilding that locked dependency..."
+      Invoke-Checked $NpmCommand @("rebuild", "electron")
+    }
+    Invoke-Checked $NodeCommand @("-e", 'const fs=require("node:fs"); const executable=require("electron"); fs.accessSync(executable, fs.constants.X_OK);')
     Invoke-Checked $NpmCommand @("test")
     Invoke-Checked $NpmCommand @("run", "check:data-safety")
     Invoke-Checked $NpmCommand @("run", "build")
@@ -170,7 +177,7 @@ call npm start
   $CodexRoot = Join-Path $env:USERPROFILE ".codex"
   if (Test-Path $CodexRoot) {
     Write-Host "Configuring the installed Presentation Studio MCP server in Codex..."
-    Invoke-Checked (Get-Command node.exe -ErrorAction Stop).Source @((Join-Path $AppDir "scripts\configure-mcp.mjs"), "--codex", (Join-Path $CodexRoot "config.toml"))
+    Invoke-Checked $NodeCommand @((Join-Path $AppDir "scripts\configure-mcp.mjs"), "--codex", (Join-Path $CodexRoot "config.toml"))
     Write-Host "Restart Codex after installation so it reloads the MCP server list."
   }
 

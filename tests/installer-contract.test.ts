@@ -20,6 +20,9 @@ test("macOS one-line installer is self-contained, verified, and policy-safe", as
   assert.match(installer, /SHASUMS256\.txt/);
   assert.match(installer, /shasum -a 256/);
   assert.match(installer, /npm ci/);
+  assert.match(installer, /npm rebuild electron/);
+  assert.match(installer, /require\("electron"\)/);
+  assert.match(installer, /fs\.constants\.X_OK/);
   assert.match(installer, /npm test/);
   assert.match(installer, /npm run check:data-safety/);
   assert.match(installer, /npm run build/);
@@ -41,6 +44,9 @@ test("Windows one-line installer is self-contained, verified, and policy-safe", 
   assert.match(installer, /SHASUMS256\.txt/);
   assert.match(installer, /Get-FileHash -Algorithm SHA256/);
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("ci"\)/);
+  assert.match(installer, /Invoke-Checked \$NpmCommand @\("rebuild", "electron"\)/);
+  assert.match(installer, /require\("electron"\)/);
+  assert.match(installer, /fs\.constants\.X_OK/);
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("test"\)/);
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("run", "check:data-safety"\)/);
   assert.match(installer, /Invoke-Checked \$NpmCommand @\("run", "build"\)/);
