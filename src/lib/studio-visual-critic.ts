@@ -41,6 +41,7 @@ function protectedBrandMark(node: StudioWebNode): boolean {
 
 function productionFontFloor(node: StudioWebNode): number {
   if (node.role === "title") return 24;
+  if (node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-")) return 8.5;
   if (node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-")) return 10.5;
   if (node.role === "caption" || node.role === "label" || node.component?.role === "eyebrow" || node.component?.role === "image-series-heading") return 14;
   return 16;
@@ -230,8 +231,14 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
     if (frame.x < 0 || frame.y < 0 || frame.x + frame.width > scene.slideSize.width || frame.y + frame.height > scene.slideSize.height) add({ category: "safe-region", severity: "blocker", source: "scene", nodeIds: [node.id], message: `${node.name} leaves the slide canvas.`, recommendation: "Fit the complete component into the safe region while preserving its internal relationships.", autoFixable: true });
     else if (!["footer", "slide-number", "date", "logo"].includes(node.role) && (frame.x < safe || frame.y < safe || frame.x + frame.width > scene.slideSize.width - safe || frame.y + frame.height > scene.slideSize.height - safe)) add({ category: "safe-region", severity: "minor", source: "scene", nodeIds: [node.id], message: `${node.name} enters the ${scene.rhythm?.safeMarginPt ?? 18}-point working safe region.`, recommendation: "Confirm intentional full-bleed/template placement or fit the relationship group into the safe region.", autoFixable: true });
     const compactPeerVisual = node.component?.role === "logo-grid-item";
-    const minimumWidth = compactPeerVisual ? 28 * PT : 72 * PT;
-    const minimumHeight = compactPeerVisual ? 28 * PT : 54 * PT;
+    // Dense logo walls are an authored peer system, not a set of ordinary
+    // hero figures. Some authentic marks are intrinsically narrow or short.
+    // Hold only when Studio makes a mark materially smaller than its own
+    // source footprint (capped at the ordinary 28 pt peer-logo target).
+    const sourceRelativeLogoWidth = Math.min(28 * PT, node.sourceFrame.width * .9);
+    const sourceRelativeLogoHeight = Math.min(28 * PT, node.sourceFrame.height * .9);
+    const minimumWidth = compactPeerVisual ? sourceRelativeLogoWidth : 72 * PT;
+    const minimumHeight = compactPeerVisual ? sourceRelativeLogoHeight : 54 * PT;
     if ((node.kind === "image" || node.kind === "native-object") && (frame.width < minimumWidth || frame.height < minimumHeight)) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is too small to function as readable ${compactPeerVisual ? "peer logo" : "technical evidence"}.`, recommendation: compactPeerVisual ? "Increase the shared logo-grid cell or continue the field without distorting the mark." : "Give the figure a larger primary or supporting visual region, or crop to the meaning-bearing content with a verified focal point.", autoFixable: false });
   }
 
@@ -240,7 +247,7 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
   if (title && bodySizes.length && title.style.fontSizePt <= Math.max(...bodySizes)) add({ category: "hierarchy", severity: "major", source: "scene", nodeIds: [title.id], message: "The slide title is not typographically dominant over supporting copy.", recommendation: "Use the ORNL title scale or reduce competing headings while preserving readable body type.", autoFixable: true });
   const densityVisible = reviewVisible.filter((node) => node.component?.role !== "logo-grid-item");
   const characterCount = densityVisible.reduce((sum, node) => sum + (node.text?.length ?? node.table?.cells.reduce((cellSum, cell) => cellSum + cell.text.length, 0) ?? 0), 0);
-  const editorialRecords = densityVisible.filter((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-"));
+  const editorialRecords = densityVisible.filter((node) => node.component?.role === "technical-annotation" && (node.component.groupId.startsWith("studio-editorial-record-grid-") || node.component.groupId.startsWith("studio-dense-source-grid-")));
   const ordinaryEditorialText = densityVisible.filter((node) => node.kind === "text" && !["title", "footer", "slide-number", "date", "logo"].includes(node.role));
   const qualifiedEditorialGrid = editorialRecords.length >= 5
     && ordinaryEditorialText.length === editorialRecords.length

@@ -83,7 +83,7 @@ test("Studio production preflight preserves approved sacred-template typography"
   assert.equal(result.issues.some((issue) => issue.category === "legibility"), false);
 });
 
-test("Studio production preflight honors the qualified 10.5 pt editorial-record grid exception only for that component", () => {
+test("Studio production preflight honors the qualified 10.5 pt editorial-record grid exceptions only for those components", () => {
   const source = scene();
   const editorial = source.slides[0].nodes.find((node) => node.id === "body")!;
   source.slides[0] = {
@@ -98,6 +98,12 @@ test("Studio production preflight honors the qualified 10.5 pt editorial-record 
   const qualified = preflightStudioScene(source);
   assert.equal(qualified.issues.some((issue) => issue.nodeIds.includes(editorial.id) && issue.category === "legibility"), false);
 
+  const sourceGeometryQualified = structuredClone(source);
+  const sourceGeometryNode = sourceGeometryQualified.slides[0].nodes.find((node) => node.id === editorial.id)!;
+  sourceGeometryNode.component = { groupId: "studio-dense-source-grid-1", role: "technical-annotation", ordinal: 0 };
+  sourceGeometryNode.style.fontSizePt = 8.5;
+  assert.equal(preflightStudioScene(sourceGeometryQualified).issues.some((issue) => issue.nodeIds.includes(editorial.id) && issue.category === "legibility"), false);
+
   const tooSmall = structuredClone(source);
   tooSmall.slides[0].nodes.find((node) => node.id === editorial.id)!.style.fontSizePt = 10;
   assert.equal(preflightStudioScene(tooSmall).issues.some((issue) => issue.nodeIds.includes(editorial.id) && /10 pt/.test(issue.message)), true);
@@ -106,6 +112,34 @@ test("Studio production preflight honors the qualified 10.5 pt editorial-record 
   const ordinaryNode = ordinary.slides[0].nodes.find((node) => node.id === editorial.id)!;
   ordinaryNode.component = { groupId: "studio-card-1", role: "card-body", ordinal: 0 };
   assert.equal(preflightStudioScene(ordinary).issues.some((issue) => issue.nodeIds.includes(editorial.id) && /10.5 pt/.test(issue.message)), true);
+});
+
+test("Studio critic uses source-relative legibility for dense peer-logo walls", () => {
+  const source = scene();
+  const seed = source.slides[0].nodes.find((node) => node.id === "body")!;
+  const sourceFrame = { x: 250 * PT, y: 180 * PT, width: 20 * PT, height: 40 * PT, rotation: 0 };
+  const logo: StudioWebNode = {
+    ...seed,
+    id: "narrow-authentic-logo",
+    sourceObjectId: "narrow-authentic-logo",
+    sourceShapeId: "narrow-authentic-logo",
+    name: "Narrow authentic partner mark",
+    kind: "image",
+    role: "image",
+    text: undefined,
+    exactContent: false,
+    sourceFrame,
+    frame: { ...sourceFrame, width: 18 * PT, height: 38 * PT },
+    component: { groupId: "studio-logo-grid-1", role: "logo-grid-item", ordinal: 0 },
+    style: { ...seed.style, objectFit: "contain" },
+  };
+  source.slides[0].nodes.push(logo);
+  const acceptable = critiqueStudioSlide(source, 1, measurement(), { renderedNodeIds: ["title", "body", logo.id], renderedFigureTreatmentIds: [] });
+  assert.equal(acceptable.issues.some((issue) => issue.nodeIds.includes(logo.id) && issue.category === "legibility"), false);
+
+  logo.frame = { ...logo.frame, width: 12 * PT };
+  const reduced = critiqueStudioSlide(source, 1, measurement(), { renderedNodeIds: ["title", "body", logo.id], renderedFigureTreatmentIds: [] });
+  assert.equal(reduced.issues.some((issue) => issue.nodeIds.includes(logo.id) && issue.category === "legibility"), true);
 });
 
 test("Studio critic allows a native-clean dense editorial record grid without flattening its hierarchy", () => {

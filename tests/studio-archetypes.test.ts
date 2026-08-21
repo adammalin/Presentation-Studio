@@ -148,3 +148,15 @@ test("routes a dense editorial record grid around legacy native carrier furnitur
   assert.match(plan.reasons.join(" "), /editorial records/i);
   assert.match(plan.requiredChecks.join(" "), /10\.5 pt record-grid exception/i);
 });
+
+test("documents the bounded source-geometry compact-grid exception for one-image dense editorial fields", () => {
+  const plan = planStudioComposition(profile({
+    bodyBlockCount: 11,
+    bodyBlockCharacterCounts: Array.from({ length: 11 }, () => 110),
+    bodyCharacterCount: 1_210,
+    imageCount: 1,
+    desiredIntent: "visual",
+  }), layouts, { connectorCount: 0, recommendedRecipe: "ornl-title-two-column" });
+  assert.equal(plan.recipe, "ornl-title-two-column");
+  assert.match(plan.requiredChecks.join(" "), /8\.5 pt compact-grid exception/i);
+});

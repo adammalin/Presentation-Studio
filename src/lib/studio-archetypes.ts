@@ -137,6 +137,7 @@ export function planStudioComposition(profile: LayoutContentProfile, layouts: Te
       ? (hints.connectorCount ?? 0) > 0 ? "ornl-title-figure-grid" : "ornl-title-labeled-figure-grid"
       : detailedRecipe ?? defaultRecipeForArchetype(inference.archetype);
   const denseEditorialRecordGrid = recipe === "ornl-title-card-grid" && profile.bodyBlockCount >= 7 && profile.bodyCharacterCount >= 900;
+  const denseSourceEditorialField = recipe === "ornl-title-two-column" && profile.imageCount === 1 && profile.bodyBlockCount >= 8 && profile.bodyCharacterCount >= 700;
   const standardCover = inference.archetype === "cover"
     ? layouts.find((candidate) => candidate.category === "title" && candidate.semantic?.contract.family === "cover" && candidate.semantic.contract.selectionPolicy === "sacred" && !candidate.placeholderTypes.includes("pic") && !/text[- ]only/i.test(candidate.name))
     : undefined;
@@ -171,6 +172,8 @@ export function planStudioComposition(profile: LayoutContentProfile, layouts: Te
       "Attach the real native ORNL master and layout; do not recreate protected marks or footer artwork.",
       denseEditorialRecordGrid
         ? "This exact-content editorial record grid may use the bounded 10.5 pt record-grid exception only when PowerPoint-native measurement proves every record is readable and collision-free; do not misclassify a peer record as a footer or caption."
+        : denseSourceEditorialField
+          ? "This exact-content source-geometry editorial field may use the bounded 8.5 pt compact-grid exception only when it stays at least source-equivalent and PowerPoint-native measurement proves every record readable and collision-free; otherwise hold or use a verified continuation."
         : "Keep body type at or above 16 pt and captions or labels at or above 14 pt.",
       "Preserve every image-caption, heading-evidence, table-cell, connector, and technical-figure relationship.",
       "Build, render, and measure the exact editable candidate in Microsoft PowerPoint before visual acceptance.",

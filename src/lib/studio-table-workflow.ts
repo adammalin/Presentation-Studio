@@ -9,9 +9,11 @@ import type {
   StudioWebSlide,
 } from "../types";
 import { STUDIO_WEB_SCENE_VERSION } from "../types";
+import { PRESENTATION_DESIGN_STANDARD } from "./design-standard";
 import { resolvedStudioTableDesign } from "./studio-web-scene";
 
 const HEX = /^#[0-9a-f]{6}$/i;
+const EMU_PER_INCH = 914_400;
 
 export interface StudioTableExemplarResult {
   scene: StudioWebScene;
@@ -412,7 +414,24 @@ function normalizedWeights(values: number[]): number[] {
   return total > 0 ? values.map((value) => value / total) : values.map(() => 1 / Math.max(1, values.length));
 }
 
-function materializedTableNode(node: StudioWebNode, plan: StudioTableContinuationPlan, segment: StudioTableContinuationPlan["segments"][number]): StudioWebNode {
+function continuationTableFrame(scene: StudioWebScene, node: StudioWebNode): StudioWebNode["frame"] {
+  const page = PRESENTATION_DESIGN_STANDARD.componentSystem.page;
+  const left = Number(page.leftInches ?? .47) * EMU_PER_INCH;
+  const right = Number(page.rightInches ?? .47) * EMU_PER_INCH;
+  const top = Number(page.contentTopInches ?? 1.15) * EMU_PER_INCH;
+  const bottom = Number(page.contentBottomInches ?? 6.72) * EMU_PER_INCH;
+  const width = Math.max(node.frame.width, scene.slideSize.width - left - right);
+  const height = Math.max(node.frame.height, bottom - top);
+  return {
+    x: left,
+    y: top,
+    width: Math.min(width, scene.slideSize.width - left - right),
+    height: Math.min(height, scene.slideSize.height - top),
+    rotation: node.frame.rotation,
+  };
+}
+
+function materializedTableNode(scene: StudioWebScene, node: StudioWebNode, plan: StudioTableContinuationPlan, segment: StudioTableContinuationPlan["segments"][number]): StudioWebNode {
   if (!node.table) return node;
   const included = new Set(segment.sourceCellIds);
   const design = resolvedStudioTableDesign(node);
@@ -438,6 +457,11 @@ function materializedTableNode(node: StudioWebNode, plan: StudioTableContinuatio
   });
   return {
     ...node,
+    // Every continuation receives the complete shared ORNL table region. A
+    // source table may occupy only part of the slide, but a one-row segment
+    // with a very long exact cell needs the available vertical canvas before
+    // typography or padding can be judged by native PowerPoint measurement.
+    frame: continuationTableFrame(scene, node),
     table: {
       ...node.table,
       rows: selectedRows.length,
@@ -470,7 +494,7 @@ export function materializeStudioTableContinuationSlides(scene: StudioWebScene, 
     const repeatedRoles = new Set(["eyebrow", "footer-logo", "footer-meta"]);
     const nodes = sourceSlide.nodes
       .filter((node) => index === 0 || node.id === table.id || node.role === "title" || Boolean(node.component?.role && repeatedRoles.has(node.component.role)))
-      .map((node) => node.id === table.id ? materializedTableNode(node, plan, segment) : node);
+      .map((node) => node.id === table.id ? materializedTableNode(scene, node, plan, segment) : node);
     const nodeIds = new Set(nodes.map((node) => node.id));
     return {
       slide: {

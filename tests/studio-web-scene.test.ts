@@ -16,7 +16,7 @@ import { buildStudioCompositionPptx } from "../src/lib/studio-composition-export
 import { preserveNativeSlide } from "../src/lib/native-slide-preservation";
 import { nativeIsolationShapeIds } from "../src/lib/native-object-isolation";
 import { adoptStudioComponentStyle, compatibleStudioComponentInstances } from "../src/lib/studio-component-library";
-import { assessStudioTableCapacity, planStudioTableContinuation, publishStudioTableExemplar } from "../src/lib/studio-table-workflow";
+import { assessStudioTableCapacity, materializeStudioTableContinuationSlides, planStudioTableContinuation, publishStudioTableExemplar } from "../src/lib/studio-table-workflow";
 import { sha256, sha256Text } from "../src/lib/hash";
 import type { DeckJob, StudioWebNode, StudioWebScene } from "../src/types";
 
@@ -1220,6 +1220,10 @@ test("table continuation planning repeats headers and never splits a merged body
   assert.equal(rebuilt.slideCount, 4);
   assert.deepEqual(rebuilt.outputSlides.map((slide) => slide.sourceSlideNumber), [sourceSlide.slideNumber, sourceSlide.slideNumber, sourceSlide.slideNumber, sourceSlide.slideNumber]);
   assert.deepEqual(rebuilt.outputSlides.map((slide) => slide.continuation?.segmentOrdinal), [1, 2, 3, 4]);
+  const materialized = materializeStudioTableContinuationSlides(result.scene, result.scene.slides.find((slide) => slide.slideNumber === sourceSlide.slideNumber)!);
+  const materializedTables = materialized.map((item) => item.slide.nodes.find((node) => node.id === denseTable.id)!);
+  assert.equal(materializedTables.every((node) => node.frame.height > denseTable.frame.height), true);
+  assert.equal(materializedTables.every((node) => Math.abs(node.frame.x / 914_400 - .47) < .001 && Math.abs((node.frame.y + node.frame.height) / 914_400 - 6.72) < .001), true);
   const audit = await auditPptx(rebuilt.bytes);
   assert.equal(audit.slideCount, 4);
   assert.equal(audit.tables.length, 4);
