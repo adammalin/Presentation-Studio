@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { blackBoxEnvironmentDefect, blackBoxEnvironmentDependencyDefect, evaluateBlackBoxAgentRun, parseBlackBoxAgentResult, prepareBlackBoxAgentRun } from "../scripts/black-box-agent-acceptance";
+import { blackBoxEnvironmentDefect, blackBoxEnvironmentDependencyDefect, blackBoxUnverifiedObservationDefect, evaluateBlackBoxAgentRun, parseBlackBoxAgentResult, prepareBlackBoxAgentRun } from "../scripts/black-box-agent-acceptance";
 import { parsePrivateGoldenManifest, privateGoldenContentCoverage } from "../scripts/qualify-private-golden";
 
 const base = {
@@ -58,6 +58,7 @@ test("black-box acceptance prepares a benchmark-blind prompt and scores a struct
   const prepared = await prepareBlackBoxAgentRun(qualificationPath, root);
   const prompt = await fs.readFile(prepared.promptPath, "utf8");
   assert.match(prompt, /context-free product acceptance agent/i);
+  assert.match(prompt, /structured scene\/catalog inventory deterministically proves the omission/i);
   assert.doesNotMatch(prompt, /human-cleaned.*path|benchmark\.pptx/i);
   const result = {
     schema: "presentation-studio/black-box-agent-result",
@@ -80,6 +81,7 @@ test("black-box acceptance separates locked-session holds from product defects",
   assert.equal(blackBoxEnvironmentDefect("PowerPoint-native source inspection is unavailable because the Mac session is locked."), true);
   assert.equal(blackBoxEnvironmentDefect("Picture 4 has neither an extracted image asset nor an authoritative source-raster fallback."), false);
   assert.equal(blackBoxEnvironmentDependencyDefect("acceptance-evidence-unavailable: the required PowerPoint-native comparison was unavailable."), true);
+  assert.equal(blackBoxUnverifiedObservationDefect("source-evidence-fallback-incomplete: a fallback image appeared empty."), true);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-black-box-environment-"));
   const run = {
     schema: "presentation-studio/black-box-agent-run" as const,
@@ -104,7 +106,7 @@ test("black-box acceptance separates locked-session holds from product defects",
     sourceSha256: run.sourceSha256,
     noSaveOrExport: true,
     cases: [
-      { id: "locked", sourceSlide: 1, status: "hold", attempts: 1, summary: "Native QA is blocked.", defects: ["Unlock the Mac to enable PowerPoint-native rendering."] },
+      { id: "locked", sourceSlide: 1, status: "hold", attempts: 1, summary: "Native QA is blocked.", defects: ["Unlock the Mac to enable PowerPoint-native rendering.", "source-evidence-fallback-incomplete: a fallback image appeared empty."] },
       { id: "product", sourceSlide: 2, status: "hold", attempts: 1, summary: "An authentic logo is missing.", defects: ["Picture 4 has neither an extracted image asset nor an authoritative source-raster fallback.", "The Mac session is locked.", "acceptance-evidence-unavailable: the required PowerPoint-native comparison was unavailable."] },
     ],
   };
@@ -118,5 +120,6 @@ test("black-box acceptance separates locked-session holds from product defects",
   assert.equal(evaluated.summary.productHoldCount, 1);
   assert.deepEqual(evaluated.summary.environmentDefects, ["Unlock the Mac to enable PowerPoint-native rendering.", "The Mac session is locked."]);
   assert.deepEqual(evaluated.summary.environmentDependencyDefects, ["acceptance-evidence-unavailable: the required PowerPoint-native comparison was unavailable."]);
+  assert.deepEqual(evaluated.summary.unverifiedObservationDefects, ["source-evidence-fallback-incomplete: a fallback image appeared empty."]);
   assert.deepEqual(evaluated.summary.productDefects, ["Picture 4 has neither an extracted image asset nor an authoritative source-raster fallback."]);
 });

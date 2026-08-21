@@ -49,6 +49,10 @@ export function blackBoxEnvironmentDependencyDefect(defect: string): boolean {
   return /^(?:acceptance-evidence-unavailable|continuation-unqualified):/i.test(defect);
 }
 
+export function blackBoxUnverifiedObservationDefect(defect: string): boolean {
+  return /^(?:source-evidence-fallback-incomplete|visual-observation):/i.test(defect);
+}
+
 function argument(name: string) {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -158,7 +162,7 @@ export async function prepareBlackBoxAgentRun(qualificationPath: string, outputR
   await fs.writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`);
   const cases = run.cases.map((item) => `${item.sourceSlide} (${item.id}: ${item.communicationJob})`).join(", ");
   const promptPath = path.join(outputRoot, "fresh-agent-prompt.txt");
-  await fs.writeFile(promptPath, `Connect to the Presentation Studio MCP and work only in the currently open project. You are a context-free product acceptance agent: do not inspect repository code, other tasks, private-golden artifacts, or any human-cleaned benchmark.\n\nRead get_design_contract, get_app_status, list_decks, get_agent_runbook, and the deck work order. Test only these representative source slides: ${cases}. For each slide, follow the MCP composition plan, inspect immutable source pixels, build the exact editable PowerPoint candidate, inspect the full-size native result, run the Found issues -> Fixing -> Rechecking original intent loop, and apply the source-wins rule. Use no more than three materially distinct attempts. PASS only when the candidate is objectively clean and visually at least as strong as the source under the requested intervention; otherwise HOLD and report the product defect precisely. Do not save or export.\n\nAt the end write ${resultPath} as presentation-studio/black-box-agent-result version 1 for runId ${run.id}, designStandardVersion ${run.designStandardVersion}, sourceSha256 ${run.sourceSha256}, completedAt as the current ISO-8601 timestamp, noSaveOrExport true, and one case result for every requested ID. Each case must include id, sourceSlide, status pass|hold, attempts 1-3, summary, and defects[]. Include this fresh task's own task ID when available; do not copy a parent, source, or delegation task ID.\n`);
+  await fs.writeFile(promptPath, `Connect to the Presentation Studio MCP and work only in the currently open project. You are a context-free product acceptance agent: do not inspect repository code, other tasks, private-golden artifacts, or any human-cleaned benchmark.\n\nRead get_design_contract, get_app_status, list_decks, get_agent_runbook, and the deck work order. Test only these representative source slides: ${cases}. For each slide, follow the MCP composition plan, inspect immutable source pixels, build the exact editable PowerPoint candidate, inspect the full-size native result, run the Found issues -> Fixing -> Rechecking original intent loop, and apply the source-wins rule. Use no more than three materially distinct attempts. PASS only when the candidate is objectively clean and visually at least as strong as the source under the requested intervention; otherwise HOLD and report the product defect precisely. If native QA is unavailable, record the environment hold; do not claim that a non-authoritative fallback omitted or corrupted content unless the structured scene/catalog inventory deterministically proves the omission. Do not save or export.\n\nAt the end write ${resultPath} as presentation-studio/black-box-agent-result version 1 for runId ${run.id}, designStandardVersion ${run.designStandardVersion}, sourceSha256 ${run.sourceSha256}, completedAt as the current ISO-8601 timestamp, noSaveOrExport true, and one case result for every requested ID. Each case must include id, sourceSlide, status pass|hold, attempts 1-3, summary, and defects[]. Include this fresh task's own task ID when available; do not copy a parent, source, or delegation task ID.\n`);
   return { run, runPath, promptPath, resultPath };
 }
 
@@ -180,9 +184,10 @@ export async function evaluateBlackBoxAgentRun(runPath: string, resultPath: stri
   const defects = [...new Set(result.cases.flatMap((item) => item.defects))];
   const environmentDefects = defects.filter(blackBoxEnvironmentDefect);
   const environmentDependencyDefects = defects.filter((defect) => !blackBoxEnvironmentDefect(defect) && blackBoxEnvironmentDependencyDefect(defect));
-  const productDefects = defects.filter((defect) => !blackBoxEnvironmentDefect(defect) && !blackBoxEnvironmentDependencyDefect(defect));
-  const environmentBlockedCaseCount = result.cases.filter((item) => item.status === "hold" && item.defects.length > 0 && item.defects.every((defect) => blackBoxEnvironmentDefect(defect) || blackBoxEnvironmentDependencyDefect(defect))).length;
-  const productHoldCount = result.cases.filter((item) => item.status === "hold" && item.defects.some((defect) => !blackBoxEnvironmentDefect(defect) && !blackBoxEnvironmentDependencyDefect(defect))).length;
+  const unverifiedObservationDefects = defects.filter((defect) => !blackBoxEnvironmentDefect(defect) && !blackBoxEnvironmentDependencyDefect(defect) && blackBoxUnverifiedObservationDefect(defect));
+  const productDefects = defects.filter((defect) => !blackBoxEnvironmentDefect(defect) && !blackBoxEnvironmentDependencyDefect(defect) && !blackBoxUnverifiedObservationDefect(defect));
+  const environmentBlockedCaseCount = result.cases.filter((item) => item.status === "hold" && item.defects.length > 0 && item.defects.every((defect) => blackBoxEnvironmentDefect(defect) || blackBoxEnvironmentDependencyDefect(defect) || blackBoxUnverifiedObservationDefect(defect))).length;
+  const productHoldCount = result.cases.filter((item) => item.status === "hold" && item.defects.some((defect) => !blackBoxEnvironmentDefect(defect) && !blackBoxEnvironmentDependencyDefect(defect) && !blackBoxUnverifiedObservationDefect(defect))).length;
   const summary = {
     schema: "presentation-studio/black-box-agent-acceptance",
     version: 1,
@@ -198,6 +203,7 @@ export async function evaluateBlackBoxAgentRun(runPath: string, resultPath: stri
     defects,
     environmentDefects,
     environmentDependencyDefects,
+    unverifiedObservationDefects,
     productDefects,
     acceptanceRule: "Progress requires more context-free PASS cases without save/export, content loss, source-intent loss, or a weaker visual result.",
   };
