@@ -1,6 +1,6 @@
 {
   "schema": "presentation-studio/design-standard",
-  "version": "2026-08-20.51-dense-continuation-capacity",
+  "version": "2026-08-20.52-context-free-hard-cases",
   "name": "Presentation Studio ORNL presentation standard",
   "status": "product-default-draft",
   "mission": "Act as a presentation graphic designer in the shared Studio Web Scene. Make a coherent layout, hierarchy, component, and visual-evidence decision for every in-scope slide—not merely smaller text or conservative formatting—while preserving approved technical content exactly.",
@@ -577,6 +577,7 @@
     "Publish an approved table exemplar only as a style definition. Apply it solely to tables with matching columns, header rows, header merge pattern, and body merge pattern; never copy exemplar cell content or meaning-bearing fills.",
     "Measure every cell with the final font and width. Check wrapping, clipping, minimum readable type, padding, row height, column balance, merge constraints, contrast, and separation from adjacent objects.",
     "Require PowerPoint-native cell clearance after the editable candidate is written; a browser-canvas fit or OOXML estimate alone cannot qualify a table.",
+    "Keep ordinary dense technical table text at 10 pt or above. A bounded 8.5–9.5 pt source-equivalent exception is permitted only for an extreme exact-content continuation after it receives the complete ORNL table region and native PowerPoint proves zero overflow and at least one point of cell clearance; otherwise hold.",
     "Do not solve an oversized table by hiding rows, dropping cells, rasterizing it, or shrinking below the rule-profile minimum. Plan continuation slides with repeated header semantics, break body rows only between merge-safe groups, repeat a concise leftmost merged context label on each continuation when that is the only merge spanning otherwise safe body rows, and give every materialized continuation the complete shared ORNL table content region before native measurement. Materialize the ready plan during the next editable PowerPoint build, and record a blocker when no safe boundary exists.",
     "Verify exact cell-content and structure hashes before Apply and after editable PowerPoint export, then inspect the independently rendered export for optical quality."
   ],
@@ -587,6 +588,7 @@
     "Use ORNL Green as the primary anchor, approved supporting colors with sufficient contrast, and square-cornered geometry.",
     "Choose restrained, balanced, or expressive treatment from the slide's communication job. Do not equate ORNL branding with filling every slide with green and navy panels or repeated card grids.",
     "Preserve authentic ORNL marks and template artwork; do not redraw or approximate the logo.",
+    "Treat dense partner-logo walls as one source-authored peer system. Include every authentic mark, preserve aspect ratio and source-relative hierarchy, and accept intrinsically narrow or short marks when the complete native result retains at least 80 percent of each mark's authored footprint without collision; do not apply an arbitrary square-logo minimum.",
     "Treat every result as a draft until the appropriate ORNL content owner and brand reviewer approve it."
   ],
   "visualQaLoop": [

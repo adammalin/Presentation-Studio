@@ -129,7 +129,7 @@ test("Studio critic uses source-relative legibility for dense peer-logo walls", 
     text: undefined,
     exactContent: false,
     sourceFrame,
-    frame: { ...sourceFrame, width: 18 * PT, height: 38 * PT },
+    frame: { ...sourceFrame, width: 16 * PT, height: 32 * PT },
     component: { groupId: "studio-logo-grid-1", role: "logo-grid-item", ordinal: 0 },
     style: { ...seed.style, objectFit: "contain" },
   };

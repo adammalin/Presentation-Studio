@@ -119,6 +119,7 @@ test("standard STDIO MCP server advertises bounded audit, Resource, and proposal
     const refineTableTool = result.tools.find((tool) => tool.name === "refine_studio_table");
     assert.match(refineTableTool?.description ?? "", /stable node and cell IDs/i);
     assert.match(refineTableTool?.description ?? "", /merged spans.*semantic color role/i);
+    assert.match(refineTableTool?.description ?? "", /8\.5–9\.5 pt.*source-equivalent exception/i);
     assert.equal(refineTableTool?.annotations?.destructiveHint, false);
     const tableExemplarTool = result.tools.find((tool) => tool.name === "publish_studio_table_exemplar");
     assert.match(tableExemplarTool?.description ?? "", /same column count, header-row count, header merge pattern, and body merge pattern/i);

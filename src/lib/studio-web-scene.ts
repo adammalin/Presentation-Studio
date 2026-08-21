@@ -1271,10 +1271,19 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
     const nativeObject = slide.nodes.find((node) => node.visible && node.kind === "native-object" && !footerNode(node));
     const nativeObjects = slide.nodes.filter((node) => node.visible && node.kind === "native-object" && !footerNode(node));
     const technicalVisuals = slide.nodes.filter((node) => node.visible && !footerNode(node) && (node.kind === "native-object" || meaningfulImage(node)));
+    const allSourceImages = slide.nodes.filter((node) => node.visible
+      && node.kind === "image"
+      && !footerNode(node)
+      && !sourceClassificationBadge(node)
+      && sourceFrameIntersectsSlide(node.sourceFrame));
     const editableNarrative = [...content, ...captions].filter((node) => node.kind === "text" && node.role !== "title" && node.sourceBinding === "editable-object");
     const visual = nativeObject ?? content.find((node) => meaningfulImage(node) || node.kind === "table");
     const connectors = slide.nodes.filter((node) => node.visible && node.kind === "connector" && !footerNode(node));
-    const logoImages = technicalVisuals.filter((node) => node.kind === "image");
+    // Tiny or unusually narrow authentic marks can fall below the ordinary
+    // `meaningfulImage` area threshold even though they remain a required peer
+    // in a source-authored partner wall. Once the slide is clearly a dense
+    // logo field, include every source image in the relationship system.
+    const logoImages = allSourceImages.length >= 12 ? allSourceImages : technicalVisuals.filter((node) => node.kind === "image");
     const denseLogoField = logoImages.length >= 12 && connectors.length === 0 && editableNarrative.length === 0;
     const compositeTechnicalOverview = Boolean(!denseLogoField && nativeObject && technicalVisuals.length >= 2 && editableNarrative.length === 0);
     const figureAnnotations = captions.filter(shortFigureAnnotation);
@@ -1282,7 +1291,15 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       ? slide.nodes.filter((node) => node.visible && node.sourceBinding === "catalog-derived" && !footerNode(node) && nativeObjects.some((candidate) => sourceFrameContains(candidate.sourceFrame, node.sourceFrame)))
       : [];
     const relationshipBearingFigure = visual && (visual.kind === "native-object" || (visual.kind === "image" && connectors.length >= 1 && figureAnnotations.length >= 2));
-    const denseSourceGrid = !nativeObject && technicalVisuals.filter((node) => meaningfulImage(node)).length === 1 && editableNarrative.length >= 8;
+    const exactSourceNarrative = [...content, ...captions].filter((node) => node.kind === "text"
+      && node.role !== "title"
+      && node.sourceBinding !== "semantic-atom"
+      && node.exactContent);
+    // Legacy editorial slides often recover some peer records from an old
+    // PowerPoint group as catalog-derived editable text. Counting only direct
+    // editable objects misroutes those slides into a generic two-column stack,
+    // even though the complete source is one authored record grid.
+    const denseSourceGrid = !nativeObject && technicalVisuals.filter((node) => meaningfulImage(node)).length === 1 && exactSourceNarrative.length >= 8;
     if (denseLogoField) {
       nativeObjects.forEach((node) => hiddenNodeIds.add(node.id));
       // A partner wall is a relationship-bearing visual system, not a list of
@@ -2093,7 +2110,7 @@ export function updateStudioTableCellDesign(scene: StudioWebScene, slideNumber: 
     if (!sourceCell) throw new Error("The requested source-bound Studio table cell is unavailable.");
     if (patch.fill !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.fill)) throw new Error("Studio table cell fill must be a six-digit hex color.");
     if (patch.color !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.color)) throw new Error("Studio table cell text color must be a six-digit hex color.");
-    if (patch.fontSizePt !== undefined && (!Number.isFinite(patch.fontSizePt) || patch.fontSizePt < 10 || patch.fontSizePt > 40)) throw new Error("Studio table cell text size must be between 10 and 40 pt.");
+    if (patch.fontSizePt !== undefined && (!Number.isFinite(patch.fontSizePt) || patch.fontSizePt < 8.5 || patch.fontSizePt > 40)) throw new Error("Studio table cell text size must be between 8.5 and 40 pt.");
     if (patch.fontWeight !== undefined && ![400, 600, 700].includes(patch.fontWeight)) throw new Error("Studio table cell font weight must be 400, 600, or 700.");
     if (patch.textAlign !== undefined && !["left", "center", "right"].includes(patch.textAlign)) throw new Error("Studio table cell alignment must be left, center, or right.");
     if (patch.verticalAlign !== undefined && !["top", "middle", "bottom"].includes(patch.verticalAlign)) throw new Error("Studio table cell vertical alignment must be top, middle, or bottom.");

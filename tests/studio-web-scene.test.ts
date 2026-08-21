@@ -510,6 +510,68 @@ test("dense year-led editorial records remain one collision-free grid even when 
   assert.equal(slideXml.match(/<a:t>Researchers, collaborators, technical qualifier, and attribution remain exact without rewriting or omission\.<\/a:t>/g)?.length, 12);
 });
 
+test("two-column composition recognizes catalog-derived peers as one source-geometry editorial field", async () => {
+  const { deck, catalog } = await fixture();
+  const scene = compileStudioWebScene(deck, catalog);
+  const sourceSlide = scene.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.kind === "text")!;
+  const emu = (value: number) => value * 914_400;
+  const title: StudioWebNode = {
+    ...seed,
+    id: "dense-source-title",
+    sourceObjectId: "dense-source-title",
+    sourceShapeId: "dense-source-title",
+    name: "Dense source title",
+    role: "title",
+    text: "Exact awards and recognition",
+    sourceFrame: { x: emu(.47), y: emu(.35), width: emu(9), height: emu(.55), rotation: 0 },
+    frame: { x: emu(.47), y: emu(.35), width: emu(9), height: emu(.55), rotation: 0 },
+    visible: true,
+    exactContent: true,
+  };
+  const records = Array.from({ length: 9 }, (_, index): StudioWebNode => ({
+    ...seed,
+    id: `dense-source-record-${index + 1}`,
+    sourceObjectId: `dense-source-record-${index + 1}`,
+    sourceShapeId: `dense-source-record-${index + 1}`,
+    sourceBinding: index < 5 ? "catalog-derived" : "editable-object",
+    sourceTextOrder: index + 1,
+    zIndex: index + 2,
+    name: `Dense source record ${index + 1}`,
+    role: index === 4 ? "caption" : "body",
+    text: `${2026 - Math.floor(index / 3)}\nComplete exact award title ${index + 1}\nResearcher and source attribution ${index + 1}`,
+    exactContent: true,
+    sourceFrame: { x: emu(.55 + (index % 3) * 3.02), y: emu(1.38 + Math.floor(index / 3) * 1.62), width: emu(2.75), height: emu(1.32), rotation: 0 },
+    frame: { x: emu(.55 + (index % 3) * 3.02), y: emu(1.38 + Math.floor(index / 3) * 1.62), width: emu(2.75), height: emu(1.32), rotation: 0 },
+    visible: true,
+  }));
+  const image: StudioWebNode = {
+    ...seed,
+    id: "dense-source-award-image",
+    sourceObjectId: "dense-source-award-image",
+    sourceShapeId: "dense-source-award-image",
+    sourceBinding: "catalog-derived",
+    name: "Authentic award image",
+    kind: "image",
+    role: "image",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    exactContent: false,
+    mediaPart: "ppt/media/image1.png",
+    sourceFrame: { x: emu(10.35), y: emu(1.65), width: emu(1.65), height: emu(1.15), rotation: 0 },
+    frame: { x: emu(10.35), y: emu(1.65), width: emu(1.65), height: emu(1.15), rotation: 0 },
+    visible: true,
+    style: { ...seed.style, objectFit: "contain" },
+  };
+  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, ...records, image] }] }, sourceSlide.slideNumber, "ornl-title-two-column");
+  const slide = designed.slides[0];
+  const designedRecords = records.map((record) => slide.nodes.find((node) => node.id === record.id)!);
+  assert.equal(designedRecords.every((node) => node.visible && node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-")), true);
+  assert.equal(designedRecords.every((node) => node.style.fontSizePt === 8.5), true);
+  assert.equal(preflightStudioScene({ ...designed, slides: [slide] }).issues.some((issue) => issue.category === "legibility" && issue.severity === "major"), false);
+});
+
 test("repeated sponsor metric groups become an editable ORNL metric grid instead of a preserved legacy figure", async () => {
   const { deck, catalog } = await fixture();
   const scene = compileStudioWebScene(deck, catalog);
@@ -1261,7 +1323,8 @@ test("table continuation repeats a concise leftmost merged context label across 
         headerRows: 1,
         columnWidths: [.18, .16, .66],
         rowHeights: Array.from({ length: rows }, () => 1 / rows),
-        cellStyles: [],
+        defaultPaddingPt: { top: 1, right: 1, bottom: 1, left: 1 },
+        cellStyles: [{ cellId: "activity-2", fontSizePt: 8.5, paddingPt: { top: 1, right: 1, bottom: 1, left: 1 } }],
       },
     },
   };
@@ -1287,6 +1350,13 @@ test("table continuation repeats a concise leftmost merged context label across 
   const targetScene = { ...result.scene, tableContinuationPlans: stalePlans, slides: result.scene.slides.filter((slide) => slide.slideNumber === sourceSlide.slideNumber) };
   const rebuilt = await buildStudioCompositionPptx(targetScene, { catalog, strict: false, title: "Repeated context continuation" });
   assert.equal(rebuilt.slideCount, 4);
+  const materialized = materializeStudioTableContinuationSlides(targetScene, targetScene.slides[0]);
+  const materializedTables = materialized.map((item) => item.slide.nodes.find((node) => node.id === denseTable.id)!);
+  assert.equal(materializedTables.every((node) => resolvedStudioTableDesign(node).rowHeights[1] > resolvedStudioTableDesign(node).rowHeights[0]), true);
+  assert.equal(materializedTables.every((node) => Object.values(resolvedStudioTableDesign(node).defaultPaddingPt).every((value) => value >= 2)), true);
+  const firstActivityStyle = resolvedStudioTableDesign(materializedTables[0]).cellStyles.find((style) => style.cellId === "activity-2");
+  assert.equal(firstActivityStyle?.fontSizePt, 8.5);
+  assert.equal(Object.values(firstActivityStyle?.paddingPt ?? {}).every((value) => value >= 2), true);
   const audit = await auditPptx(rebuilt.bytes);
   assert.equal(audit.tables.length, 4);
   assert.equal(audit.tables.every((table) => table.cells?.some((cell) => cell.text === "Leadership goal")), true);

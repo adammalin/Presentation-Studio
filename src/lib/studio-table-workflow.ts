@@ -414,6 +414,40 @@ function normalizedWeights(values: number[]): number[] {
   return total > 0 ? values.map((value) => value / total) : values.map(() => 1 / Math.max(1, values.length));
 }
 
+function continuationPadding(value: StudioTableCellDesign["paddingPt"] | undefined, fallback: StudioTableCellDesign["paddingPt"]): NonNullable<StudioTableCellDesign["paddingPt"]> {
+  const resolved = value ?? fallback ?? { top: 2, right: 2, bottom: 2, left: 2 };
+  // PowerPoint reports sub-point native clearance when a requested one-point
+  // margin is rounded through OOXML. Continuations reserve a real two-point
+  // review gutter so the written artifact can satisfy the one-point QA gate.
+  return {
+    top: Math.max(2, resolved.top),
+    right: Math.max(2, resolved.right),
+    bottom: Math.max(2, resolved.bottom),
+    left: Math.max(2, resolved.left),
+  };
+}
+
+function continuationRowHeightWeights(node: StudioWebNode, selectedRows: number[], frame: StudioWebNode["frame"]): number[] {
+  if (!node.table) return normalizedWeights(selectedRows.map(() => 1));
+  const design = resolvedStudioTableDesign(node);
+  const requirements = new Map(selectedRows.map((row) => [row, row <= design.headerRows ? 22 : 20]));
+  for (const cell of node.table.cells) {
+    const coveredRows = selectedRows.filter((row) => row >= cell.row && row <= cell.row + cell.rowSpan - 1);
+    if (!coveredRows.length || !cell.text.trim()) continue;
+    const cellStyle = design.cellStyles.find((style) => style.cellId === cell.id);
+    const fontSizePt = cellStyle?.fontSizePt ?? node.style.fontSizePt;
+    const padding = continuationPadding(cellStyle?.paddingPt, design.defaultPaddingPt);
+    const widthWeight = design.columnWidths.slice(cell.column - 1, cell.column - 1 + cell.columnSpan).reduce((sum, value) => sum + value, 0);
+    const usableWidthPt = Math.max(12, frame.width / EMU_PER_INCH * 72 * widthWeight - padding.left - padding.right);
+    const charactersPerLine = Math.max(6, Math.floor(usableWidthPt / Math.max(1, fontSizePt * .55)));
+    const lineCount = cell.text.split(/\r?\n/).reduce((sum, paragraph) => sum + Math.max(1, Math.ceil(paragraph.length / charactersPerLine)), 0);
+    const requiredPt = lineCount * fontSizePt * Math.max(1, node.style.lineHeight) + padding.top + padding.bottom + 2;
+    const perCoveredRow = requiredPt / coveredRows.length;
+    for (const row of coveredRows) requirements.set(row, Math.max(requirements.get(row) ?? 0, perCoveredRow));
+  }
+  return normalizedWeights(selectedRows.map((row) => requirements.get(row) ?? 20));
+}
+
 function continuationTableFrame(scene: StudioWebScene, node: StudioWebNode): StudioWebNode["frame"] {
   const page = PRESENTATION_DESIGN_STANDARD.componentSystem.page;
   const left = Number(page.leftInches ?? .47) * EMU_PER_INCH;
@@ -439,7 +473,8 @@ function materializedTableNode(scene: StudioWebScene, node: StudioWebNode, plan:
     ...Array.from({ length: plan.headerRows }, (_, index) => index + 1),
     ...Array.from({ length: segment.bodyRowEnd - segment.bodyRowStart + 1 }, (_, index) => segment.bodyRowStart + index),
   ];
-  const selectedRowHeights = normalizedWeights(selectedRows.map((row) => design.rowHeights[row - 1] ?? 1));
+  const segmentFrame = continuationTableFrame(scene, node);
+  const selectedRowHeights = continuationRowHeightWeights(node, selectedRows, segmentFrame);
   const segmentBodyRows = segment.bodyRowEnd - segment.bodyRowStart + 1;
   const cells = node.table.cells.filter((cell) => included.has(cell.id)).map((cell) => {
     if (repeatableContextCell(cell)) {
@@ -461,7 +496,7 @@ function materializedTableNode(scene: StudioWebScene, node: StudioWebNode, plan:
     // source table may occupy only part of the slide, but a one-row segment
     // with a very long exact cell needs the available vertical canvas before
     // typography or padding can be judged by native PowerPoint measurement.
-    frame: continuationTableFrame(scene, node),
+    frame: segmentFrame,
     table: {
       ...node.table,
       rows: selectedRows.length,
@@ -469,7 +504,10 @@ function materializedTableNode(scene: StudioWebScene, node: StudioWebNode, plan:
       design: {
         ...design,
         rowHeights: selectedRowHeights,
-        cellStyles: design.cellStyles.filter((style) => included.has(style.cellId)),
+        defaultPaddingPt: continuationPadding(design.defaultPaddingPt, design.defaultPaddingPt),
+        cellStyles: design.cellStyles
+          .filter((style) => included.has(style.cellId))
+          .map((style) => ({ ...style, paddingPt: continuationPadding(style.paddingPt, design.defaultPaddingPt) })),
       },
     },
   };

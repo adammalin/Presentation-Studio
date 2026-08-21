@@ -235,8 +235,8 @@ export function critiqueStudioSlide(scene: StudioWebScene, slideNumber: number, 
     // hero figures. Some authentic marks are intrinsically narrow or short.
     // Hold only when Studio makes a mark materially smaller than its own
     // source footprint (capped at the ordinary 28 pt peer-logo target).
-    const sourceRelativeLogoWidth = Math.min(28 * PT, node.sourceFrame.width * .9);
-    const sourceRelativeLogoHeight = Math.min(28 * PT, node.sourceFrame.height * .9);
+    const sourceRelativeLogoWidth = Math.min(28 * PT, node.sourceFrame.width * .8);
+    const sourceRelativeLogoHeight = Math.min(28 * PT, node.sourceFrame.height * .8);
     const minimumWidth = compactPeerVisual ? sourceRelativeLogoWidth : 72 * PT;
     const minimumHeight = compactPeerVisual ? sourceRelativeLogoHeight : 54 * PT;
     if ((node.kind === "image" || node.kind === "native-object") && (frame.width < minimumWidth || frame.height < minimumHeight)) add({ category: "legibility", severity: "major", source: "scene", nodeIds: [node.id], message: `${node.name} is too small to function as readable ${compactPeerVisual ? "peer logo" : "technical evidence"}.`, recommendation: compactPeerVisual ? "Increase the shared logo-grid cell or continue the field without distorting the mark." : "Give the figure a larger primary or supporting visual region, or crop to the meaning-bearing content with a verified focal point.", autoFixable: false });

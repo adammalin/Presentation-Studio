@@ -638,7 +638,7 @@ server.registerTool("refine_studio_layout", {
 
 server.registerTool("refine_studio_table", {
   title: "Refine one source-bound Studio table",
-  description: "Edit one native Studio table component by stable node and cell IDs. Set complete column widths and row heights in inches, header-row count, global or per-cell/per-edge border treatment, default padding, and bounded cell styles while preserving every source cell's exact text, order, merged spans, source-significant semantic color role, and native editability. Use edge rules for deliberate header separators, totals, and semantic group boundaries instead of forcing a full grid. Use the table IDs and current dimensions from get_studio_web_scene; do not infer missing cells, overwrite a semantic fill, or alter technical meaning. Build the exact slide afterward and inspect PowerPoint-native cell measurements. The project revision is crash-checkpointed automatically; no user-named project file or export is created.",
+  description: "Edit one native Studio table component by stable node and cell IDs. Set complete column widths and row heights in inches, header-row count, global or per-cell/per-edge border treatment, default padding, and bounded cell styles while preserving every source cell's exact text, order, merged spans, source-significant semantic color role, and native editability. Use edge rules for deliberate header separators, totals, and semantic group boundaries instead of forcing a full grid. Use 8.5–9.5 pt table text only as a bounded source-equivalent exception for an extreme exact-content continuation after allocating the complete ORNL table region; ordinary dense technical tables remain at least 10 pt. Use the table IDs and current dimensions from get_studio_web_scene; do not infer missing cells, overwrite a semantic fill, or alter technical meaning. Build the exact slide afterward and inspect PowerPoint-native cell measurements. The project revision is crash-checkpointed automatically; no user-named project file or export is created.",
   inputSchema: {
     deckId: z.string().min(1).max(120),
     expectedUpdatedAt: z.string().datetime({ offset: true }),
@@ -656,7 +656,7 @@ server.registerTool("refine_studio_table", {
       cellId: z.string().min(1).max(180),
       fill: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
       color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
-      fontSizePt: z.number().min(10).max(40).optional(),
+      fontSizePt: z.number().min(8.5).max(40).optional(),
       fontWeight: z.union([z.literal(400), z.literal(600), z.literal(700)]).optional(),
       textAlign: z.enum(["left", "center", "right"]).optional(),
       verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
