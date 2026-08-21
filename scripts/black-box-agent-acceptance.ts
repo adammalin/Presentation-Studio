@@ -41,6 +41,10 @@ export interface BlackBoxAgentResult {
   }>;
 }
 
+export function blackBoxEnvironmentDefect(defect: string): boolean {
+  return /(?:mac(?:os)? session (?:is )?locked|mac-session-locked|unlock (?:the )?mac|locked mac session|powerpoint-native[^.]{0,100}(?:unavailable|blocked)[^.]{0,100}locked)/i.test(defect);
+}
+
 function argument(name: string) {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -169,6 +173,11 @@ export async function evaluateBlackBoxAgentRun(runPath: string, resultPath: stri
   const passCount = result.cases.filter((item) => item.status === "pass").length;
   const baselinePassCount = baseline?.cases.filter((item) => item.status === "pass").length;
   const trend = baselinePassCount === undefined ? "baseline" : passCount > baselinePassCount ? "progress" : passCount < baselinePassCount ? "regression" : "no-change";
+  const defects = [...new Set(result.cases.flatMap((item) => item.defects))];
+  const environmentDefects = defects.filter(blackBoxEnvironmentDefect);
+  const productDefects = defects.filter((defect) => !blackBoxEnvironmentDefect(defect));
+  const environmentBlockedCaseCount = result.cases.filter((item) => item.status === "hold" && item.defects.length > 0 && item.defects.every(blackBoxEnvironmentDefect)).length;
+  const productHoldCount = result.cases.filter((item) => item.status === "hold" && item.defects.some((defect) => !blackBoxEnvironmentDefect(defect))).length;
   const summary = {
     schema: "presentation-studio/black-box-agent-acceptance",
     version: 1,
@@ -177,8 +186,13 @@ export async function evaluateBlackBoxAgentRun(runPath: string, resultPath: stri
     result: { taskId: result.taskId, passCount, holdCount: result.cases.length - passCount, total: result.cases.length },
     baselinePassCount,
     trend,
+    qualificationState: environmentBlockedCaseCount === 0 ? "complete" : environmentBlockedCaseCount === result.cases.length ? "environment-blocked" : "partial-environment-block",
+    environmentBlockedCaseCount,
+    productHoldCount,
     cases: result.cases,
-    defects: [...new Set(result.cases.flatMap((item) => item.defects))],
+    defects,
+    environmentDefects,
+    productDefects,
     acceptanceRule: "Progress requires more context-free PASS cases without save/export, content loss, source-intent loss, or a weaker visual result.",
   };
   await fs.mkdir(outputRoot, { recursive: true });

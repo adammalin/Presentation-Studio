@@ -262,6 +262,34 @@ function croppedSourceFrame(
   };
 }
 
+function embeddedImageSizing(
+  frame: StudioWebNode["frame"],
+  crop: StudioWebNode["mediaCrop"],
+) {
+  const targetWidth = inches(frame.width);
+  const targetHeight = inches(frame.height);
+  if (!crop) return { w: targetWidth, h: targetHeight };
+  const visibleWidth = 1 - crop.left - crop.right;
+  const visibleHeight = 1 - crop.top - crop.bottom;
+  if (visibleWidth <= 0 || visibleHeight <= 0) throw new Error("An embedded image crop removes all visible source content.");
+  const fullWidth = targetWidth / visibleWidth;
+  const fullHeight = targetHeight / visibleHeight;
+  return {
+    // PptxGenJS computes native a:srcRect percentages from the original image
+    // box and this crop window. The final object remains exactly `frame` while
+    // PowerPoint displays the same active source region as the imported slide.
+    w: fullWidth,
+    h: fullHeight,
+    sizing: {
+      type: "crop" as const,
+      x: fullWidth * crop.left,
+      y: fullHeight * crop.top,
+      w: targetWidth,
+      h: targetHeight,
+    },
+  };
+}
+
 function containFigureFrame(
   target: StudioWebNode["frame"],
   source: StudioWebNode["sourceFrame"],
@@ -591,9 +619,10 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
         const targetFrame = node.style.objectFit === "contain" || protectedBrandMark
           ? containFigureFrame(node.frame, cropFrame, undefined)
           : node.frame;
+        const sizing = extractedData ? embeddedImageSizing(targetFrame, node.mediaCrop) : { w: inches(targetFrame.width), h: inches(targetFrame.height) };
         slide.addImage({
           data,
-          x: inches(targetFrame.x), y: inches(targetFrame.y), w: inches(targetFrame.width), h: inches(targetFrame.height),
+          x: inches(targetFrame.x), y: inches(targetFrame.y), ...sizing,
           rotate: node.frame.rotation,
           objectName: `${node.name} · ${node.id}`.slice(0, 240),
           altText: extractedData
@@ -601,6 +630,7 @@ export async function buildStudioCompositionPptx(scene: StudioWebScene, options:
             : `PowerPoint-native crop preserving ${node.name} from source slide ${sourceSlide.slideNumber}.`,
           transparency: 0,
         });
+        if (extractedData && node.mediaCrop) warnings.push(`Slide ${sourceSlide.slideNumber}: ${node.name} preserved its imported PowerPoint source crop as editable native image geometry.`);
         if (!extractedData) warnings.push(`Slide ${sourceSlide.slideNumber}: ${node.name} was preserved from the authoritative PowerPoint source render because its embedded media part was unavailable.`);
         imageCount += 1;
         renderedNodeIds.add(node.id);

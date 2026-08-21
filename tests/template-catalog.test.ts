@@ -55,6 +55,7 @@ test("builds current slide previews with inherited title geometry and native tab
   assert.equal(exactSlideSvg?.origin, "slide");
   assert.equal(exactSlideSvg?.mediaId, "ppt/media/image2.svg");
   assert.equal(exactSlideSvg?.sourceCropped, true);
+  assert.deepEqual(exactSlideSvg?.sourceCrop, { left: .05, top: 0, right: 0, bottom: 0 });
   assert.match(catalog.media["ppt/media/image2.svg"], /^data:image\/svg\+xml;base64,/);
 });
 

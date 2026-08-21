@@ -38,6 +38,7 @@ export interface TemplatePreviewElement {
   placeholderIndex?: string;
   mediaId?: string;
   sourceCropped?: boolean;
+  sourceCrop?: { left: number; top: number; right: number; bottom: number };
   sourcePart?: string;
   sourceShapeId?: string;
   origin?: "master" | "layout" | "slide";
@@ -435,7 +436,13 @@ function pictureElements(picture: XmlRecord, context: GroupContext, relationship
   const blipFill = record(picture.blipFill);
   const blip = record(blipFill.blip);
   const sourceCrop = record(blipFill.srcRect);
-  const sourceCropped = ["@l", "@r", "@t", "@b"].some((attribute) => numeric(sourceCrop[attribute], 0) !== 0);
+  const normalizedSourceCrop = {
+    left: Math.max(0, numeric(sourceCrop["@l"], 0) / 100_000),
+    top: Math.max(0, numeric(sourceCrop["@t"], 0) / 100_000),
+    right: Math.max(0, numeric(sourceCrop["@r"], 0) / 100_000),
+    bottom: Math.max(0, numeric(sourceCrop["@b"], 0) / 100_000),
+  };
+  const sourceCropped = Object.values(normalizedSourceCrop).some((value) => value !== 0);
   const svgRelationshipId = array<XmlRecord>(record(blip.extLst).ext)
     .map((extension) => String(record(extension.svgBlip)["@embed"] ?? ""))
     .find(Boolean);
@@ -452,6 +459,7 @@ function pictureElements(picture: XmlRecord, context: GroupContext, relationship
     geometry: "rect",
     mediaId: relationship.target,
     sourceCropped,
+    sourceCrop: sourceCropped ? normalizedSourceCrop : undefined,
   }];
 }
 

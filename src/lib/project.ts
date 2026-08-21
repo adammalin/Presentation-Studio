@@ -333,6 +333,12 @@ const studioNodeSchema = z.object({
     verificationStatus: z.literal("verified"),
   }).optional(),
   mediaPart: z.string().optional(),
+  mediaCrop: z.object({
+    left: z.number().min(0).max(1),
+    top: z.number().min(0).max(1),
+    right: z.number().min(0).max(1),
+    bottom: z.number().min(0).max(1),
+  }).refine((crop) => crop.left + crop.right < 1 && crop.top + crop.bottom < 1, "Image crop must leave visible source content.").optional(),
   component: z.object({ groupId: z.string().min(1), role: z.enum(STUDIO_COMPONENT_ROLES), ordinal: z.number().int().nonnegative().optional(), frame: studioFrameSchema.optional(), definitionId: z.string().min(1).optional() }).optional(),
   opticalInsets: z.object({
     left: z.number().nonnegative(), top: z.number().nonnegative(), right: z.number().nonnegative(), bottom: z.number().nonnegative(),

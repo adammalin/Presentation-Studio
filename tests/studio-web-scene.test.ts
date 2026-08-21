@@ -1001,6 +1001,45 @@ test("fresh composition contains extracted images without distorting their sourc
   assert.ok(Math.abs(image.widthEmu / image.heightEmu - 2) < .01);
 });
 
+test("fresh composition preserves an imported image source crop without native raster fallback", async () => {
+  const { deck, catalog } = await fixture();
+  const source = compileStudioWebScene(deck, catalog);
+  const sourceSlide = source.slides[0];
+  const seed = sourceSlide.nodes.find((node) => node.visible)!;
+  const frame = { x: 4 * 914_400, y: 2 * 914_400, width: 4 * 914_400, height: 2 * 914_400, rotation: 0 };
+  const imageNode: StudioWebNode = {
+    ...seed,
+    id: "cropped-image",
+    sourceObjectId: "cropped-image",
+    sourceShapeId: "cropped-image",
+    name: "Cropped evidence image",
+    kind: "image",
+    role: "image",
+    text: undefined,
+    textHash: undefined,
+    sourceParagraphs: undefined,
+    sourceFrame: frame,
+    frame,
+    mediaPart: "cropped-image.png",
+    mediaCrop: { left: .1, top: .05, right: .2, bottom: .15 },
+    style: { ...seed.style, objectFit: "cover" },
+    visible: true,
+    locked: false,
+  };
+  const scene: StudioWebScene = { ...source, slides: [{ ...sourceSlide, recipe: "ornl-title-content", status: "designed", nodes: [imageNode] }] };
+  const rebuilt = await buildStudioCompositionPptx(scene, {
+    catalog: { ...catalog, media: { ...catalog.media, "cropped-image.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3ZQAAAAASUVORK5CYII=" } },
+  });
+  const zip = await JSZip.loadAsync(rebuilt.bytes);
+  const slideXml = await zip.file("ppt/slides/slide1.xml")!.async("text");
+  assert.match(slideXml, /<a:srcRect l="10000" r="20000" t="5000" b="15000"\/>/);
+  const audited = await auditPptx(rebuilt.bytes);
+  const picture = audited.pictures.find((item) => item.name.includes("Cropped evidence image"));
+  assert.equal(picture?.cropped, true);
+  assert.ok(Math.abs((picture?.widthEmu ?? 0) - frame.width) <= 2);
+  assert.ok(Math.abs((picture?.heightEmu ?? 0) - frame.height) <= 2);
+});
+
 test("build-all planning preserves source slides and routes each designed slide to its truthful PowerPoint compiler", async () => {
   const { deck, catalog } = await fixture();
   const source = compileStudioWebScene(deck, catalog);

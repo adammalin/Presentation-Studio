@@ -38,7 +38,19 @@ function elementSvg(element: TemplatePreviewElement, catalog: SlideRenderCatalog
   const height = element.height * scale;
   if (element.kind === "image") {
     const href = element.mediaId ? catalog.media[element.mediaId] : undefined;
-    return href ? `<image href="${escapeXml(href)}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice"${rotation}/>` : "";
+    if (!href) return "";
+    const crop = element.sourceCrop;
+    if (crop && crop.left + crop.right < 1 && crop.top + crop.bottom < 1) {
+      const visibleWidth = 1 - crop.left - crop.right;
+      const visibleHeight = 1 - crop.top - crop.bottom;
+      const fullWidth = width / visibleWidth;
+      const fullHeight = height / visibleHeight;
+      const fullX = x - fullWidth * crop.left;
+      const fullY = y - fullHeight * crop.top;
+      const clipId = `crop-${element.id.replace(/[^a-z0-9_-]/gi, "-")}`;
+      return `<g${rotation}><defs><clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}"/></clipPath></defs><image href="${escapeXml(href)}" x="${fullX}" y="${fullY}" width="${fullWidth}" height="${fullHeight}" preserveAspectRatio="none" clip-path="url(#${clipId})"/></g>`;
+    }
+    return `<image href="${escapeXml(href)}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice"${rotation}/>`;
   }
   if (element.kind === "text") {
     const sourceFontSize = (element.fontSize ?? 18) * 12700;

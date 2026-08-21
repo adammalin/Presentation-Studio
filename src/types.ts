@@ -725,6 +725,7 @@ export interface StudioWebNode {
   };
   connector?: StudioConnectorDesign;
   mediaPart?: string;
+  mediaCrop?: { left: number; top: number; right: number; bottom: number };
   component?: { groupId: string; role: StudioComponentRole; ordinal?: number; frame?: StudioWebFrame; definitionId?: string };
   opticalInsets?: StudioOpticalInsets;
   style: {

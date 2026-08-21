@@ -199,12 +199,12 @@ function compileNode(deck: DeckJob, objectId: string, studioSlideSize: { width: 
         cellStyles: [],
       },
     } : undefined,
-    // PowerPoint can display only a cropped region of the embedded source
-    // image. Until that OOXML crop is represented as a first-class scene
-    // transform, use the authoritative native object crop rather than the raw
-    // media part; otherwise whitespace or hidden pixels can replace the
-    // visible logo/figure in both Studio and the exported candidate.
-    mediaPart: preview?.sourceCropped ? undefined : preview?.mediaId,
+    // Keep both the embedded asset and its exact OOXML source crop. This lets
+    // Studio compile authentic logos while native PowerPoint is temporarily
+    // unavailable instead of dropping the image or depending on a slide
+    // screenshot fallback.
+    mediaPart: preview?.mediaId,
+    mediaCrop: preview?.sourceCrop,
     opticalInsets: textBox ? {
       left: Math.max(0, Math.round(textBox.opticalLeftOffsetEmu * studioSlideSize.width / audit.slideSize.width)),
       top: Math.max(0, Math.round(textBox.textInsets.top * studioSlideSize.height / audit.slideSize.height)),
@@ -255,7 +255,8 @@ function compileCatalogDerivedNodes(deck: DeckJob, slideNumber: number, studioSl
       text,
       textHash: element.textHash,
       sourceParagraphs: element.sourceParagraphs,
-      mediaPart: element.sourceCropped ? undefined : element.mediaId,
+      mediaPart: element.mediaId,
+      mediaCrop: element.sourceCrop,
       style: roleStyle(role, element, undefined),
     }];
   });

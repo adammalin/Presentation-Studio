@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { evaluateBlackBoxAgentRun, parseBlackBoxAgentResult, prepareBlackBoxAgentRun } from "../scripts/black-box-agent-acceptance";
+import { blackBoxEnvironmentDefect, evaluateBlackBoxAgentRun, parseBlackBoxAgentResult, prepareBlackBoxAgentRun } from "../scripts/black-box-agent-acceptance";
 import { parsePrivateGoldenManifest, privateGoldenContentCoverage } from "../scripts/qualify-private-golden";
 
 const base = {
@@ -74,4 +74,47 @@ test("black-box acceptance prepares a benchmark-blind prompt and scores a struct
   const evaluated = await evaluateBlackBoxAgentRun(prepared.runPath, prepared.resultPath, root);
   assert.equal(evaluated.summary.result.passCount, 1);
   assert.equal(evaluated.summary.trend, "baseline");
+});
+
+test("black-box acceptance separates locked-session holds from product defects", async () => {
+  assert.equal(blackBoxEnvironmentDefect("PowerPoint-native source inspection is unavailable because the Mac session is locked."), true);
+  assert.equal(blackBoxEnvironmentDefect("Picture 4 has neither an extracted image asset nor an authoritative source-raster fallback."), false);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "presentation-studio-black-box-environment-"));
+  const run = {
+    schema: "presentation-studio/black-box-agent-run" as const,
+    version: 1 as const,
+    id: "environment-classification",
+    preparedAt: "2026-08-20T18:00:00.000Z",
+    designStandardVersion: "test-standard",
+    sourceSha256: "a".repeat(64),
+    cases: [
+      { id: "locked", sourceSlide: 1, communicationJob: "Review one slide.", reviewFocus: ["layout"] },
+      { id: "product", sourceSlide: 2, communicationJob: "Review another slide.", reviewFocus: ["media"] },
+    ],
+    resultPath: path.join(root, "result.json"),
+    rules: [],
+  };
+  const result = {
+    schema: "presentation-studio/black-box-agent-result",
+    version: 1,
+    runId: run.id,
+    completedAt: "2026-08-20T18:01:00.000Z",
+    designStandardVersion: run.designStandardVersion,
+    sourceSha256: run.sourceSha256,
+    noSaveOrExport: true,
+    cases: [
+      { id: "locked", sourceSlide: 1, status: "hold", attempts: 1, summary: "Native QA is blocked.", defects: ["Unlock the Mac to enable PowerPoint-native rendering."] },
+      { id: "product", sourceSlide: 2, status: "hold", attempts: 1, summary: "An authentic logo is missing.", defects: ["Picture 4 has neither an extracted image asset nor an authoritative source-raster fallback.", "The Mac session is locked."] },
+    ],
+  };
+  const runPath = path.join(root, "run.json");
+  const resultPath = path.join(root, "result.json");
+  await fs.writeFile(runPath, JSON.stringify(run));
+  await fs.writeFile(resultPath, JSON.stringify(result));
+  const evaluated = await evaluateBlackBoxAgentRun(runPath, resultPath, root);
+  assert.equal(evaluated.summary.qualificationState, "partial-environment-block");
+  assert.equal(evaluated.summary.environmentBlockedCaseCount, 1);
+  assert.equal(evaluated.summary.productHoldCount, 1);
+  assert.deepEqual(evaluated.summary.environmentDefects, ["Unlock the Mac to enable PowerPoint-native rendering.", "The Mac session is locked."]);
+  assert.deepEqual(evaluated.summary.productDefects, ["Picture 4 has neither an extracted image asset nor an authoritative source-raster fallback."]);
 });
