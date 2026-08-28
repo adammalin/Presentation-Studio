@@ -85,6 +85,8 @@ export function buildAgentRunbook(input: BuildAgentRunbookInput) {
       "Read the source, exact content inventory, communication archetype, intervention level, and native source pixels before design.",
       "Use one canonical Studio scene and shared archetype patterns. Do not redraw every slide as an unrelated canvas.",
       "Preserve exact wording, meaning-bearing table colors, technical relationships, and source relational geometry.",
+      "Treat 19xx/20xx year-led editorial records as complete peers even when the year shares a paragraph with the title or a prior attempt atomized the text. Keep year/title hierarchy over neutral attribution copy; when a primary source image belongs to the field, preserve the source-proven image/record relationship instead of forcing an unrelated card grid.",
+      "For exact-content table continuations, repeat headers and concise merged context only at merge-safe boundaries, allocate the complete ORNL table region, and reserve the qualified four-point cell gutter before PowerPoint-native clearance review.",
       "Source wins: reject or hold any candidate that is weaker than the source, even when objective checks pass.",
       "Build, render, remeasure, inspect, fix, and recheck original intent. Never call browser preview or successful compilation finished output.",
     ],

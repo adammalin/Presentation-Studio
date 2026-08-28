@@ -72,12 +72,18 @@ function margins(node: StudioWebNode): [number, number, number, number] {
 function editableText(node: StudioWebNode): string | PptxGenJS.TextProps[] {
   const text = node.text ?? "";
   const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.length > 0) ?? [];
-  const editorialRecord = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-");
-  if (!editorialRecord && paragraphs.length <= 1 && !paragraphs[0]?.bullet && !/[\uE000-\uF8FF]/.test(text)) return text;
+  const editorialRecordGrid = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-");
+  const denseSourceGrid = node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-dense-source-grid-");
+  const compactEditorialRecord = editorialRecordGrid || denseSourceGrid;
+  if (!compactEditorialRecord && paragraphs.length <= 1 && !paragraphs[0]?.bullet && !/[\uE000-\uF8FF]/.test(text)) return text;
   const runs: PptxGenJS.TextProps[] = [];
   const source = paragraphs.length ? paragraphs : [{ text, bullet: false, level: 0 }];
-  const paragraphSpaceAfter = editorialRecord ? 0 : source.length >= 7 ? 2 : source.some((paragraph) => paragraph.bullet) ? 3 : PRESENTATION_DESIGN_STANDARD.componentSystem.paragraph.bodySpaceAfterPt;
+  const paragraphSpaceAfter = compactEditorialRecord ? 0 : source.length >= 7 ? 2 : source.some((paragraph) => paragraph.bullet) ? 3 : PRESENTATION_DESIGN_STANDARD.componentSystem.paragraph.bodySpaceAfterPt;
   source.forEach((paragraph, paragraphIndex) => {
+    const paragraphText = paragraph.text.trim();
+    const yearOnly = /^(?:19|20)\d{2}$/.test(paragraphText);
+    const startsWithYear = /^(?:19|20)\d{2}\b/.test(paragraphText);
+    const previousIsYearOnly = paragraphIndex > 0 && /^(?:19|20)\d{2}$/.test(source[paragraphIndex - 1]?.text.trim() ?? "");
     const parts = paragraph.text.split(/([\uE000-\uF8FF])/).filter(Boolean);
     parts.forEach((value, partIndex) => {
       const finalPart = partIndex === parts.length - 1;
@@ -95,7 +101,13 @@ function editableText(node: StudioWebNode): string | PptxGenJS.TextProps[] {
           // year and record title are semantic headings. Preserve that reading
           // hierarchy in native PowerPoint instead of flattening every run to
           // the same weight merely because the component uses compact type.
-          bold: editorialRecord ? paragraphIndex <= 1 : undefined,
+          // Compact editorial fields still need visible reading hierarchy.
+          // A standalone year is the green kicker; the following award title
+          // is bold neutral copy; contributor and qualifier lines remain
+          // regular. A source paragraph that begins with the year and title is
+          // kept together and bold without turning the entire record green.
+          bold: compactEditorialRecord ? startsWithYear || previousIsYearOnly : undefined,
+          color: compactEditorialRecord && yearOnly ? PRESENTATION_DESIGN_STANDARD.defaults.palette.ornlGreen.replace("#", "") : undefined,
         },
       });
     });

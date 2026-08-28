@@ -416,14 +416,16 @@ function normalizedWeights(values: number[]): number[] {
 
 function continuationPadding(value: StudioTableCellDesign["paddingPt"] | undefined, fallback: StudioTableCellDesign["paddingPt"]): NonNullable<StudioTableCellDesign["paddingPt"]> {
   const resolved = value ?? fallback ?? { top: 2, right: 2, bottom: 2, left: 2 };
-  // PowerPoint reports sub-point native clearance when a requested one-point
-  // margin is rounded through OOXML. Continuations reserve a real two-point
-  // review gutter so the written artifact can satisfy the one-point QA gate.
+  // Exact-content continuations often wrap on the last available glyph. A
+  // requested two-point cell margin can then produce less than one point of
+  // measured ink clearance after PowerPoint's native line breaking and glyph
+  // overhang. Reserve four real points on every edge for continuations; this
+  // is the qualified ORNL compact-table gutter, not a silent type reduction.
   return {
-    top: Math.max(2, resolved.top),
-    right: Math.max(2, resolved.right),
-    bottom: Math.max(2, resolved.bottom),
-    left: Math.max(2, resolved.left),
+    top: Math.max(4, resolved.top),
+    right: Math.max(4, resolved.right),
+    bottom: Math.max(4, resolved.bottom),
+    left: Math.max(4, resolved.left),
   };
 }
 
@@ -439,9 +441,9 @@ function continuationRowHeightWeights(node: StudioWebNode, selectedRows: number[
     const padding = continuationPadding(cellStyle?.paddingPt, design.defaultPaddingPt);
     const widthWeight = design.columnWidths.slice(cell.column - 1, cell.column - 1 + cell.columnSpan).reduce((sum, value) => sum + value, 0);
     const usableWidthPt = Math.max(12, frame.width / EMU_PER_INCH * 72 * widthWeight - padding.left - padding.right);
-    const charactersPerLine = Math.max(6, Math.floor(usableWidthPt / Math.max(1, fontSizePt * .55)));
+    const charactersPerLine = Math.max(6, Math.floor(usableWidthPt / Math.max(1, fontSizePt * .60)));
     const lineCount = cell.text.split(/\r?\n/).reduce((sum, paragraph) => sum + Math.max(1, Math.ceil(paragraph.length / charactersPerLine)), 0);
-    const requiredPt = lineCount * fontSizePt * Math.max(1, node.style.lineHeight) + padding.top + padding.bottom + 2;
+    const requiredPt = lineCount * fontSizePt * Math.max(1, node.style.lineHeight) + padding.top + padding.bottom + 6;
     const perCoveredRow = requiredPt / coveredRows.length;
     for (const row of coveredRows) requirements.set(row, Math.max(requirements.get(row) ?? 0, perCoveredRow));
   }

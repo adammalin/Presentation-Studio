@@ -441,8 +441,8 @@ function meaningfulImage(node: StudioWebNode): boolean {
 function editorialRecord(node: StudioWebNode): boolean {
   if (node.kind !== "text" || footerNode(node) || node.role === "title" || !node.exactContent) return false;
   const paragraphs = node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()) ?? [];
-  return paragraphs.length >= 2
-    && /^20\d{2}$/.test(paragraphs[0]?.text.trim() ?? "")
+  return paragraphs.length >= 1
+    && /^(?:19|20)\d{2}\b/.test(paragraphs[0]?.text.trim() ?? "")
     && (node.text?.trim().length ?? 0) >= 40;
 }
 
@@ -488,7 +488,7 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
         fontSizePt: 11,
         fontWeight: 400,
         lineHeight: 1.02,
-        color: palette.ornlGreen,
+        color: palette.darkMatter,
         borderColor: undefined,
         borderWidthPt: 0,
         verticalAlign: "top",
@@ -504,9 +504,9 @@ function styleForComponent(node: StudioWebNode): StudioWebNode["style"] {
         ...node.style,
         fontFamily: "Aptos",
         fontSizePt: 8.5,
-        fontWeight: node.style.fontWeight,
+        fontWeight: 400,
         lineHeight: 1,
-        color: palette.ornlGreen,
+        color: palette.darkMatter,
         borderColor: node.style.borderWidthPt > 0 ? palette.ornlGreen : node.style.borderColor,
         verticalAlign: "top",
         paddingPt: { top: 1, right: 2, bottom: 1, left: 2 },
@@ -1128,16 +1128,23 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
   const questionSourceIds = recipe === "ornl-title-question-diagram"
     ? originalSlide.nodes.filter((node) => node.kind === "text" && node.role === "body" && node.sourceBinding === "editable-object" && (node.sourceParagraphs?.filter((paragraph) => paragraph.text.trim()).filter((paragraph) => paragraph.text.trim().endsWith("?")).length ?? 0) >= 3).map((node) => node.id)
     : [];
-  const originalCardBodies = originalSlide.nodes.filter((node) => node.visible && node.sourceBinding !== "semantic-atom" && node.kind === "text" && node.role === "body" && !footerNode(node));
+  // A prior recipe attempt may have atomized multi-paragraph records. Detect
+  // the next card-grid treatment against the restored authored objects so a
+  // retry cannot mistake year/title/contributor paragraphs for unrelated
+  // one-line cards and collapse the remaining records into the caption rail.
+  const restoredOriginalSlide = restoreSemanticAtoms(scene, slideNumber).slides.find((item) => item.slideNumber === slideNumber) ?? originalSlide;
+  const originalCardBodies = restoredOriginalSlide.nodes.filter((node) => node.visible && node.sourceBinding !== "semantic-atom" && node.kind === "text" && node.role === "body" && !footerNode(node));
+  const originalEditorialRecordCount = restoredOriginalSlide.nodes.filter((node) => node.visible && node.sourceBinding !== "semantic-atom" && editorialRecord(node)).length;
   const cardMiddle = inches(PRESENTATION_DESIGN_STANDARD.defaults.slide.widthInches / 2);
   const pairedSourceColumns = recipe === "ornl-title-card-grid" && [
     originalCardBodies.filter((node) => node.sourceFrame.x + node.sourceFrame.width / 2 < cardMiddle).length,
     originalCardBodies.filter((node) => node.sourceFrame.x + node.sourceFrame.width / 2 >= cardMiddle).length,
   ].every((count) => count >= 2);
+  const preserveEditorialRecords = recipe === "ornl-title-card-grid" && originalEditorialRecordCount >= 7 && originalEditorialRecordCount <= 18;
   const workingScene = recipe === "ornl-title-question-diagram"
     ? atomizeStudioWebSlide(scene, slideNumber, questionSourceIds)
     : recipe === "ornl-title-card-grid"
-      ? pairedSourceColumns ? restoreSemanticAtoms(scene, slideNumber) : atomizeStudioWebSlide(scene, slideNumber)
+      ? pairedSourceColumns || preserveEditorialRecords ? restoreSemanticAtoms(scene, slideNumber) : atomizeStudioWebSlide(scene, slideNumber)
     : atomRecipes.includes(recipe) ? atomizeStudioWebSlide(scene, slideNumber) : restoreSemanticAtoms(scene, slideNumber);
   const slide = workingScene.slides.find((item) => item.slideNumber === slideNumber)!;
   if (recipe === "template-layout" && !layout?.semantic) throw new Error("Choose an installed template layout with semantic regions before applying template-layout.");

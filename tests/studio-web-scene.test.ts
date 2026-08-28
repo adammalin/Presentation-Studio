@@ -443,7 +443,7 @@ test("dense year-led editorial records remain one collision-free grid even when 
   const records = Array.from({ length: 12 }, (_, index): StudioWebNode => {
     const column = index % 6;
     const row = Math.floor(index / 6);
-    const year = index < 4 ? "2026" : index < 10 ? "2025" : "2024";
+    const year = index === 10 ? "1999" : index === 11 ? "1992" : index < 4 ? "2026" : "2025";
     const awardTitle = `Award record ${index + 1} preserves its complete technical title`;
     const attribution = "Researchers, collaborators, technical qualifier, and attribution remain exact without rewriting or omission.";
     const body = `${awardTitle}\n${attribution}`;
@@ -458,9 +458,12 @@ test("dense year-led editorial records remain one collision-free grid even when 
       name: `Award record ${index + 1}`,
       kind: "text",
       role: index === 7 ? "caption" : "body",
-      text: `${year}\n${body}`,
+      text: index === 11 ? `${year} ${awardTitle}\n${attribution}` : `${year}\n${body}`,
       exactContent: true,
-      sourceParagraphs: [
+      sourceParagraphs: index === 11 ? [
+        { index: 1, text: `${year} ${awardTitle}`, textHash: `year-title-${index}`, characterCount: year.length + awardTitle.length + 1, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
+        { index: 2, text: attribution, textHash: `attribution-${index}`, characterCount: attribution.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
+      ] : [
         { index: 1, text: year, textHash: `year-${index}`, characterCount: year.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [12] },
         { index: 2, text: awardTitle, textHash: `title-${index}`, characterCount: awardTitle.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
         { index: 3, text: attribution, textHash: `attribution-${index}`, characterCount: attribution.length, bullet: false, bulletConfidence: "direct", level: 0, fontFamilies: ["Aptos"], fontSizes: [11] },
@@ -489,14 +492,16 @@ test("dense year-led editorial records remain one collision-free grid even when 
     visible: true,
     locked: false,
   };
-  const designed = recomposeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, legacyGroup, ...records] }] }, sourceSlide.slideNumber, "ornl-title-card-grid");
+  const priorAttempt = atomizeStudioWebSlide({ ...scene, slides: [{ ...sourceSlide, nodes: [title, legacyGroup, ...records] }] }, sourceSlide.slideNumber);
+  assert.ok(priorAttempt.slides[0].nodes.some((node) => node.sourceBinding === "semantic-atom"));
+  const designed = recomposeStudioWebSlide(priorAttempt, sourceSlide.slideNumber, "ornl-title-card-grid");
   const slide = designed.slides[0];
   const designedRecords = records.map((record) => slide.nodes.find((node) => node.id === record.id)!);
   assert.equal(designedRecords.every((node) => node.component?.role === "technical-annotation" && node.component.groupId.startsWith("studio-editorial-record-grid-")), true);
   assert.equal(slide.nodes.find((node) => node.id === "award-8")?.visible, true);
   assert.equal(slide.nodes.find((node) => node.id === legacyGroup.id)?.visible, false);
   assert.equal(new Set(designedRecords.map((node) => Math.round(node.frame.y))).size, 2);
-  assert.equal(designedRecords.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 11), true);
+  assert.equal(designedRecords.every((node) => node.style.fontFamily === "Aptos" && node.style.fontSizePt >= 11 && node.style.color === "#373A36"), true);
   for (let left = 0; left < designedRecords.length; left += 1) for (let right = left + 1; right < designedRecords.length; right += 1) {
     const a = designedRecords[left].frame;
     const b = designedRecords[right].frame;
@@ -506,7 +511,9 @@ test("dense year-led editorial records remain one collision-free grid even when 
   assert.equal(studioGeneratedComponents(slide).filter((component) => component.id.includes("editorial-record-grid") && component.id.endsWith("-outline")).length, 12);
   const rebuilt = await buildStudioCompositionPptx({ ...designed, slides: [slide] }, { catalog, strict: false, title: "Editorial hierarchy" });
   const slideXml = await (await JSZip.loadAsync(rebuilt.bytes)).file("ppt/slides/slide1.xml")!.async("text");
-  assert.equal(slideXml.match(/b="1"/g)?.length, 25); // Two hierarchy runs per record plus the slide title.
+  assert.equal(slideXml.match(/b="1"/g)?.length, 24); // Eleven year/title pairs, one combined year-title, plus the slide title.
+  assert.match(slideXml, /<a:t>1999<\/a:t>/);
+  assert.match(slideXml, /<a:srgbClr val="373A36"\/>/); // Award and contributor copy remains neutral instead of becoming one green block.
   assert.equal(slideXml.match(/<a:t>Researchers, collaborators, technical qualifier, and attribution remain exact without rewriting or omission\.<\/a:t>/g)?.length, 12);
 });
 
@@ -1392,10 +1399,10 @@ test("table continuation repeats a concise leftmost merged context label across 
   const materialized = materializeStudioTableContinuationSlides(targetScene, targetScene.slides[0]);
   const materializedTables = materialized.map((item) => item.slide.nodes.find((node) => node.id === denseTable.id)!);
   assert.equal(materializedTables.every((node) => resolvedStudioTableDesign(node).rowHeights[1] > resolvedStudioTableDesign(node).rowHeights[0]), true);
-  assert.equal(materializedTables.every((node) => Object.values(resolvedStudioTableDesign(node).defaultPaddingPt).every((value) => value >= 2)), true);
+  assert.equal(materializedTables.every((node) => Object.values(resolvedStudioTableDesign(node).defaultPaddingPt).every((value) => value >= 4)), true);
   const firstActivityStyle = resolvedStudioTableDesign(materializedTables[0]).cellStyles.find((style) => style.cellId === "activity-2");
   assert.equal(firstActivityStyle?.fontSizePt, 8.5);
-  assert.equal(Object.values(firstActivityStyle?.paddingPt ?? {}).every((value) => value >= 2), true);
+  assert.equal(Object.values(firstActivityStyle?.paddingPt ?? {}).every((value) => value >= 4), true);
   const audit = await auditPptx(rebuilt.bytes);
   assert.equal(audit.tables.length, 4);
   assert.equal(audit.tables.every((table) => table.cells?.some((cell) => cell.text === "Leadership goal")), true);

@@ -28,7 +28,7 @@ export function contentProfileForSlide(deck: DeckJob, slideNumber: number): Layo
   const slideHeight = deck.audit?.slideSize.height ?? 6_858_000;
   const editorialRecordTextBoxes = bodyTextBoxes.filter((textBox) => {
     const paragraphs = textBox.paragraphs.filter((paragraph) => paragraph.text.trim());
-    return paragraphs.length >= 2 && /^20\d{2}$/.test(paragraphs[0]?.text.trim() ?? "") && textBox.characterCount >= 40;
+    return paragraphs.length >= 1 && /^(?:19|20)\d{2}\b/.test(paragraphs[0]?.text.trim() ?? "") && textBox.characterCount >= 40;
   });
   const captionTextBoxes = bodyTextBoxes.filter((textBox) => !editorialRecordTextBoxes.includes(textBox) && (["caption", "label"].includes(textBox.role) || textBox.geometry.height / slideHeight < 0.105));
   const primaryBodyTextBoxes = bodyTextBoxes.filter((textBox) => !captionTextBoxes.includes(textBox));
