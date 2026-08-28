@@ -1423,10 +1423,12 @@ test("verified Studio connector authoring binds stable endpoints and exports one
   scene = updateStudioConnectorDesign(scene, sourceSlide.slideNumber, connector.id, { fromNodeId: from.id, toNodeId: to.id, fromSide: "right", toSide: "left", stroke: "#00662C", widthPt: 1.5, dash: "solid", beginArrow: "none", endArrow: "triangle", verificationStatus: "verified" });
   const authored = scene.slides[0].nodes.find((node) => node.id === connector.id)!;
   assert.equal(authored.connector?.fromNodeId, from.id);
+  assert.equal(Object.values(authored.frame).slice(0, 4).every(Number.isInteger), true);
   assert.deepEqual(scene.slides[0].figureTreatments[0].relationships, [{ fromNodeId: connector.id, toNodeId: from.id, kind: "connects-from" }, { fromNodeId: connector.id, toNodeId: to.id, kind: "connects-to" }]);
   const priorX = authored.frame.x;
   scene = updateStudioWebNodeFrame(scene, sourceSlide.slideNumber, from.id, { ...from.frame, x: from.frame.x + .5 * 914_400 });
   assert.notEqual(scene.slides[0].nodes.find((node) => node.id === connector.id)?.frame.x, priorX);
+  assert.equal(Object.values(scene.slides[0].nodes.find((node) => node.id === connector.id)!.frame).slice(0, 4).every(Number.isInteger), true);
   deck.studioScene = scene;
   const project = createProject("Verified connector persistence");
   project.decks = [deck];
@@ -1569,8 +1571,15 @@ test("human canvas edits remain bounded and the self-contained project persists 
   deck.studioScene = styled;
   const project = createProject("Studio web scene persistence");
   project.decks = [deck];
+  const persistedNode = project.decks[0].studioScene!.slides[0].nodes.find((item) => item.id === node.id)!;
+  persistedNode.frame = { ...persistedNode.frame, x: persistedNode.frame.x + .5, y: persistedNode.frame.y + .25, width: persistedNode.frame.width + .75, height: persistedNode.frame.height + .4 };
   const parsed = projectSchema.parse(project);
   assert.equal(parsed.decks[0].studioScene?.revision, styled.revision);
+  const recoveredNode = parsed.decks[0].studioScene!.slides[0].nodes.find((item) => item.id === node.id)!;
+  assert.deepEqual(
+    [recoveredNode.frame.x, recoveredNode.frame.y, recoveredNode.frame.width, recoveredNode.frame.height],
+    [Math.round(persistedNode.frame.x), Math.round(persistedNode.frame.y), Math.round(persistedNode.frame.width), Math.round(persistedNode.frame.height)],
+  );
   assert.equal(studioSceneNeedsRebuild(parsed.decks[0]), false);
 });
 

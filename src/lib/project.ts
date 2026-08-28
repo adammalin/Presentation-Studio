@@ -241,7 +241,13 @@ const presentationSceneSchema = z.object({
     slides: z.array(preservationSlideSchema),
   }),
 });
-const studioFrameSchema = z.object({ x: z.number().int(), y: z.number().int(), width: z.number().int().positive(), height: z.number().int().positive(), rotation: z.number() });
+// Older Studio revisions could persist half-EMU connector and grouped-layout
+// coordinates. PowerPoint geometry is integer EMU, so repair those finite
+// legacy values at the project boundary instead of making autosave recovery
+// reject an otherwise healthy project.
+const studioEmuSchema = z.number().finite().transform((value) => Math.round(value)).pipe(z.number().int().safe());
+const studioPositiveEmuSchema = z.number().finite().positive().transform((value) => Math.max(1, Math.round(value))).pipe(z.number().int().positive().safe());
+const studioFrameSchema = z.object({ x: studioEmuSchema, y: studioEmuSchema, width: studioPositiveEmuSchema, height: studioPositiveEmuSchema, rotation: z.number().finite() });
 const studioResourceBindingSchema = z.object({
   resourceId: z.string().min(1),
   resourceSha256: z.string().regex(/^[0-9a-f]{64}$/),

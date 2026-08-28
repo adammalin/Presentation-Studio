@@ -53,6 +53,16 @@ function frame(x: number, y: number, width: number, height: number, rotation = 0
   return { x: inches(x), y: inches(y), width: inches(width), height: inches(height), rotation };
 }
 
+function normalizedStudioFrame(value: StudioWebFrame): StudioWebFrame {
+  return {
+    x: Math.round(value.x),
+    y: Math.round(value.y),
+    width: Math.max(1, Math.round(value.width)),
+    height: Math.max(1, Math.round(value.height)),
+    rotation: Number.isFinite(value.rotation) ? value.rotation : 0,
+  };
+}
+
 function sourceFrame(value: { x: number; y: number; width: number; height: number; rotation: number }): StudioWebFrame {
   return { x: value.x, y: value.y, width: value.width, height: value.height, rotation: value.rotation };
 }
@@ -1964,7 +1974,7 @@ export function recomposeStudioWebSlide(scene: StudioWebScene, slideNumber: numb
       const component = recipe === "source" || recipe === "template-layout" ? undefined : components.get(node.id);
       if (!placements.has(node.id)) return { ...node, component };
       const nextNode = { ...node, component };
-      const nextFrame = placements.get(node.id)!;
+      const nextFrame = normalizedStudioFrame(placements.get(node.id)!);
       const designedStyle = component ? styleForComponent(nextNode) : styleForDesignedNode(nextNode);
       const nextStyle = recipe === "template-layout" ? { ...designedStyle, color: templateTextColor(layout, nextNode, nextFrame) ?? designedStyle.color } : designedStyle;
       return { ...nextNode, frame: nextFrame, style: fittedStyle(nextNode, nextStyle, nextFrame) };
@@ -1981,7 +1991,7 @@ export function updateStudioWebNodeFrame(scene: StudioWebScene, slideNumber: num
   if (node.locked) throw new Error(`${node.name} is locked because its PowerPoint representation is not safely editable.`);
   const width = Math.max(inches(.1), Math.min(scene.slideSize.width, Math.round(nextFrame.width)));
   const height = Math.max(inches(.1), Math.min(scene.slideSize.height, Math.round(nextFrame.height)));
-  const bounded = { ...nextFrame, width, height, x: Math.max(0, Math.min(scene.slideSize.width - width, Math.round(nextFrame.x))), y: Math.max(0, Math.min(scene.slideSize.height - height, Math.round(nextFrame.y))), rotation: Math.max(-360, Math.min(360, nextFrame.rotation)) };
+  const bounded = normalizedStudioFrame({ ...nextFrame, width, height, x: Math.max(0, Math.min(scene.slideSize.width - width, Math.round(nextFrame.x))), y: Math.max(0, Math.min(scene.slideSize.height - height, Math.round(nextFrame.y))), rotation: Math.max(-360, Math.min(360, nextFrame.rotation)) });
   const now = new Date().toISOString();
   const movedNodes = slide.nodes.map((candidate) => candidate.id === nodeId ? { ...candidate, frame: bounded } : candidate);
   const connectedNodes = movedNodes.map((candidate) => candidate.connector ? { ...candidate, frame: studioConnectorFrame(movedNodes, candidate.connector) } : candidate);
@@ -2151,7 +2161,7 @@ export function studioConnectorFrame(nodes: StudioWebNode[], design: StudioConne
   if (!from || !to) throw new Error("A verified Studio connector has a stale endpoint binding.");
   const start = studioConnectorAttachmentPoint(from, design.fromSide);
   const end = studioConnectorAttachmentPoint(to, design.toSide);
-  return { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.max(points(.25), Math.abs(end.x - start.x)), height: Math.max(points(.25), Math.abs(end.y - start.y)), rotation: 0 };
+  return normalizedStudioFrame({ x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.max(points(.25), Math.abs(end.x - start.x)), height: Math.max(points(.25), Math.abs(end.y - start.y)), rotation: 0 });
 }
 
 export function updateStudioConnectorDesign(scene: StudioWebScene, slideNumber: number, connectorNodeId: string, design: StudioConnectorDesign): StudioWebScene {
